@@ -579,12 +579,7 @@ fn build_tui_options(
         traces: Some(pa_tui::traces::TracesCommandsHandle(std::sync::Arc::new(
             crate::client_traces::ClientTraces::new(config.cwd.clone(), config.agent_dir.clone()),
         ))),
-        // `/update`: the out-of-band installer funnel (the same body
-        // `prime-agent update` runs, with the output captured — the TUI
-        // stays mounted and the outcome lands as rows).
-        update_commands: Some(pa_tui::update_command::UpdateCommandsHandle(
-            std::sync::Arc::new(crate::client_update::ClientUpdate),
-        )),
+        update_commands: None,
         // `/login` + `/logout`: the provider auth flows (the API-key store,
         // the MCP device flow, the provider catalog).
         provider_auth: Some(provider_auth),

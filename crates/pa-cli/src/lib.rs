@@ -27,35 +27,25 @@
 pub(crate) mod args;
 pub(crate) mod client_settings;
 pub(crate) mod client_traces;
-pub(crate) mod client_update;
 pub(crate) mod codex_subscription_login;
 pub(crate) mod command_registry;
 pub(crate) mod config;
-pub(crate) mod config_command;
 pub(crate) mod daemon_client;
-pub(crate) mod daemon_command;
-pub(crate) mod daemon_discovery;
 pub(crate) mod daemon_mode;
-pub(crate) mod daemon_session_list;
 pub(crate) mod file_processor;
 pub(crate) mod global_flags;
 pub(crate) mod headless_autonomous;
-pub(crate) mod incident;
 pub(crate) mod initial_message;
-pub(crate) mod installer_update;
 pub(crate) mod interactive_mode;
 pub(crate) mod list_models;
 pub(crate) mod mcp_command;
 pub(crate) mod mcp_login;
 pub(crate) mod mode;
-pub(crate) mod package_command;
 pub(crate) mod prime_inference_login;
 pub(crate) mod prompt_command;
 pub(crate) mod provider_login;
 pub(crate) mod public_command;
-pub(crate) mod self_update;
 pub(crate) mod session_export;
-pub(crate) mod sessions_table_format;
 pub(crate) mod subscription_login;
 pub(crate) mod traces_login;
 
@@ -68,8 +58,6 @@ pub(crate) mod print_boundary;
 pub(crate) mod print_goal;
 pub mod print_runtime;
 pub(crate) mod print_session_command;
-pub mod update_flow;
-pub mod util_time;
 pub use print_runtime::PrintRuntime;
 
 /// Daemon wiring shared by the interactive runtime and the integration
@@ -116,10 +104,6 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     }
     let args = public_command.args;
 
-    if args.first().map(String::as_str) == Some("config") {
-        return Ok(crate::config_command::run());
-    }
-
     let parsed = args::parse_args(&args);
     if !parsed.diagnostics.is_empty() {
         for diagnostic in &parsed.diagnostics {
@@ -137,9 +121,6 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
 
     let app_mode = mode::AppMode::resolve(&parsed, std::io::stdin().is_terminal());
 
-    if public_command.attach_agent.is_some() && app_mode != mode::AppMode::Interactive {
-        return Err("attach requires an interactive terminal".to_string());
-    }
     if parsed.resume_bare && app_mode != mode::AppMode::Interactive {
         return Err(
             "--resume without a session selector requires an interactive terminal".to_string(),
@@ -315,8 +296,8 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         list_models: parsed.list_models,
         verbose: parsed.verbose,
         offline: parsed.offline,
-        agents_view_requested: public_command.explicit_agents_view,
-        attach_agent: public_command.attach_agent,
+        agents_view_requested: false,
+        attach_agent: None,
     };
 
     match runtime.run(&options) {

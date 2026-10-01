@@ -10,7 +10,6 @@ pub struct CommandSpec {
     pub summary: &'static str,
     pub description: Option<&'static str>,
     pub options: &'static [&'static str],
-    pub examples: &'static [&'static str],
 }
 
 impl CommandSpec {
@@ -25,7 +24,6 @@ impl CommandSpec {
             summary,
             description: None,
             options: &[],
-            examples: &[],
         }
     }
 
@@ -38,122 +36,11 @@ impl CommandSpec {
         self.options = options;
         self
     }
-
-    const fn examples(mut self, examples: &'static [&'static str]) -> Self {
-        self.examples = examples;
-        self
-    }
 }
 
 /// All public command specs, in registry order.
 pub const COMMAND_SPECS: &[CommandSpec] = &[
     CommandSpec::new(&["help"], "help [command]", "Show command help"),
-    CommandSpec::new(&["agents"], "agents", "Search and open sessions"),
-    CommandSpec::new(
-        &["list"],
-        "list [--all] [--json]",
-        "List agents",
-    )
-    .options(&[
-        "-a, --all  Include saved agents",
-        "--json      Print JSON",
-    ]),
-    CommandSpec::new(
-        &["sessions"],
-        "sessions [--all] [--json]",
-        "Show agent status, activity, and usage",
-    )
-    .options(&[
-        "-a, --all  Include saved agents",
-        "--json      Print JSON",
-    ]),
-    CommandSpec::new(
-        &["attach"],
-        "attach <agent>",
-        "Attach the interactive UI to an agent",
-    ),
-    CommandSpec::new(&["stop"], "stop <agent> [--json]", "Stop an agent"),
-    CommandSpec::new(
-        &["rename"],
-        "rename <agent> <name> [--json]",
-        "Rename an agent",
-    ),
-    CommandSpec::new(
-        &["send"],
-        "send [--from <agent>] <agent> <message>",
-        "Send a message to an agent",
-    )
-    .options(&[
-        "--from <agent>  Identify the sending agent",
-        "--steer         Deliver as steering when the agent is busy",
-        "--follow-up     Queue the message after the current turn",
-        "--json          Print JSON",
-    ]),
-    CommandSpec::new(
-        &["schedule"],
-        "schedule <list|add|cancel>",
-        "Manage prompts that run later or on a recurring schedule",
-    ),
-    CommandSpec::new(
-        &["schedule", "list"],
-        "schedule list [--all] [agent] [--json]",
-        "List scheduled prompts",
-    ),
-    CommandSpec::new(
-        &["schedule", "add"],
-        "schedule add <agent> <schedule> -- <message>",
-        "Schedule a prompt",
-    )
-    .description("The schedule may be a cron expression or a supported one-time schedule.")
-    .examples(&["schedule add worker \"0 9 * * 1-5\" -- \"Check open work\""]),
-    CommandSpec::new(
-        &["schedule", "cancel"],
-        "schedule cancel <job-id>",
-        "Cancel a scheduled prompt",
-    ),
-    CommandSpec::new(
-        &["status"],
-        "status [--json]",
-        "Show background service status",
-    ),
-    CommandSpec::new(
-        &["doctor"],
-        "doctor [--fix] [--json]",
-        "Inspect and safely clean up background services",
-    )
-    .options(&[
-        "--fix   Remove stale sockets and stop idle orphaned services",
-        "--json  Print JSON",
-    ]),
-    CommandSpec::new(
-        &["incident"],
-        "incident [--since <time>] [--until <time>] [--session <id>]",
-        "Reconstruct a daemon incident from its logs",
-    )
-    .description(
-        "Summarizes the daemon logs for a time window into an operator timeline: supervisor and worker events, session anomalies, and recovery actions. Times without a timezone are read as UTC, matching the log; the default window is the last 24 hours.",
-    )
-    .options(&[
-        "--since <time>  Window start (ISO date/time, date, or HH:MM today; default: 24h ago)",
-        "--until <time>  Window end (default: now)",
-        "--session <id>  Only events naming this session id, worker id, or session name (prefix match)",
-    ])
-    .examples(&[
-        "incident --since \"2026-09-16T20:02\" --until \"2026-09-16T20:21\"",
-        "incident --session 2339fb7da605",
-    ]),
-    CommandSpec::new(
-        &["shutdown"],
-        "shutdown [--force] [--json]",
-        "Stop every agent and background service",
-    )
-    .description(
-        "Without --force, an interactive confirmation is required. --force also kills unresponsive workers.",
-    )
-    .options(&[
-        "--force  Skip confirmation and kill unresponsive processes",
-        "--json   Print JSON",
-    ]),
     CommandSpec::new(
         &["mcp"],
         "mcp <add|list|get|remove>",
@@ -168,59 +55,6 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
     CommandSpec::new(&["mcp", "list"], "mcp list", "List user MCP servers"),
     CommandSpec::new(&["mcp", "get"], "mcp get <name>", "Show a user MCP server"),
     CommandSpec::new(&["mcp", "remove"], "mcp remove <name>", "Remove a user MCP server"),
-    CommandSpec::new(
-        &["package"],
-        "package <install|remove|list|update>",
-        "Manage capability packages",
-    )
-    .description("Packages can provide skills, prompts, and themes."),
-    CommandSpec::new(
-        &["package", "install"],
-        "package install <source> [--local]",
-        "Install a capability package",
-    )
-    .options(&["--local  Install into the current project instead of the user configuration"]),
-    CommandSpec::new(
-        &["package", "remove"],
-        "package remove <source> [--local]",
-        "Remove a capability package",
-    )
-    .options(&["--local  Remove from the current project configuration"]),
-    CommandSpec::new(
-        &["package", "list"],
-        "package list",
-        "List installed capability packages",
-    ),
-    CommandSpec::new(
-        &["package", "update"],
-        "package update [source]",
-        "Update capability packages",
-    ),
-    CommandSpec::new(
-        &["update"],
-        "update [--check] [--nightly|--stable]",
-        "Update to the latest Rust build (uninstalls the TypeScript version)",
-    )
-    .options(&[
-        "--check  Print the update channel's latest release vs the running version, without installing",
-        "--force     Reinstall the latest build of the channel",
-        "--rollback  Restore the previous compiled release (the managed-install flow)",
-        "--nightly   Switch updates to the nightly channel (the latest main build)",
-        "--stable    Return updates to the stable channel",
-        "--archive <path>  Install a local release payload (the managed-install flow)",
-        "--source <url>     The https:// origin recorded as the release's install source (required with --archive)",
-    ])
-    .description(
-        "Move from the TypeScript version to the Rust port in one step: `prime-agent update` \
-         fetches the installer from the official domain endpoint \
-         (https://app.primeintellect.ai/prime-agent/install.sh — never a GitHub raw or workflow \
-         URL) and runs it, which uninstalls the TypeScript version and installs the latest Rust \
-         build; your sessions and configuration (~/.prime/agent) are never touched. Restart \
-         prime-agent after the update to run the new build. This command exists only in the \
-         Rust binary — the TypeScript version does not have it; the move happens when you run \
-         the installer's curl|sh URL (the README's Install section) or `prime-agent update` \
-         (after the Rust install exists).",
-    ),
     CommandSpec::new(&["model"], "model list [search]", "Inspect available models"),
     CommandSpec::new(&["model", "list"], "model list [search]", "List available models"),
     CommandSpec::new(
@@ -233,7 +67,6 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
         "session export <file> [output]",
         "Export a saved session to HTML",
     ),
-    CommandSpec::new(&["config"], "config", "Configure package resources"),
     CommandSpec::new(
         &["prompt"],
         "prompt [--model <selector>] [--cwd <dir>] [--json]",
@@ -557,13 +390,6 @@ pub fn format_command_help(path: &[&str]) -> Option<String> {
         sections.push("Options:".to_string());
         for option in spec.options {
             sections.push(format!("  {option}"));
-        }
-    }
-    if !spec.examples.is_empty() {
-        sections.push(String::new());
-        sections.push("Examples:".to_string());
-        for example in spec.examples {
-            sections.push(format!("  {APP_NAME} {example}"));
         }
     }
     Some(sections.join("\n"))

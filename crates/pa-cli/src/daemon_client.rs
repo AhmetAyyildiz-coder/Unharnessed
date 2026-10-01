@@ -56,13 +56,6 @@ impl DaemonClient {
         })
     }
 
-    /// [`Self::connect`] without the user-facing error decoration: discovery
-    /// probes expect unreachable sockets and classify them instead of
-    /// surfacing the connect error.
-    pub(crate) fn connect_probe(socket_path: &Path) -> Result<Self> {
-        Self::connect_raw(socket_path).map_err(|error| anyhow!("connect: {error}"))
-    }
-
     fn connect_raw(socket_path: &Path) -> std::io::Result<Self> {
         let stream = connect_blocking(socket_path)?;
         let writer = stream.try_clone_box()?;
