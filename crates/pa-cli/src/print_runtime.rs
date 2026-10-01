@@ -313,7 +313,6 @@ async fn build_headless_engine_with(
     };
     let engine = pa_core::session_engine::engine::create_session(
         pa_core::session_engine::engine::SessionEngineConfig {
-            cron_store: None,
             telemetry,
             steering_mode,
             follow_up_mode,
@@ -1273,7 +1272,6 @@ async fn build_faux_engine_with(
     // tests can verify persistence without the network.
     let engine = pa_core::session_engine::engine::create_session(
         pa_core::session_engine::engine::SessionEngineConfig {
-            cron_store: None,
             // Faux verification harness: no product telemetry.
             steering_mode: None,
             follow_up_mode: None,

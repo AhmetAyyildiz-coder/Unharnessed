@@ -209,7 +209,7 @@ pub fn scan_quota_park_entries(entries: &[pa_types::session::FileEntry]) -> Bran
         let Some(resume_at_iso) = data.get("resumeAt").and_then(serde_json::Value::as_str) else {
             return BranchParkScan::None;
         };
-        let Some(resume_at_ms) = crate::cron::parse_iso_millis(resume_at_iso) else {
+        let Some(resume_at_ms) = parse_iso_millis(resume_at_iso) else {
             return BranchParkScan::None;
         };
         let Some(park_count) = data
@@ -251,6 +251,93 @@ pub fn quota_parked_final_error(abort: &str, resume_at_ms: u64, error: &str) -> 
         "{abort}. Session parked until {} and will resume automatically (retry.provider.waitForUsage.pauseUntilReset): {error}",
         crate::session::manager::format_iso(resume_at_ms as i64)
     )
+}
+
+/// ISO-8601 parse to epoch millis (RFC 3339 subset).
+fn parse_iso_millis(text: &str) -> Option<u64> {
+    let text = text.trim();
+    let (date, time) = text.split_once('T')?;
+    let date_parts: Vec<&str> = date.split('-').collect();
+    if date_parts.len() != 3 {
+        return None;
+    }
+    let year: i64 = date_parts[0].parse().ok()?;
+    let month: u32 = date_parts[1].parse().ok()?;
+    let day: u32 = date_parts[2].parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    // Days since epoch via civil-date inverse.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = i64::from(if month > 2 { month - 3 } else { month + 9 });
+    let doy = (153 * mp + 2) / 5 + i64::from(day) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let (time, offset_ms) = parse_time_with_offset(time)?;
+    let millis = days * 24 * 60 * 60 * 1000 + time - offset_ms;
+    Some(millis as u64)
+}
+
+/// Time-of-day parse: HH:MM[:SS[.fff]][Z|(+/-HH:MM)] -> millis + offset.
+fn parse_time_with_offset(time: &str) -> Option<(i64, i64)> {
+    let (time, offset) = if let Some(stripped) = time.strip_suffix('Z') {
+        (stripped, 0i64)
+    } else if let Some(index) = time
+        .rfind('+')
+        .or_else(|| time[1..].rfind('-').map(|i| i + 1))
+    {
+        let offset = parse_offset(&time[index..])?;
+        (&time[..index], offset)
+    } else {
+        (time, 0)
+    };
+    let parts: Vec<&str> = time.split(':').collect();
+    if parts.is_empty() || parts.len() > 3 {
+        return None;
+    }
+    let hours: i64 = parts.first()?.parse().ok()?;
+    let minutes: i64 = parts.get(1).map_or(Some(0), |p| p.parse::<i64>().ok())?;
+    let seconds_part = parts.get(2).copied().unwrap_or("0");
+    let (seconds, millis) = match seconds_part.split_once('.') {
+        Some((seconds, fraction)) => {
+            let seconds: i64 = seconds.parse().ok()?;
+            let fraction_ms = fraction_pad(fraction)?;
+            (seconds, fraction_ms)
+        }
+        None => (seconds_part.parse().ok()?, 0),
+    };
+    if hours > 23 || minutes > 59 || seconds > 59 {
+        return None;
+    }
+    Some((
+        hours * 3_600_000 + minutes * 60_000 + seconds * 1000 + millis,
+        offset,
+    ))
+}
+
+fn fraction_pad(fraction: &str) -> Option<i64> {
+    if fraction.is_empty() || !fraction.chars().all(|char| char.is_ascii_digit()) {
+        return None;
+    }
+    let mut padded = fraction.to_string();
+    while padded.len() < 3 {
+        padded.push('0');
+    }
+    let value = padded[..3].parse::<i64>().ok()?;
+    Some(value)
+}
+
+fn parse_offset(text: &str) -> Option<i64> {
+    let (sign, rest) = match text.strip_prefix('+') {
+        Some(rest) => (1i64, rest),
+        None => text.strip_prefix('-').map(|rest| (-1i64, rest))?,
+    };
+    let parts: Vec<&str> = rest.split(':').collect();
+    let hours: i64 = parts.first()?.parse().ok()?;
+    let minutes: i64 = parts.get(1).map_or(Some(0), |p| p.parse::<i64>().ok())?;
+    Some(sign * (hours * 60 + minutes) * 60_000)
 }
 
 #[cfg(test)]

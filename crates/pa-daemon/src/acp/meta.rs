@@ -79,9 +79,6 @@ pub struct PrimeAgentSessionMeta {
     /// loaded into context, plus the number of diffs it displayed).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ipython: Option<Value>,
-    /// Set when the session's heartbeat or cron schedule changed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub heartbeats_changed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub goal: Option<PrimeAgentGoalMeta>,
     #[serde(skip_serializing_if = "Option::is_none")]

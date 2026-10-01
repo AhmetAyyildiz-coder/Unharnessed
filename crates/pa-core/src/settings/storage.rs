@@ -310,7 +310,7 @@ pub struct AtomicWriteOptions {
 // Test-only served-path counter: how many times this thread took the
 // opt-in fsync branch of `atomic_write_with`. The per-call-site durability
 // tests assert their writer's delta through the real write path (0 for the
-// TS-default no-sync sites, exactly 1 for the opted-in cron state write) —
+// TS-default no-sync sites) —
 // the anti-vacuity pattern: the oracle fails loudly if a site's durability
 // binding flips.
 #[cfg(test)]
@@ -341,9 +341,8 @@ pub fn atomic_write(path: &Path, content: &str) -> Result<()> {
 }
 
 /// [`atomic_write`] with explicit [`AtomicWriteOptions`]: the TS
-/// `writeFileAtomicSync(path, data, options)` shape. The opt-in this port's
-/// call sites use is `fsync: true` — the durability the TS cron state keeps
-/// (cron-jobs.ts `writeJobsState` passes `{ mode: 0o600, fsync: true }`).
+/// `writeFileAtomicSync(path, data, options)` shape. No call site opts in
+/// to `fsync: true` since the cron state (its only user) was removed.
 pub fn atomic_write_with(path: &Path, content: &str, options: AtomicWriteOptions) -> Result<()> {
     let temp = PathBuf::from(format!("{}.tmp{}", path.display(), std::process::id()));
     {

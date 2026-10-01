@@ -501,7 +501,6 @@ const TS_PACKAGED_SKILL_SET: &[&str] = &[
     "goal",
     "mcp",
     "prime-intellect",
-    "rlm-heartbeat",
     "skill-creator",
     "websearch",
 ];

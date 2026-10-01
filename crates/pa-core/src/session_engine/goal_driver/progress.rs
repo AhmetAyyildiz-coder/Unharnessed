@@ -20,19 +20,6 @@ pub(crate) const CONTINUATION_NO_PROGRESS_CAP: u32 = 3;
 /// each retry of a no-progress continuation waits twice as long.
 pub(crate) const CONTINUATION_NO_PROGRESS_BACKOFF_BASE_MS: u64 = 10_000;
 
-/// The durable one-shot wake's cron label (the no-progress backoff's
-/// `quota-resume` analogue): the daemon's boundary sites arm a one-shot
-/// cron job at [`GoalDriver::backoff_wake_at`] whose prompt is the wake
-/// marker, so the backoff's 10s/20s/40s retry actually runs instead of
-/// stalling until an unrelated boundary event.
-pub const GOAL_BACKOFF_WAKE_CRON_LABEL: &str = "goal-backoff-wake";
-
-/// The wake marker prompt (the goal-backoff analogue of
-/// `QUOTA_RESUME_MARKER_TEXT`): the scheduler fires it into the session's
-/// follow-up lane; its turn re-probes the provider, and the turn's own
-/// natural boundary re-consults the mint with the window passed.
-pub const GOAL_BACKOFF_WAKE_MARKER_TEXT: &str = "<goal_backoff_wake>\nThe goal continuation backoff window (the consecutive-no-progress cap) has elapsed; this wake is automatic. Continue the goal work from where it stopped.\n</goal_backoff_wake>";
-
 /// Whether the turn produced any output: a no-output turn is an EMPTY
 /// content block list OR one whose every block is itself empty (the
 /// abort conversion's corpse shape carries a single empty text part —

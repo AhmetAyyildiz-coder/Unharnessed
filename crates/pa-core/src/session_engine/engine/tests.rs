@@ -1,5 +1,5 @@
 //! The engine unit battery: the scripted tool loop, the child-depth
-//! stamp, the MCP-gating unlock, and the goal/heartbeat handler
+//! stamp, the MCP-gating unlock, and the goal handler
 //! registration.
 use super::*;
 use crate::session_engine::tool_bridge::{bridge_tool, ToolDefinitionBridge};
@@ -55,7 +55,6 @@ async fn engine_runs_tool_loop_and_persists() {
     let cwd = tmp.path().join("project");
     std::fs::create_dir_all(&cwd).unwrap();
     let engine = create_session(SessionEngineConfig {
-        cron_store: None,
         queued_steering_probe: None,
         image_model_router: None,
         steering_mode: None,
@@ -152,7 +151,6 @@ async fn spawned_child_prompt_stamps_its_depth() {
     let cwd = tmp.path().join("project");
     std::fs::create_dir_all(&cwd).unwrap();
     let engine = create_session(SessionEngineConfig {
-        cron_store: None,
         queued_steering_probe: None,
         image_model_router: None,
         steering_mode: None,
@@ -216,7 +214,6 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
         stream_fn: pa_agent::stream::StreamFn,
     ) -> SessionEngineConfig {
         SessionEngineConfig {
-            cron_store: None,
             queued_steering_probe: None,
             image_model_router: None,
             steering_mode: None,
@@ -316,7 +313,7 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
 }
 
 #[tokio::test]
-async fn create_session_registers_goal_and_heartbeat_handlers() {
+async fn create_session_registers_goal_handlers() {
     let dir = tempfile::TempDir::new().unwrap();
     let registration =
         pa_ai::faux::register_faux_provider(pa_ai::faux::RegisterFauxProviderOptions {
@@ -341,7 +338,6 @@ async fn create_session_registers_goal_and_heartbeat_handlers() {
     let agent_model = crate::session_engine::provider_adapter::json_round_trip(&model).unwrap();
     let stream_fn = crate::session_engine::provider_adapter::real_stream_fn(None, model.clone());
     let engine = create_session(SessionEngineConfig {
-        cron_store: None,
         cwd: dir.path().to_path_buf(),
         agent_dir: dir.path().to_path_buf(),
         model: Some(agent_model),

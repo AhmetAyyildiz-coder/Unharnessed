@@ -85,10 +85,6 @@ pub enum AcpEngineEvent {
         token_budget: Option<u64>,
         tokens_used: Option<u64>,
     },
-    /// The session's heartbeat/cron schedule changed (connection-scoped).
-    /// No in-process producer yet; mapping locked by tests.
-    #[allow(dead_code)]
-    HeartbeatsChanged,
 }
 
 /// Map one loop event to zero or more ACP updates.
@@ -184,12 +180,6 @@ pub fn acp_updates_for_event(
                     token_budget: *token_budget,
                     tokens_used: *tokens_used,
                 }),
-                ..Default::default()
-            })]
-        }
-        AcpEngineEvent::HeartbeatsChanged => {
-            vec![session_info_update(&PrimeAgentSessionMeta {
-                heartbeats_changed: Some(true),
                 ..Default::default()
             })]
         }
@@ -534,16 +524,6 @@ mod tests {
         assert_eq!(
             meta["goal"],
             json!({ "status": "active", "objective": "ship it", "tokenBudget": 1000, "tokensUsed": 42 })
-        );
-    }
-
-    #[test]
-    fn heartbeats_changed_maps_to_namespaced_meta() {
-        let mut state = MappingState::default();
-        let updates = acp_updates_for_event(&AcpEngineEvent::HeartbeatsChanged, &mut state);
-        assert_eq!(
-            meta_of(&updates[0].to_bare_value())["heartbeatsChanged"],
-            true
         );
     }
 

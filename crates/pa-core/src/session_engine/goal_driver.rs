@@ -116,7 +116,6 @@ mod progress;
 
 use progress::CONTINUATION_NO_PROGRESS_CAP;
 pub use progress::{terminal_provider_failure, turn_produced_no_output};
-pub use progress::{GOAL_BACKOFF_WAKE_CRON_LABEL, GOAL_BACKOFF_WAKE_MARKER_TEXT};
 
 impl GoalDriver {
     #[must_use]

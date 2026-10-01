@@ -39,15 +39,6 @@ In goal mode prime-agent helps an agent stay on track until a task is fully fini
 - `goal.get() -> dict`: get goal status (only one goal can be active at a time)
 - `goal.complete() -> dict`: mark goal as completed and get final goal status
 
-## Heartbeat
-
-In prime-agent, agents can create heartbeats to wake themselves up after a given period of time with remembered instructions, recurrently on a given schedule.
-
-- `rlm_heartbeat.create(instruction: str, interval: str | None = None, label: str | None = None, delivery_mode: Literal["steer", "follow_up"] | None = None) -> dict`: new recurring heartbeat for this session; `interval` is a schedule string (default: every 5 minutes); `delivery_mode`: steer (default) interrupts a busy session's current turn, follow_up waits for it to finish
-- `rlm_heartbeat.list(include_inactive: bool = False) -> dict`
-- `rlm_heartbeat.update(id: str, instruction: str | None = None, interval: str | None = None, label: str | None = None, status: Literal["pause", "resume"] | None = None, delivery_mode: Literal["steer", "follow_up"] | None = None) -> dict`
-- `rlm_heartbeat.delete(id: str) -> dict`
-
 ## MCP
 
 prime-agent has support for programmatic tools that are defined in the MCP format. Their schema is discovered at runtime.

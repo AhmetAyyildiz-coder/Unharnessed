@@ -259,7 +259,6 @@ mod tests {
             session_manager.materialize_session_file(Some(dir.path().join("sessions")));
             let engine = std::sync::Arc::new(
                 create_session(SessionEngineConfig {
-                    cron_store: None,
                     queued_steering_probe: None,
                     image_model_router: None,
                     steering_mode: None,

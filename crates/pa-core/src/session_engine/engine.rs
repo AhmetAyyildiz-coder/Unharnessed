@@ -43,7 +43,7 @@ pub struct SessionEngineConfig {
     /// Session persistence (in-memory when None).
     pub session_manager: Option<SessionManager>,
     /// Extra kernel host-request handlers (e.g. the daemon's message/observe
-    /// bridges), merged over the built-in goal/heartbeat registrations.
+    /// bridges), merged over the built-in goal registrations.
     pub extra_host_handlers: Option<crate::kernel::shared::HostRequestHandlers>,
     /// Extra skill paths.
     pub additional_skill_paths: Vec<String>,
@@ -98,15 +98,6 @@ pub struct SessionEngineConfig {
     /// servers reach the prompt's MCP gating through the same store the
     /// `replace_acp_mcp_servers` command writes.
     pub mcp_manager: Option<std::sync::Arc<std::sync::Mutex<crate::mcp::McpManager>>>,
-    /// The embedding's kernel cron wiring (the daemon worker's
-    /// scheduled-jobs store plus its session identity): the kernel's
-    /// `rlm_heartbeat.*` host requests write and read that store instead
-    /// of the engine-private `cron-jobs.json`, binding the embedding's
-    /// live/durable session identity, so agent-created heartbeats reach
-    /// the same catalog the daemon's `heartbeats_list` reads and the
-    /// scheduler fires (TS daemon-mode wires
-    /// `AgentCronJobStore.forSessionArtifacts()` into both).
-    pub cron_store: Option<super::runtime_wiring::KernelCronWiring>,
     /// The image-model routing host seam (TS agent-session's settings +
     /// registry reads at dispatch): the headless surfaces install theirs;
     /// the daemon worker stays `None` because its turn dispatch owns
@@ -218,9 +209,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         .map(|path| path.display().to_string());
     let wiring = super::runtime_wiring::wire_session_runtime(
         session_manager,
-        &config.agent_dir,
         config.queued_goal_context_purge.clone(),
-        config.cron_store.clone(),
     );
 
     let settings = crate::settings::SettingsManager::create(&cwd, &config.agent_dir);
@@ -284,7 +273,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // The context window the usage estimate and status rows read.
     let model_context_window = model.context_window;
 
-    // The runtime wiring: goal/rlm-heartbeat host handlers ride the kernel
+    // The runtime wiring: goal host handlers ride the kernel
     // provisioner, and the agent gains the `ipython` tool backed by that
     // kernel (unless the caller supplied one).
     let python_skills = super::runtime_wiring::kernel_python_skills(&resources.skills);
