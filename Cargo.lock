@@ -1077,7 +1077,6 @@ version = "0.9.8"
 dependencies = [
  "anyhow",
  "libc",
- "regex",
  "serde",
  "serde_json",
  "tempfile",

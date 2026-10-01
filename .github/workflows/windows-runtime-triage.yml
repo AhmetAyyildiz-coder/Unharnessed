@@ -73,15 +73,6 @@ jobs:
             ForEach-Object { Remove-Item -Path ("Env:" + $_.Name) -ErrorAction SilentlyContinue }
           cargo test --locked -p pa-daemon 2>&1 | Tee-Object -FilePath pa-daemon_win.log
           exit $LASTEXITCODE
-      - name: pa-tui battery
-        id: pa_tui
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          Get-ChildItem Env: | Where-Object { $_.Name -like 'PRIME_AGENT_*' } |
-            ForEach-Object { Remove-Item -Path ("Env:" + $_.Name) -ErrorAction SilentlyContinue }
-          cargo test --locked -p pa-tui 2>&1 | Tee-Object -FilePath pa-tui_win.log
-          exit $LASTEXITCODE
       - name: pa-cli battery (unit + the e2e set)
         id: pa_cli
         continue-on-error: true
@@ -94,10 +85,10 @@ jobs:
       - name: Summary + the overall verdict
         shell: pwsh
         run: |
-          $summary = "WIN_BATTERY pa-types=${{ steps.pa_types.outcome }} pa-core=${{ steps.pa_core.outcome }} pa-daemon=${{ steps.pa_daemon.outcome }} pa-tui=${{ steps.pa_tui.outcome }} pa-cli=${{ steps.pa_cli.outcome }}"
+          $summary = "WIN_BATTERY pa-types=${{ steps.pa_types.outcome }} pa-core=${{ steps.pa_core.outcome }} pa-daemon=${{ steps.pa_daemon.outcome }} pa-cli=${{ steps.pa_cli.outcome }}"
           Add-Content -Path win_battery_summary.log -Value $summary
           Write-Output $summary
-          if (@("${{ steps.pa_types.outcome }}", "${{ steps.pa_core.outcome }}", "${{ steps.pa_daemon.outcome }}", "${{ steps.pa_tui.outcome }}", "${{ steps.pa_cli.outcome }}") -contains 'failure') { exit 1 }
+          if (@("${{ steps.pa_types.outcome }}", "${{ steps.pa_core.outcome }}", "${{ steps.pa_daemon.outcome }}", "${{ steps.pa_cli.outcome }}") -contains 'failure') { exit 1 }
       - name: Upload the per-crate logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -107,7 +98,6 @@ jobs:
             pa-types_win.log
             pa-core_win.log
             pa-daemon_win.log
-            pa-tui_win.log
             pa-cli_win.log
             win_battery_summary.log
           if-no-files-found: warn

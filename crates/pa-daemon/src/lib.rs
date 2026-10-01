@@ -1,10 +1,6 @@
-//! Session supervisor, worker processes, and wire protocol for Prime Agent.
-//!
-//! Ported from the TypeScript daemon: `modes/daemon/*`, `modes/session-worker/*`,
-//! `core/session-manager.ts`, and `core/session-lease.ts`. The supervisor hosts
-//! no sessions: it spawns one worker process per active session, supervises
-//! restarts with backoff, and routes clients. Sessions persist as append-only
-//! JSONL under `<agent-dir>/sessions/` using the same layout as the TS product.
+//! The ACP stdio transport and the session-ownership guards (the session
+//! lease and its hold refusal). The background daemon this crate is named
+//! after was removed; see the crate README.
 // Pedantic-gate dispositions (fleet-uniform ruling; see this lane's PR for
 // the full rationale).
 // Stack-resident futures by design on the daemon's hot paths; boxing the

@@ -19,8 +19,7 @@
 
 //! End-to-end ACP-mode verification: the real binary speaks the ACP
 //! JSON-RPC surface over stdio, driven by the scripted faux provider, and
-//! the emitted frames are checked against the TS capture corpus
-//! (`crates/pa-daemon/testdata/acp`).
+//! the emitted frames are checked against the expected ACP shapes.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};

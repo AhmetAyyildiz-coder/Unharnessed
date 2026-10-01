@@ -1,7 +1,9 @@
 # AGENTS.md
 
-Development rules for Prime Agent (Rust) on PrimeIntellect-ai/prime-agent, branch `main`.
-Every contributor (human or agent) must read this before working on this repo.
+Development rules for Unharnessed, a stripped-down fork of Prime Agent (Rust). The upstream
+rules below still apply unless a section says otherwise; `UNHARNESSED_PLAN.md` records what
+was removed and why. Every contributor (human or agent) must read this before working on
+this repo.
 
 ## Repository
 
@@ -24,9 +26,7 @@ Every contributor (human or agent) must read this before working on this repo.
   responsibility rather than growing it further. Move related tests and docs with extracted code.
 - Name modules for what they own, not `utils` or `common`. Follow existing structure: in
   `crates/pa-core/src/kernel/manager/`, `mod.rs` connects `execution.rs`, `requests.rs`, and
-  `teardown.rs`; put a new kernel-manager concern beside them. In
-  `crates/pa-core/src/cron/store/`, `mod.rs` connects `heartbeat.rs`, `jobs.rs`, and
-  `session_artifacts.rs`; keep storage work there rather than growing the scheduler.
+  `teardown.rs`; put a new kernel-manager concern beside them.
 - Inline format args: always prefer `format!("{x}")` over positional.
 - Collapse if statements per clippy::collapsible_if.
 - Prefer method references over closures per clippy::redundant_closure_for_method_calls.
@@ -57,9 +57,9 @@ Every contributor (human or agent) must read this before working on this repo.
 - Do not add tests for statically defined values.
 - Do not add negative tests for logic that was removed.
 - Bug fixes need a regression test that fails without the fix.
-- Verifiers over self-assessment: tmux user-level tests, differential tests against the TS binary
-  on PATH, golden corpora replayed against real captured data. No lane merges without its verifier
-  passing, rerun by the reviewer where feasible.
+- Verifiers over self-assessment: end-to-end runs of the real binary
+  (`scripts/unharnessed-smoke.sh`), golden corpora replayed against real captured data. No lane
+  merges without its verifier passing, rerun by the reviewer where feasible.
 - Tests must wait for observable readiness, not fixed sleeps or retry-to-green loops. If a
   test must be disabled, give a reason at the test. Use isolated ports and temporary paths, and
   restore shared state. Run focused tests when changing their behavior.
@@ -79,16 +79,9 @@ Every contributor (human or agent) must read this before working on this repo.
   the same gates; CI runs on the org's billing (`.github/workflows/continuous.yml` on `main`
   pushes; `release.yml` on version tags). The PR-only codebase-health check reports growth
   past 2,000 lines as review guidance; it never blocks a merge.
-- **Parity-diff evidence is a merge gate** (the port's definition, not optional polish): every PR
-  that touches a user-visible surface must include a "parity-diff evidence" section in its
-  description showing the TS-binary comparison for what it changed: (1) rendered output —
-  frame-diff vs the TS binary;
-  (2) interactive behavior — the same input handled identically (keys, mouse, timing); 
-  (3) wire parity — byte-compare the TS daemon's traffic for protocol changes; (4) user-visible
-  invariants — every user action produces the same visible reaction as TS (`/compact` shows
-  started+completed; `/model` shows the selector; a refinement shows its decoration). A feature
-  that "works" but was never diffed against the TS binary does not pass review. If TS shows it,
-  Rust shows it identically; if Rust shows something TS does not, that is also a parity bug.
+- TS parity is no longer a merge gate: Unharnessed diverges from the TS product on purpose
+  (no TUI, no daemon, a minimal system prompt). Keep wire formats readable both ways where they
+  still exist (session files, settings, ACP).
 - PRs must state ownership compliance (crate README scope/non-goals/public API, dependency
   direction) and classify the change: internals, new `pub` surface, or a new
   dependency/cross-crate re-export. The latter two are architectural changes — an innocent-looking
@@ -98,13 +91,6 @@ Every contributor (human or agent) must read this before working on this repo.
   literal — edit it by hand, exactly like its TS source (there is no generator). The
   parity fixture `crates/pa-models/tests/fixtures/catalog.v1.json` refreshes with
   `scripts/generate-catalog-fixture.py`. Bulk data files are exempt from the size guidance.
-
-## Adoption telemetry
-
-Every user-visible feature ships its adoption telemetry event in the same PR as the feature:
-the event name + properties join the versioned schema (`pa-telemetry`), and a
-seam emits it from day one. Telemetry properties never carry prompt, session, or file content
-(primitives only; see `pa-telemetry`).
 
 ## Branding
 
@@ -120,12 +106,17 @@ EXPLICIT EXCEPTION: wire-protocol identifiers that must stay byte-compatible wit
 
 
 
-## Surface contract (must not change)
+## Surface contract
 
-- Tools exposed to the model: `bash`, `edit`, `ipython` (internal helpers: `rename`, `stdout`).
-- RLM kernel API in the persistent Python REPL: `rlm.spawn/find_models/collect/list_subagents/delete_subagent/create_session/progress_note`, `rlm.harness` CRUD, `agent_message.send`, `agent_observe`, `compact`, `goal`, `refine`, `attach_image`, skills (markdown + Python) per the skill contract in the base system prompt.
-- System prompt structure: layered — cache-stable static layer files (core harness description with the full API surface, mandatory usage rules, opinionated guidelines, per-model map) followed by one dynamic tail (packages, project context, skills inventory, MCP servers, environment, session role); the harness digest stays a separate `[harness-digest]` user message. `prime-agent prompt` dumps the assembled prompt with its layer breakdown.
-- CLI shape: `prime-agent` with the same commands/flags as the TS product; headless modes (RPC/daemon/session-worker) with identical behavior.
+- One tool exposed to the model: `ipython`, a persistent CPython REPL.
+- Kernel API in the REPL: `bash()` handles, and the four built-in skills `goal`, `compact`,
+  `mcp`, `attach_image` (plus any user or project skill), documented in `layers/core.md`.
+  `prompt_guards` pins the documented surface to the registered one.
+- System prompt: the cache-stable `core.md` layer (plus the per-model map) followed by one
+  dynamic tail (packages, project context, skills inventory, MCP servers, environment).
+  `prime-agent prompt` dumps the assembled prompt with its layer breakdown.
+- CLI: headless only — `-p` in `text`/`json` modes, and `--mode acp` (Agent Client Protocol
+  over stdio, the future VS Code front-end).
 
 ## Crates
 
@@ -136,26 +127,26 @@ The table summarizes each crate's current direct workspace dependencies:
 | Crate | Purpose | Direct workspace dependencies |
 | --- | --- | --- |
 | `pa-types` | Shared wire and domain types | none |
-| `pa-telemetry` | Events and sinks | none |
 | `pa-agent` | Provider-independent agent loop | none |
 | `pa-ai` | Providers, model registry, streaming | `pa-types` |
 | `pa-models` | Live model catalog and transport | `pa-ai`, `pa-types` |
-| `pa-core` | Session engine, tools, skills, kernel, settings | `pa-types`, `pa-ai`, `pa-models`, `pa-agent`, `pa-telemetry` |
-| `pa-daemon` | Supervisor, workers, wire protocol | `pa-types`, `pa-core`, `pa-agent`, `pa-ai`, `pa-telemetry`, `pa-models` |
-| `pa-tui` | Terminal UI, daemon-wire client | `pa-types` |
-| `pa-cli` | `prime-agent` binary, composition root | `pa-types`, `pa-core`, `pa-ai`, `pa-agent`, `pa-daemon`, `pa-tui`, `pa-telemetry` |
+| `pa-core` | Session engine, kernel, skills, prompts, settings | `pa-types`, `pa-ai`, `pa-models`, `pa-agent` |
+| `pa-daemon` | ACP transport, session leases, the lease-hold refusal | `pa-types`, `pa-core`, `pa-agent`, `pa-ai` |
+| `pa-cli` | `prime-agent` binary, composition root | `pa-types`, `pa-core`, `pa-ai`, `pa-agent`, `pa-daemon` |
 
 Layering rules:
 
 - Dependencies only point from higher crates to lower crates shown above. No cycles or
   reverse edges. The leaf crates are peers; add only the dependencies needed for their work.
   Shared wire/domain vocabulary belongs in `pa-types`, not in a higher crate or a duplicate.
-- `pa-tui` renders from wire types and events; it does not link the session engine.
 - `pa-cli` is a composition root: it wires crates together and contains no business logic.
 
 ## Reliability model
 
-- The daemon is a supervisor: it spawns one worker process per active session instead of hosting sessions in-process. Workers are supervised, restarted with backoff, and sessions persist on disk (append-only JSONL, same layout as `~/.prime/agent/sessions`) so reattach works even if the supervisor restarts.
+- Sessions run in the `prime-agent` process itself (`-p` or `--mode acp`); there is no daemon.
+  Sessions persist on disk (append-only JSONL under `~/.prime/agent/sessions`), a session lease
+  keeps two processes off the same file, and the kernel namespace is snapshotted so `-c`/`-r`
+  revive it.
 - No stubs, no `todo!()`, no swallowed errors (`anyhow` bubbling to UI is fine).
 
 ## References
