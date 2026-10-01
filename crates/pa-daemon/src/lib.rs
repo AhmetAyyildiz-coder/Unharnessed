@@ -41,6 +41,9 @@ mod auto_compaction;
 mod autonomous_continuation;
 pub(crate) mod backpressure;
 pub(crate) mod bash_notices;
+// The reaper's process scans run on Linux only; other unix targets still
+// compile its helpers for the unix tests, so they read as dead there.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) mod boot_reap;
 pub mod branch_navigation;
 pub(crate) mod child_status_notices;
