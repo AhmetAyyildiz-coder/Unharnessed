@@ -111,9 +111,7 @@ fn assemble_breakdown(
             // The shipped model-tool surface: `ipython` only; bash/edit
             // are kernel-resident programmatic tools.
             selected_tools: Some(vec!["ipython"]),
-            allow_recursion: Some(true),
             generic_mcp_servers: generic_servers,
-            rlm_depth: Some(0),
             ..Default::default()
         },
     )
@@ -212,10 +210,7 @@ mod tests {
     fn assembles_the_layered_prompt_for_a_directory() {
         let dir = tempfile::tempdir().unwrap();
         let breakdown = assemble_breakdown(dir.path(), Some("mock/mock-1"));
-        assert!(breakdown.assembled.starts_with("# prime-agent harness"));
-        assert!(breakdown
-            .assembled
-            .contains("Recursive agent depth: 0 (root)"));
+        assert!(breakdown.assembled.starts_with("# Unharnessed"));
         assert!(breakdown
             .assembled
             .contains("Conversation log: not persisted"));

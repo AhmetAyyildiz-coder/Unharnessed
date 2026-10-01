@@ -114,8 +114,7 @@ async fn print_mode_main(options: &RunOptions) -> Result<i32, String> {
     // The CLI `--goal` seed (TS constructor seeding): a fresh root branch
     // starts the goal and queues its continuation context as the first
     // turn's leading row; a resumed or already-seeded branch keeps its
-    // persisted goal. Depth 0 only — the print session is a root session
-    // (TS main.ts gates `initialGoal` on `rlmDepth === 0` the same way).
+    // persisted goal.
     if let Some(goal) = &options.config.initial_goal {
         engine
             .seed_initial_goal(&goal.objective, goal.token_budget.map(u64::from))
@@ -308,7 +307,6 @@ async fn build_headless_engine_with(
             custom_system_prompt: config.system_prompt.clone(),
             prompt_guidelines: config.append_system_prompt.clone(),
             generic_mcp_servers: vec![],
-            allow_recursion: None,
             session_manager,
             extra_host_handlers: None,
             additional_skill_paths: config
@@ -322,7 +320,6 @@ async fn build_headless_engine_with(
                 .map(|path| path.display().to_string())
                 .collect(),
             extra_builtin_skill_overrides: vec![],
-            rlm_depth: None,
             model_info: Some(model.clone()),
             // TS print/headless sessions build through the same
             // `createDefaultRuntimeFactory` runtime (prewarmIpythonKernel:
@@ -1260,13 +1257,11 @@ async fn build_faux_engine_with(
             custom_system_prompt: config.system_prompt.clone(),
             prompt_guidelines: config.append_system_prompt.clone(),
             generic_mcp_servers: vec![],
-            allow_recursion: None,
             session_manager,
             extra_host_handlers: None,
             additional_skill_paths: vec![],
             additional_prompt_paths: vec![],
             extra_builtin_skill_overrides: vec![],
-            rlm_depth: None,
             model_info: Some(model.clone()),
             // The faux engine is a Rust-only verification harness, not a
             // product surface: no background kernel boot in tests.

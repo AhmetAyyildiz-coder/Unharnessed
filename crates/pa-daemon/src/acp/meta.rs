@@ -19,11 +19,10 @@ pub struct PrimeAgentCwdMeta {
     pub actual: String,
 }
 
-/// Observed subagent and autonomous-continuation counts at a completion point.
+/// Observed autonomous-continuation count at a completion point.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrimeAgentQuiescenceMeta {
-    pub outstanding_subagents: u64,
     pub remaining_autonomous_continuations: u64,
 }
 
@@ -188,14 +187,13 @@ mod tests {
     fn quiescence_serializes_camel_case() {
         let wrapped = prime_agent_meta(&PrimeAgentSessionMeta {
             quiescence: Some(PrimeAgentQuiescenceMeta {
-                outstanding_subagents: 0,
                 remaining_autonomous_continuations: 0,
             }),
             ..Default::default()
         });
         assert_eq!(
             wrapped[PRIME_AGENT_META_NAMESPACE]["quiescence"],
-            json!({ "outstandingSubagents": 0, "remainingAutonomousContinuations": 0 })
+            json!({ "remainingAutonomousContinuations": 0 })
         );
     }
 }

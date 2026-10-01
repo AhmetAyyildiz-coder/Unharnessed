@@ -1,5 +1,5 @@
-//! The engine unit battery: the scripted tool loop, the child-depth
-//! stamp, the MCP-gating unlock, and the goal handler
+//! The engine unit battery: the scripted tool loop,
+//! the MCP-gating unlock, and the goal handler
 //! registration.
 use super::*;
 use crate::session_engine::tool_bridge::{bridge_tool, ToolDefinitionBridge};
@@ -69,13 +69,11 @@ async fn engine_runs_tool_loop_and_persists() {
         custom_system_prompt: None,
         prompt_guidelines: vec![],
         generic_mcp_servers: vec![],
-        allow_recursion: None,
         session_manager: None,
         extra_host_handlers: None,
         additional_skill_paths: vec![],
         additional_prompt_paths: vec![],
         extra_builtin_skill_overrides: vec![],
-        rlm_depth: None,
         model_info: None,
         on_background_work_settled: None,
         prewarm_ipython_kernel: None,
@@ -86,10 +84,7 @@ async fn engine_runs_tool_loop_and_persists() {
 
     // The system prompt is the layered assembly: static core layer
     // first, dynamic tail after.
-    assert!(engine.system_prompt.starts_with("# prime-agent harness"));
-    assert!(engine
-        .system_prompt
-        .contains("Recursive agent depth: 0 (root)"));
+    assert!(engine.system_prompt.starts_with("# Unharnessed"));
 
     let outcome = engine
         .prompt("run the echo tool", PromptOptions::default())
@@ -127,62 +122,6 @@ async fn engine_runs_tool_loop_and_persists() {
         } if user.content.text() == "run the echo tool"
     )));
     let _ = ToolDefinitionBridge::new;
-}
-
-/// A spawned child's prompt stamps its recursion depth: `create_session`
-/// at depth N reads "depth: N (not root)", never the root identity the
-/// pre-fix default (None -> 0) stamped on every child.
-#[tokio::test]
-async fn spawned_child_prompt_stamps_its_depth() {
-    let model = pa_agent::types::Model {
-        id: "m".into(),
-        name: "m".into(),
-        api: "test".into(),
-        provider: "test".into(),
-        base_url: "http://localhost".into(),
-        reasoning: false,
-        cost: pa_agent::types::UsageCost::default(),
-        context_window: 1_000,
-        max_tokens: 100,
-    };
-    let provider = Arc::new(ScriptedProvider::new(model.clone()));
-    let tmp = tempfile::tempdir().unwrap();
-    let cwd = tmp.path().join("project");
-    std::fs::create_dir_all(&cwd).unwrap();
-    let engine = create_session(SessionEngineConfig {
-        queued_steering_probe: None,
-        image_model_router: None,
-        steering_mode: None,
-        follow_up_mode: None,
-        cwd: cwd.clone(),
-        agent_dir: tmp.path().join("agent"),
-        mcp_manager: None,
-        model: Some(model),
-        thinking_level: None,
-        stream_fn: Some(provider.stream_fn()),
-        tools: vec![bridge_tool(echo_definition())],
-        custom_system_prompt: None,
-        prompt_guidelines: vec![],
-        generic_mcp_servers: vec![],
-        allow_recursion: None,
-        session_manager: None,
-        extra_host_handlers: None,
-        additional_skill_paths: vec![],
-        additional_prompt_paths: vec![],
-        extra_builtin_skill_overrides: vec![],
-        rlm_depth: Some(2),
-        model_info: None,
-        on_background_work_settled: None,
-        prewarm_ipython_kernel: None,
-        queued_goal_context_purge: None,
-    })
-    .await
-    .unwrap();
-
-    assert!(engine
-        .system_prompt
-        .contains("Recursive agent depth: 2 (not root)"));
-    assert!(!engine.system_prompt.contains("depth: 0 (root)"));
 }
 
 /// The login chain's prompt-gating end to end at the engine level: a
@@ -226,13 +165,11 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
             custom_system_prompt: None,
             prompt_guidelines: vec![],
             generic_mcp_servers: vec![],
-            allow_recursion: None,
             session_manager: None,
             extra_host_handlers: None,
             additional_skill_paths: vec![],
             additional_prompt_paths: vec![],
             extra_builtin_skill_overrides: vec![],
-            rlm_depth: None,
             model_info: None,
             on_background_work_settled: None,
             prewarm_ipython_kernel: None,

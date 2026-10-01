@@ -82,12 +82,6 @@ pub struct BuildSystemPromptOptions<'a> {
     pub context_files: Vec<(String, String)>,
     /// Pre-loaded skills.
     pub skills: Vec<Skill>,
-    /// Whether to include the subagent surface in this session.
-    pub allow_recursion: Option<bool>,
-    /// Fixed recursive-agent depth for this session.
-    pub rlm_depth: Option<u32>,
-    /// Human-readable parent name or id for child communication doctrine.
-    pub rlm_parent_agent: Option<&'a str>,
     /// Enabled user-configured generic MCP servers.
     pub generic_mcp_servers: Vec<String>,
 }
@@ -116,16 +110,6 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
                 "core",
                 layers::layer_source("core").unwrap_or_default(),
                 layers::CORE_LAYER.trim().to_string(),
-            ));
-            segments.push(PromptSegment::static_segment(
-                "usage",
-                layers::layer_source("usage").unwrap_or_default(),
-                layers::USAGE_LAYER.trim().to_string(),
-            ));
-            segments.push(PromptSegment::static_segment(
-                "opinionated",
-                layers::layer_source("opinionated").unwrap_or_default(),
-                layers::OPINIONATED_LAYER.trim().to_string(),
             ));
             let per_model = layers::per_model_text(options.model);
             if !per_model.is_empty() {
@@ -199,11 +183,11 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         environment_section(options),
     ));
 
-    let role = session_role_section(options, has_ipython);
+    let role = session_role_section(has_ipython);
     if !role.is_empty() {
         segments.push(PromptSegment::dynamic_segment(
             "session-role",
-            "RLM recursion state",
+            "tool selection",
             role,
         ));
     }
@@ -297,36 +281,12 @@ fn environment_section(options: &BuildSystemPromptOptions) -> String {
     lines.join("\n")
 }
 
-fn session_role_section(options: &BuildSystemPromptOptions, has_ipython: bool) -> String {
-    let depth = options.rlm_depth.unwrap_or(0);
-    let mut lines = vec![format!(
-        "Recursive agent depth: {depth}{}",
-        if depth == 0 { " (root)" } else { " (not root)" }
-    )];
-    if !has_ipython {
-        lines.push(
-            "This session has no Python REPL (`ipython` tool): the programmatic tools described above are unavailable here."
-                .to_string(),
-        );
+fn session_role_section(has_ipython: bool) -> String {
+    if has_ipython {
+        return String::new();
     }
-    if options.allow_recursion == Some(false) {
-        lines.push("Subagent spawning is disabled in this session.".to_string());
-    }
-    if depth > 0 {
-        lines.push(format!(
-            "You are a child agent spawned by {}. Task prompts are labeled `[task from parent]`.",
-            options.rlm_parent_agent.unwrap_or("your parent agent")
-        ));
-        if has_ipython {
-            lines.push(
-                "When a task calls for an answer, reply explicitly with `await agent_message.send(message, receiver_role=\"parent\")`. Not every message or task needs a reply; continue cleanup after sending and go idle normally.".to_string(),
-            );
-            lines.push(
-                "For long-running work, report brief progress with `await rlm.progress_note('...')` (at most 512 characters, throttled to about one note per 10 seconds); the parent sees notes without needing a reply.".to_string(),
-            );
-        }
-    }
-    lines.join("\n")
+    "This session has no Python REPL (`ipython` tool): the programmatic tools described above are unavailable here."
+        .to_string()
 }
 
 fn today() -> String {
@@ -438,7 +398,7 @@ mod tests {
         let breakdown = system_prompt_breakdown(&base_options());
         let prompt = &breakdown.assembled;
         // Static layers lead, in order.
-        assert!(prompt.starts_with("# prime-agent harness"));
+        assert!(prompt.starts_with("# Unharnessed"));
         assert_eq!(breakdown.segments[0].kind, SegmentKind::Static);
         assert_eq!(breakdown.segments[0].name, "core");
         let names: Vec<&str> = breakdown
@@ -447,9 +407,9 @@ mod tests {
             .map(|segment| segment.name)
             .collect();
         assert_eq!(
-            names[..4],
-            ["core", "usage", "opinionated", "packages"],
-            "core/usage/opinionated layers, then the dynamic tail"
+            names[..2],
+            ["core", "packages"],
+            "the core layer, then the dynamic tail"
         );
         // The cached prefix is exactly the static segments.
         assert_eq!(
@@ -461,7 +421,6 @@ mod tests {
         assert!(tail.contains("Working directory: /w"));
         assert!(tail.contains("Conversation log: /log.jsonl"));
         assert!(tail.contains("<available_skills>"));
-        assert!(tail.contains("Recursive agent depth: 0 (root)"));
         assert!(tail.contains("Pre-installed Python packages: requests, httpx,"));
     }
 
@@ -470,8 +429,6 @@ mod tests {
         let mut other = base_options();
         other.cwd = "/somewhere/else".to_string();
         other.messages_path = None;
-        other.rlm_depth = Some(2);
-        other.rlm_parent_agent = Some("the lead");
         other.generic_mcp_servers = vec!["slack".to_string()];
         other.context_files = vec![("AGENTS.md".to_string(), "Rule one.".to_string())];
         let left = system_prompt_breakdown(&base_options());
@@ -485,8 +442,6 @@ mod tests {
         // And the tails differ in the session-specific values.
         assert!(right.assembled[right.cached_prefix_len..]
             .contains("Enabled generic MCP servers: `slack`"));
-        assert!(right.assembled[right.cached_prefix_len..]
-            .contains("You are a child agent spawned by the lead."));
     }
 
     #[test]
@@ -502,7 +457,7 @@ mod tests {
         assert!(prompt.contains("Working directory: /w"));
         assert!(prompt.contains("Current date: "));
         // The layered defaults are gone.
-        assert!(!prompt.contains("# prime-agent harness"));
+        assert!(!prompt.contains("# Unharnessed"));
     }
 
     #[test]

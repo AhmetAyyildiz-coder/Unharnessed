@@ -3,7 +3,7 @@ name = "pa-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Session engine: tools, skills, prompts, kernel, subagents, settings."
+description = "Session engine: tools, skills, prompts, kernel, settings."
 
 [dependencies]
 anyhow.workspace = true

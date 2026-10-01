@@ -45,8 +45,6 @@ fn fixture_prompt() -> (String, usize) {
         messages_path: Some("/w/sessions/fixture-session.jsonl".to_string()),
         skills: loaded.skills,
         selected_tools: Some(vec!["ipython"]),
-        allow_recursion: Some(true),
-        rlm_depth: Some(0),
         ..Default::default()
     })
     .replace(skills_dir.to_string_lossy().as_ref(), "<skills-dir>");

@@ -24,7 +24,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use pa_core::prompts::layers::{self, CORE_LAYER, OPINIONATED_LAYER, PER_MODEL_MAP, USAGE_LAYER};
+use pa_core::prompts::layers::{self, CORE_LAYER, PER_MODEL_MAP};
 use pa_core::prompts::system_prompt::{
     system_prompt_breakdown, BuildSystemPromptOptions, SegmentKind,
 };
@@ -59,24 +59,17 @@ fn sorted_bundled_skills() -> Vec<pa_core::skills::Skill> {
 const DYNAMIC_ONLY_MARKERS: &[&str] = &[
     "Working directory:",
     "Conversation log:",
-    "Recursive agent depth:",
     "Current date:",
     "<available_skills>",
     "Enabled generic MCP servers:",
     "# Project Context",
     "# Additional Guidance",
     "Pre-installed Python packages:",
-    "You are a child agent spawned by",
 ];
 
 #[test]
 fn static_layers_contain_no_dynamic_content() {
-    for (name, text) in [
-        ("core", CORE_LAYER),
-        ("usage", USAGE_LAYER),
-        ("opinionated", OPINIONATED_LAYER),
-        ("per-model", PER_MODEL_MAP),
-    ] {
+    for (name, text) in [("core", CORE_LAYER), ("per-model", PER_MODEL_MAP)] {
         for marker in DYNAMIC_ONLY_MARKERS {
             assert!(
                 !text.contains(marker),
@@ -101,8 +94,6 @@ fn cached_prefix_is_stable_across_sessions() {
 
     options.cwd = "/completely/different".into();
     options.messages_path = None;
-    options.rlm_depth = Some(3);
-    options.rlm_parent_agent = Some("orchestrator");
     options.generic_mcp_servers = vec!["slack".into(), "github".into()];
     options.context_files = vec![("AGENTS.md".into(), "Never commit main.".into())];
     options.prompt_guidelines = Some(vec!["prefer tabs".into()]);
@@ -125,14 +116,11 @@ fn cached_prefix_is_stable_across_sessions() {
     let first_tail = &first.assembled[first.cached_prefix_len..];
     assert!(first_tail.contains("Current date: "));
     assert!(first_tail.contains("Working directory: /first/cwd"));
-    assert!(first_tail.contains("Recursive agent depth: 0 (root)"));
     assert!(first_tail.contains("<available_skills>"));
     assert!(first_tail.contains("Pre-installed Python packages:"));
     let second_tail = &second.assembled[second.cached_prefix_len..];
     assert!(second_tail.contains("/completely/different"));
     assert!(second_tail.contains("Enabled generic MCP servers: `github`, `slack`."));
-    assert!(second_tail.contains("Recursive agent depth: 3 (not root)"));
-    assert!(second_tail.contains("You are a child agent spawned by orchestrator."));
     assert!(second_tail.contains("# Project Context"));
     assert!(second_tail.contains("# Additional Guidance"));
     assert!(second_tail.ends_with("And one more thing."));
@@ -167,17 +155,7 @@ fn prompt_token_for_host_request(request: &str) -> Option<String> {
     if INTERNAL_HOST_REQUESTS.contains(&request) {
         return None;
     }
-    Some(
-        match request {
-            "rlm.run" => "rlm.spawn",
-            "rlm.progress.note" => "rlm.progress_note",
-            "agent_observe.list" | "agent_message.list_agents" => "agent_observe.list_agents",
-            "agent_observe.get" => "agent_observe.get_agent",
-            "agent_observe.recent" => "agent_observe.recent_messages",
-            other => other,
-        }
-        .to_string(),
-    )
+    Some(request.to_string())
 }
 
 /// Kernel-side programmatic tools implemented by the vendored
@@ -414,11 +392,16 @@ fn required_surface_tokens() -> BTreeSet<String> {
     required
 }
 
-/// Surface tokens documented in the core layer: bullet entries whose first
-/// backtick token is a lowercase module path.
+/// Surface tokens documented in the core layer: bullet entries of its
+/// `## Functions in the REPL` section whose first backtick token is a
+/// lowercase module path (the rules section quotes REPL names too).
 fn documented_surface_tokens() -> BTreeSet<String> {
     let mut documented = BTreeSet::new();
-    for line in CORE_LAYER.lines() {
+    let section = CORE_LAYER
+        .split("\n## ")
+        .find(|section| section.starts_with("Functions in the REPL"))
+        .expect("core.md documents the REPL functions");
+    for line in section.lines() {
         let Some(rest) = line.trim_start().strip_prefix("- `") else {
             continue;
         };

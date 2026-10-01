@@ -220,8 +220,7 @@ fn fork_from_copies_the_branch_under_a_fresh_header() {
         "the fork file lives in the target session dir"
     );
 
-    // Fresh header: new id, target cwd, source as parentSession, source
-    // depth carried over.
+    // Fresh header: new id, target cwd, source as parentSession.
     let header = forked.get_header().unwrap();
     assert_ne!(header.id, source.get_session_id());
     assert_eq!(header.cwd, target_cwd.display().to_string());
@@ -229,7 +228,6 @@ fn fork_from_copies_the_branch_under_a_fresh_header() {
         header.parent_session.as_deref(),
         Some(source_file.display().to_string().as_str())
     );
-    assert_eq!(header.rlm_depth, source.get_header().unwrap().rlm_depth);
 
     // The branch copied: the user + assistant rows survive with the
     // same ids; the git_state row is gone; its child re-linked to the

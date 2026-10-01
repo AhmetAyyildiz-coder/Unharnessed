@@ -36,8 +36,6 @@ pub struct SessionEngineConfig {
     pub prompt_guidelines: Vec<String>,
     /// Enabled generic MCP server names.
     pub generic_mcp_servers: Vec<String>,
-    /// Suppress the rlm recursion guidance.
-    pub allow_recursion: Option<bool>,
     /// Session persistence (in-memory when None).
     pub session_manager: Option<SessionManager>,
     /// Extra kernel host-request handlers (e.g. the daemon's message/observe
@@ -50,9 +48,6 @@ pub struct SessionEngineConfig {
     /// Force-exclude patterns for built-in skills (e.g. unauthenticated
     /// integrations); the MCP manager seam.
     pub extra_builtin_skill_overrides: Vec<String>,
-    /// The session's depth in the RLM recursion tree (0 for top-level
-    /// sessions).
-    pub rlm_depth: Option<u32>,
     /// The full registry model (input modalities for `model.info`); the
     /// engine derives minimal facts from `model` when absent.
     pub model_info: Option<pa_types::ai::Model>,
@@ -76,9 +71,8 @@ pub struct SessionEngineConfig {
     pub steering_mode: Option<pa_agent::agent::QueueMode>,
     pub follow_up_mode: Option<pa_agent::agent::QueueMode>,
     /// Boot the session's kernel in the background at creation (TS
-    /// `prewarmIpythonKernel` from `createDefaultRuntimeFactory`): a main
-    /// session (depth 0, the engine's gate like the TS `rlmDepth === 0`
-    /// check) whose `ipython` tool is active starts its kernel without
+    /// `prewarmIpythonKernel` from `createDefaultRuntimeFactory`): a
+    /// session whose `ipython` tool is active starts its kernel without
     /// waiting for the first tool call. Boot failures are swallowed (they
     /// surface on the next `ensure()`), and the lazy first-call start
     /// stays intact.
@@ -364,20 +358,16 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let active_tool_names: Vec<String> = tools.iter().map(|tool| tool.name().to_string()).collect();
 
     // The TS prewarm (agent-session.ts `_buildRuntime`, behind
-    // `createDefaultRuntimeFactory`'s `prewarmIpythonKernel: true`): a main
-    // session (depth 0 — the session gate TS applies at
-    // `this._prewarmIpythonKernel = config.prewarmIpythonKernel && rlmDepth
-    // === 0`) boots its kernel in the background once the tool registry
+    // `createDefaultRuntimeFactory`'s `prewarmIpythonKernel: true`): the
+    // session boots its kernel in the background once the tool registry
     // shows `ipython` active. The TS `hasSnapshot` arm ORs in: a resumed
     // session whose artifact dir carries a kernel snapshot prewarms even
-    // when the config flag is off (and at any depth — only the config
-    // operand is depth-gated), so its namespace revives before the first
+    // when the config flag is off, so its namespace revives before the first
     // turn and the `ipython_state_restored` notice lands ahead of it.
     // Failures are swallowed there and surface on the next `ensure()`, and
     // an already-started kernel short-circuits it, so the lazy first-call
     // start stays the fallback.
-    let prewarm_configured =
-        config.prewarm_ipython_kernel.unwrap_or(false) && config.rlm_depth.unwrap_or(0) == 0;
+    let prewarm_configured = config.prewarm_ipython_kernel.unwrap_or(false);
     if (prewarm_configured || has_snapshot)
         && active_tool_names.iter().any(|name| name == "ipython")
     {
@@ -410,12 +400,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
                     .map(String::as_str)
                     .collect::<Vec<_>>(),
             ),
-            allow_recursion: config.allow_recursion,
-            // The session's recursion depth rides the dynamic tail's
-            // session-role section: a spawned child's prompt must read
-            // "depth: N (not root)" with the child-agent reply doctrine,
-            // never the root identity.
-            rlm_depth: config.rlm_depth,
             generic_mcp_servers,
             prompt_guidelines: Some(prompt_guidelines),
             ..Default::default()

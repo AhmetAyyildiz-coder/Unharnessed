@@ -459,7 +459,6 @@ pub async fn publish_completion_envelope(
     remaining_autonomous_continuations: u64,
 ) -> anyhow::Result<()> {
     let quiescence = PrimeAgentQuiescenceMeta {
-        outstanding_subagents: 0,
         remaining_autonomous_continuations,
     };
     let info_meta = PrimeAgentSessionMeta {

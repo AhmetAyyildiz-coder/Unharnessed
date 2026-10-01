@@ -807,9 +807,6 @@ fn acp_autonomous_token_limit_maps_to_max_tokens_stop_reason() {
         &completion["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"]["autonomous"];
     assert_eq!(autonomous["enabled"], true);
     assert_eq!(autonomous["turnsUsed"], 1);
-    let quiescence =
-        &completion["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"]["quiescence"];
-    assert_eq!(quiescence["outstandingSubagents"], 0);
 
     assert_eq!(
         prompt_response["result"],

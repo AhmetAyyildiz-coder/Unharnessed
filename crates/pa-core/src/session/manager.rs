@@ -79,7 +79,6 @@ pub use ids::{format_iso, format_iso_now, get_session_file_path};
 // fork_from, materialize_session_file).
 mod header;
 pub use header::read_session_header;
-use header::{is_valid_rlm_depth, resolve_session_rlm_depth, root_rlm_depth_from_env};
 
 // The git-context concern (the quiet git probes and the header capture)
 // moved to the child module at the same tree position
@@ -108,7 +107,6 @@ pub type SessionPersistListener = Box<dyn Fn(&Path) + Send + Sync>;
 pub struct NewSessionOptions {
     pub id: Option<String>,
     pub parent_session: Option<String>,
-    pub rlm_depth: Option<u64>,
 }
 
 /// The stateful session writer/reader.

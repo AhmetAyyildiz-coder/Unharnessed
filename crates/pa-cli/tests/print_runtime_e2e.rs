@@ -75,7 +75,6 @@ fn print_mode_json_streams_ts_shaped_events() {
     assert_eq!(lines[0]["type"], "session");
     assert_eq!(lines[0]["version"], 3);
     assert!(lines[0]["timestamp"].is_string());
-    assert_eq!(lines[0]["rlmDepth"], 0);
     let types: Vec<&str> = lines
         .iter()
         .map(|line| line["type"].as_str().unwrap_or_default())

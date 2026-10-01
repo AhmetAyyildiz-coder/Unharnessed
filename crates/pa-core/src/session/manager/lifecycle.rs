@@ -6,8 +6,7 @@
 use super::repair::repair_jsonl_damage;
 use super::{
     capture_git_context, create_session_id, format_iso_now, get_session_file_path,
-    is_valid_rlm_depth, load_entries_from_file, migrate_to_current_version,
-    resolve_session_rlm_depth, root_rlm_depth_from_env, AgentMessage, FileEntry, HashMap,
+    load_entries_from_file, migrate_to_current_version, AgentMessage, FileEntry, HashMap,
     NewSessionOptions, Path, PathBuf, SessionHeader, SessionManager, CURRENT_SESSION_VERSION,
 };
 
@@ -232,20 +231,16 @@ impl SessionManager {
                 source_path.display()
             ));
         }
-        let source_header = entries
+        if !entries
             .iter()
-            .find_map(|entry| match entry {
-                FileEntry::Header { header } => Some(header.clone()),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                format!(
-                    "Cannot fork: source session has no header: {}",
-                    source_path.display()
-                )
-            })?;
+            .any(|entry| matches!(entry, FileEntry::Header { .. }))
+        {
+            return Err(format!(
+                "Cannot fork: source session has no header: {}",
+                source_path.display()
+            ));
+        }
         migrate_to_current_version(&mut entries);
-        let rlm_depth = resolve_session_rlm_depth(&source_header, source_path);
 
         let mut forked = Self::persisted(target_cwd, session_dir);
         // A fresh unique id + header (TS `createUniqueSessionFileTarget`):
@@ -254,7 +249,6 @@ impl SessionManager {
         forked.new_session(&NewSessionOptions {
             id: None,
             parent_session: Some(source_path.display().to_string()),
-            rlm_depth: Some(rlm_depth),
         });
         let branch = forked_branch_entries(entries);
         // The copied rows' assistant entries keep the append path durable
@@ -375,14 +369,7 @@ impl SessionManager {
             });
             self.session_id = header_id.unwrap_or_else(create_session_id);
 
-            let mut should_rewrite = migrate_to_current_version(&mut entries);
-            if let Some(FileEntry::Header { header }) = entries.first_mut() {
-                if header.parent_session.is_some() && !is_valid_rlm_depth(header.rlm_depth) {
-                    let depth = resolve_session_rlm_depth(header, &path);
-                    header.rlm_depth = Some(depth);
-                    should_rewrite = true;
-                }
-            }
+            let should_rewrite = migrate_to_current_version(&mut entries);
             self.file_entries = entries;
             if should_rewrite {
                 self.rewrite_file();
@@ -433,14 +420,6 @@ impl SessionManager {
             .persist
             .then(|| capture_git_context(&self.cwd))
             .flatten();
-        let rlm_depth = match options.rlm_depth {
-            Some(depth) => Some(depth),
-            None => options
-                .parent_session
-                .as_deref()
-                .map(|_| 0)
-                .or(Some(root_rlm_depth_from_env())),
-        };
         let header = FileEntry::Header {
             header: SessionHeader {
                 id: self.session_id.clone(),
@@ -448,7 +427,7 @@ impl SessionManager {
                 timestamp,
                 cwd: self.cwd.display().to_string(),
                 parent_session: options.parent_session.clone(),
-                rlm_depth,
+                rlm_depth: None,
                 git,
                 rest: pa_types::JsonMap::new(),
             },
@@ -505,12 +484,7 @@ impl SessionManager {
                 parent_session: previous_header
                     .as_ref()
                     .and_then(|header| header.parent_session.clone()),
-                rlm_depth: Some(
-                    previous_header
-                        .as_ref()
-                        .and_then(|header| header.rlm_depth)
-                        .unwrap_or(0),
-                ),
+                rlm_depth: None,
                 git,
                 rest: pa_types::JsonMap::new(),
             },

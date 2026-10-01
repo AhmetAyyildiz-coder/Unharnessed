@@ -1,11 +1,10 @@
 //! Static system-prompt layers: human-editable markdown files assembled into
 //! the cache-stable prefix of the prompt. The layers are, in order:
 //!
-//! 1. `core.md` — the harness description and the full programmatic-tool API
-//!    surface (one tool: `ipython`; everything else lives in the REPL).
-//! 2. `usage.md` — mandatory usage rules.
-//! 3. `opinionated.md` — style and engineering guidelines users may override.
-//! 4. `per_model.md` — the per-model instruction map (blocks keyed by model
+//! 1. `core.md` — the harness description, the full programmatic-tool API
+//!    surface (one tool: `ipython`; everything else lives in the REPL), and
+//!    the usage rules.
+//! 2. `per_model.md` — the per-model instruction map (blocks keyed by model
 //!    selector patterns; shipped empty, the mechanism is live).
 //!
 //! Layer files must never contain session-specific values: the cached
@@ -14,23 +13,17 @@
 
 /// The core harness layer (file `layers/core.md`).
 pub const CORE_LAYER: &str = include_str!("layers/core.md");
-/// The mandatory usage layer (file `layers/usage.md`).
-pub const USAGE_LAYER: &str = include_str!("layers/usage.md");
-/// The opinionated guidelines layer (file `layers/opinionated.md`).
-pub const OPINIONATED_LAYER: &str = include_str!("layers/opinionated.md");
 /// The per-model instruction map (file `layers/per_model.md`).
 pub const PER_MODEL_MAP: &str = include_str!("layers/per_model.md");
 
 /// Layer names, in assembly order, for breakdown rendering.
-pub const LAYER_NAMES: [&str; 4] = ["core", "usage", "opinionated", "per-model"];
+pub const LAYER_NAMES: [&str; 2] = ["core", "per-model"];
 
 /// Source file of one layer (breakdown provenance).
 #[must_use]
 pub fn layer_source(name: &str) -> Option<&'static str> {
     match name {
         "core" => Some("prompts/layers/core.md"),
-        "usage" => Some("prompts/layers/usage.md"),
-        "opinionated" => Some("prompts/layers/opinionated.md"),
         "per-model" => Some("prompts/layers/per_model.md"),
         _ => None,
     }
@@ -152,11 +145,7 @@ pub fn per_model_text(model: Option<&str>) -> Vec<String> {
 /// what a provider may cache; everything after it is session-specific.
 #[must_use]
 pub fn static_prefix(model: Option<&str>) -> String {
-    let mut parts: Vec<String> = vec![
-        CORE_LAYER.trim().to_string(),
-        USAGE_LAYER.trim().to_string(),
-        OPINIONATED_LAYER.trim().to_string(),
-    ];
+    let mut parts: Vec<String> = vec![CORE_LAYER.trim().to_string()];
     parts.extend(per_model_text(model));
     parts.join("\n\n")
 }
@@ -202,18 +191,9 @@ mod tests {
     #[test]
     fn static_prefix_is_layer_composition() {
         let prefix = static_prefix(None);
-        assert!(prefix.starts_with("# prime-agent harness"));
-        assert!(prefix.contains("The following are mandatory rules"));
-        assert!(prefix.contains("guidelines to agents have been shown"));
-        // Exact composition: the three constant layers, no per-model text.
-        assert_eq!(
-            prefix,
-            format!(
-                "{}\n\n{}\n\n{}",
-                CORE_LAYER.trim(),
-                USAGE_LAYER.trim(),
-                OPINIONATED_LAYER.trim()
-            )
-        );
+        assert!(prefix.starts_with("# Unharnessed"));
+        assert!(prefix.contains("## Rules"));
+        // Exact composition: the core layer, no per-model text.
+        assert_eq!(prefix, CORE_LAYER.trim());
     }
 }
