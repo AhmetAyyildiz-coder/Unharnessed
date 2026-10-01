@@ -332,7 +332,7 @@ impl AcpSession {
 
     /// The shared outcome→event mapping for the threshold and requested
     /// arms (TS `_runAutoCompaction`'s success / catch arms): a ran
-    /// compaction publishes its result (and counts adoption telemetry),
+    /// compaction publishes its result,
     /// a skip records the warning disclosure, a cancel records the
     /// aborted disclosure, and a failure records the error disclosure.
     async fn finish_compaction(
@@ -343,9 +343,6 @@ impl AcpSession {
     ) {
         match outcome {
             Ok(CompactOutcome::Ran(run)) => {
-                if let Some(telemetry) = &engine.telemetry {
-                    telemetry.note_compaction(Some(run.duration_ms));
-                }
                 publish_compaction_end(self, Some(&run.result)).await;
             }
             Ok(CompactOutcome::Skipped(message)) => {
@@ -485,9 +482,6 @@ impl AcpSession {
         let outcome = run_compaction(self, engine, model, api_key, instructions.as_deref()).await;
         match outcome {
             Ok(CompactOutcome::Ran(run)) => {
-                if let Some(telemetry) = &engine.telemetry {
-                    telemetry.note_compaction(Some(run.duration_ms));
-                }
                 publish_compaction_end(self, Some(&run.result)).await;
                 // The compaction rebuild re-adds the error turn from the
                 // kept tail: drop it again so the retried request is

@@ -207,7 +207,6 @@ async fn abort_during_a_kernel_cell_settles_the_turn_immediately() {
         additional_prompt_paths: Vec::new(),
         extra_builtin_skill_overrides: Vec::new(),
         rlm_depth: None,
-        telemetry: None,
         model_info: None,
         mcp_manager: None,
         prewarm_ipython_kernel: None,

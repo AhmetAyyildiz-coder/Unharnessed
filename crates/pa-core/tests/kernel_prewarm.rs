@@ -16,7 +16,7 @@
 //!
 //! - a main session whose engine config requests the prewarm boots its
 //!   kernel in the background at creation — observable through the
-//!   `kernel bootstrap` telemetry event — so a compaction with NO `ipython`
+//!   provisioner's running kernel — so a compaction with NO `ipython`
 //!   tool use still lands the `ipython_state` notice row (TS parity: the
 //!   TS daemon prewarms, so its sessions always have the running kernel the
 //!   post-compaction notice reads);
@@ -27,15 +27,13 @@
 //! venv); like `kernel_lifecycle.rs`, these tests skip (with a note) on
 //! machines without a live install so the suite stays hermetic elsewhere.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use pa_core::session_engine::compact_session::CompactOutcome;
-use pa_core::session_engine::engine::{create_session, SessionEngineConfig};
+use pa_core::session_engine::engine::{create_session, SessionEngine, SessionEngineConfig};
 use pa_core::session_engine::provider_adapter::{json_round_trip, real_stream_fn};
-use pa_core::session_engine::telemetry::{build_client, TelemetryWiring};
 use pa_core::session_engine::{PromptOptions, PromptOutcome};
-use pa_core::settings::SettingsManager;
 use pa_types::session::FileEntry;
 
 /// The faux provider registry is process-global and both tests drive it:
@@ -113,46 +111,29 @@ fn agent_model(model: &pa_types::ai::Model) -> pa_agent::types::Model {
     json_round_trip(model).expect("model conversion")
 }
 
-/// Every `kernel bootstrap` telemetry event flushed to the local mirror so
-/// far (`<agentDir>/telemetry.jsonl`, the transparency sink).
-async fn kernel_bootstrap_events(
-    client: &pa_telemetry::TelemetryClient,
-    agent_dir: &Path,
-) -> Vec<serde_json::Value> {
-    client.flush().await.expect("telemetry flush");
-    let mirror = agent_dir.join("telemetry.jsonl");
-    let body = std::fs::read_to_string(&mirror).unwrap_or_default();
-    body.lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|event| {
-            event.get("name").and_then(serde_json::Value::as_str) == Some("kernel bootstrap")
-        })
-        .collect()
+/// Whether the session's kernel finished booting and is running (the
+/// provisioner the engine exposes for liveness probes).
+fn kernel_running(engine: &SessionEngine) -> bool {
+    engine
+        .kernel_provisioner_weak()
+        .upgrade()
+        .is_some_and(|provisioner| provisioner.has_running_kernel())
 }
 
-/// Wait for the prewarmed boot to finish: poll the telemetry mirror for the
-/// `kernel bootstrap` success event (the boot is a background task, and the
-/// client flushes on its interval, so both waits fold into this poll).
-async fn wait_for_kernel_boot(client: &pa_telemetry::TelemetryClient, agent_dir: &Path) {
+/// Wait for the prewarmed boot to finish (the boot is a background task).
+async fn wait_for_kernel_boot(engine: &SessionEngine) {
     let deadline = Instant::now() + Duration::from_mins(2);
-    loop {
-        let events = kernel_bootstrap_events(client, agent_dir).await;
-        if events
-            .iter()
-            .any(|event| event["properties"]["outcome"] == "success")
-        {
-            return;
-        }
+    while !kernel_running(engine) {
         assert!(
             Instant::now() < deadline,
-            "the prewarmed kernel never reported its bootstrap"
+            "the prewarmed kernel never finished booting"
         );
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
 
 /// The prewarm fires at creation (no `ipython` tool use anywhere): the
-/// background boot reports through telemetry, the session's compaction sees
+/// background boot completes, the session's compaction sees
 /// a running kernel, and the hidden `ipython_state` notice lands on the
 /// durable entries — with the empty-namespace arm, because the model never
 /// ran a cell.
@@ -178,8 +159,6 @@ async fn prewarmed_kernel_lands_compaction_notice_without_tool_use() {
         .to_string(),
     )
     .expect("settings");
-    let settings = SettingsManager::create(&cwd, &agent_dir);
-    let client = build_client(&settings, &agent_dir);
 
     // Two plain text turns (a single turn is too short for a cut) and the
     // compaction summarizer's reply; no `ipython` tool call anywhere.
@@ -196,11 +175,6 @@ async fn prewarmed_kernel_lands_compaction_notice_without_tool_use() {
         model: Some(agent_model(&faux.model)),
         stream_fn: Some(faux.stream_fn),
         tools: Vec::new(),
-        telemetry: Some(TelemetryWiring {
-            client: client.clone(),
-            execution_mode: Some("test".to_string()),
-            now: None,
-        }),
         prewarm_ipython_kernel: Some(true),
         ..Default::default()
     })
@@ -208,7 +182,7 @@ async fn prewarmed_kernel_lands_compaction_notice_without_tool_use() {
     .expect("create the prewarmed session");
 
     // The prewarm's boot, without a single ipython tool call.
-    wait_for_kernel_boot(&client, &agent_dir).await;
+    wait_for_kernel_boot(&engine).await;
 
     // Plain text turns: history for the compaction, no tool use.
     for turn in ["history turn one", "history turn two"] {
@@ -261,7 +235,7 @@ async fn prewarmed_kernel_lands_compaction_notice_without_tool_use() {
 
 /// The TS depth gate: subagent sessions (rlmDepth > 0) keep the lazy
 /// first-call start even when the runtime factory passes
-/// `prewarmIpythonKernel: true` — no boot, no `kernel bootstrap` event.
+/// `prewarmIpythonKernel: true` — no boot.
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
 async fn subagent_sessions_stay_lazy_despite_the_prewarm_flag() {
@@ -276,8 +250,6 @@ async fn subagent_sessions_stay_lazy_despite_the_prewarm_flag() {
     std::fs::create_dir_all(&agent_dir).expect("agent dir");
     let cwd = dir.path().join("project");
     std::fs::create_dir_all(&cwd).expect("cwd");
-    let settings = SettingsManager::create(&cwd, &agent_dir);
-    let client = build_client(&settings, &agent_dir);
 
     let faux = faux_session(vec!["ok".to_string()]);
     let engine = create_session(SessionEngineConfig {
@@ -288,11 +260,6 @@ async fn subagent_sessions_stay_lazy_despite_the_prewarm_flag() {
         model: Some(agent_model(&faux.model)),
         stream_fn: Some(faux.stream_fn),
         tools: Vec::new(),
-        telemetry: Some(TelemetryWiring {
-            client: client.clone(),
-            execution_mode: Some("test".to_string()),
-            now: None,
-        }),
         rlm_depth: Some(1),
         prewarm_ipython_kernel: Some(true),
         ..Default::default()
@@ -316,14 +283,13 @@ async fn subagent_sessions_stay_lazy_despite_the_prewarm_flag() {
         "the subagent keeps the lazy ipython tool: {tool_names:?}"
     );
 
-    // Long enough for a wrongly-fired prewarm to boot and report; the
-    // lazy session reports nothing.
+    // Long enough for a wrongly-fired prewarm to boot; the lazy session
+    // never starts its kernel.
     let deadline = Instant::now() + Duration::from_secs(8);
     while Instant::now() < deadline {
-        let events = kernel_bootstrap_events(&client, &agent_dir).await;
         assert!(
-            events.is_empty(),
-            "a depth-1 session must not prewarm: {events:?}"
+            !kernel_running(&engine),
+            "a depth-1 session must not prewarm"
         );
         tokio::time::sleep(Duration::from_millis(500)).await;
     }

@@ -9,12 +9,7 @@
 //! renames never see this failure mode - EPERM/EACCES there are real
 //! permission problems - so the retry never fires off Windows.
 //!
-//! This crate sits at the bottom of the workspace dependency graph and
-//! every persist owner (pa-telemetry's install id, pa-core's settings and
-//! session persists, pa-daemon's descriptors/journals/session store)
-//! already depends on it, so the shared primitive lives here; pa-core
-//! re-exports it as `platform::rename_onto` so its platform wall stays the
-//! engine's single platform entry.
+//! It lives in the platform wall, the engine's single platform entry.
 
 use std::fs;
 use std::io;

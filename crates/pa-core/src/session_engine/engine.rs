@@ -15,8 +15,6 @@ use crate::resources::{load_resources, ResourceLoaderOptions};
 use crate::session::manager::SessionManager;
 use crate::skills::PromptTemplate;
 
-use pa_telemetry::base_properties;
-
 use super::{AgentSession, PromptOptions, PromptOutcome};
 
 /// Everything needed to assemble a session.
@@ -58,9 +56,6 @@ pub struct SessionEngineConfig {
     /// The full registry model (input modalities for `model.info`); the
     /// engine derives minimal facts from `model` when absent.
     pub model_info: Option<pa_types::ai::Model>,
-    /// Session telemetry wiring (`PostHog` client + execution mode). `None`
-    /// (opt-out) installs nothing; non-depth-0 sessions never install.
-    pub telemetry: Option<super::telemetry::TelemetryWiring>,
     /// The embedding's queued-goal-context purge (TS
     /// `_clearQueuedGoalContexts`, invoked at the pause/clear/start command
     /// sites and after a kernel `goal.complete` settles the goal): the
@@ -135,9 +130,6 @@ pub struct SessionEngine {
     /// `model.info` host requests and the pending requests the turn loop
     /// consumes after a settled turn).
     pub turn_boundary: std::sync::Arc<super::turn_boundary::TurnBoundaryRequests>,
-    /// Installed session telemetry (agent-event subscriber). `None` when
-    /// telemetry is disabled or the session is not depth 0.
-    pub telemetry: Option<std::sync::Arc<super::telemetry::SessionTelemetry>>,
     /// The session's kernel provisioner. The engine is the STRONG owner on
     /// purpose: the `ipython` tool on the agent and the compaction
     /// kernel-state probe on the session hold weak references, because the
@@ -191,11 +183,6 @@ fn mcp_gating_blocking(
 /// Returns an error when the MCP gating task fails, when the session
 /// resources cannot be resolved or loaded, or when the runtime bootstrap
 /// fails.
-///
-/// # Panics
-///
-/// Panics if the MCP manager mutex is poisoned while wiring telemetry
-/// reporting.
 pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<SessionEngine> {
     let cwd = config.cwd.clone();
     // Session persistence first: the conversation-log path and the resume
@@ -284,26 +271,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     }
     // The `mcp.*` host requests (config/refresh/begin_login) the kernel's
     // generic MCP registry sends while listing or calling generic servers.
-    // Telemetry reports connector usage (server name + action only) when the
-    // session is telemetry-enabled; set before the handlers register so
-    // their closures capture the reporter.
-    {
-        let mut manager = mcp_manager.lock().unwrap();
-        if let Some(wiring) = &config.telemetry {
-            let client = wiring.client.clone();
-            let execution_mode = wiring
-                .execution_mode
-                .clone()
-                .unwrap_or_else(|| super::telemetry::EXECUTION_MODE_UNKNOWN.to_string());
-            manager.set_usage_report(Some(std::sync::Arc::new(move |action, server| {
-                let mut properties = base_properties(&execution_mode);
-                properties.set("action", serde_json::Value::from(action));
-                properties.set("server_name", serde_json::Value::from(server));
-                client.track("mcp connector used", properties);
-            })));
-        }
-    }
-    // The `mcp.*` host-request registration takes the shared manager: the
+    // The registration takes the shared manager: the
     // inventory handlers (list_plugins/search_plugins/list_connections)
     // serve live views per request.
     crate::mcp::McpManager::register_host_handlers(&mcp_manager, &mut handlers);
@@ -321,30 +289,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // kernel snapshot lives.
     let session_artifact_dir: Option<PathBuf> =
         wiring.session.lock().await.get_session_artifact_dir();
-    // `kernel bootstrap` telemetry: the provisioner reports every actual
-    // boot (duration, cold/revived, outcome) through the session's client.
-    let on_bootstrap_result = config.telemetry.as_ref().map(|wiring| {
-        let client = wiring.client.clone();
-        let execution_mode = wiring
-            .execution_mode
-            .clone()
-            .unwrap_or_else(|| super::telemetry::EXECUTION_MODE_UNKNOWN.to_string());
-        std::sync::Arc::new(
-            move |stats: crate::kernel::provisioner::KernelBootstrapStats| {
-                let mut properties = base_properties(&execution_mode);
-                properties.set("cold", serde_json::Value::from(stats.cold));
-                properties.set(
-                    "outcome",
-                    serde_json::Value::from(match stats.outcome {
-                        crate::kernel::provisioner::KernelBootstrapOutcome::Ready => "success",
-                        crate::kernel::provisioner::KernelBootstrapOutcome::Error => "error",
-                    }),
-                );
-                properties.set("duration_ms", serde_json::Value::from(stats.duration_ms));
-                client.track("kernel bootstrap", properties);
-            },
-        ) as crate::kernel::provisioner::KernelBootstrapResultHandler
-    });
     // Kernel namespace snapshots (TS `_ipythonKernelSnapshotDir`): the
     // provisioner saves the Python namespace to the session's artifact
     // dir (a debounced flush after successful executions plus a final
@@ -406,7 +350,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         on_restore,
         config.on_background_work_settled.clone(),
         on_unavailable_skills,
-        on_bootstrap_result,
     );
     let mut tools = config.tools.clone();
     if !tools.iter().any(|tool| tool.name() == "ipython") {
@@ -591,7 +534,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     });
 
     let agent = Arc::new(agent);
-    let telemetry_agent = std::sync::Arc::clone(&agent);
     let mut session = AgentSession::from_session_arc(
         agent.clone(),
         wiring.session.clone(),
@@ -691,33 +633,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         model_info,
     });
 
-    // Session telemetry: installed only for depth-0 sessions (TS parity —
-    // subagents never double-report). The composition root supplies the
-    // resolved client; `None` wires the opt-out fast path.
-    let telemetry = match (config.telemetry.take(), config.rlm_depth.unwrap_or(0)) {
-        (Some(wiring), 0) => {
-            let skill_counts = super::telemetry::SkillCounts {
-                skill_count: resources.skills.len(),
-                python_skill_count: super::runtime_wiring::kernel_python_skills(&resources.skills)
-                    .len(),
-            };
-            let installed = super::telemetry::install_session_telemetry(
-                &telemetry_agent,
-                &wiring,
-                Some(skill_counts),
-            )
-            .await?;
-            Some(std::sync::Arc::new(installed))
-        }
-        _ => None,
-    };
-
-    // The `skill used` adoption event reports through the session's
-    // telemetry handle (installed once the telemetry composition decided
-    // whether this session reports at all).
-    if let Some(telemetry) = telemetry.as_ref() {
-        session.set_skill_telemetry(telemetry.clone());
-    }
     let goal_driver = wiring.runtime.goal_driver().clone();
     Ok(SessionEngine {
         session,
@@ -730,7 +645,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         queued_goal_context_purge: config.queued_goal_context_purge.clone(),
         mcp_manager,
         turn_boundary,
-        telemetry,
         provisioner,
     })
 }
@@ -767,8 +681,7 @@ impl SessionEngine {
     /// the accepted-turn row (TS `_expandSkillCommand`; the row the daemon
     /// emits before admission must match the text the model turn
     /// receives). Non-skill inputs pass through unchanged; the admitted
-    /// turn's own expansion is idempotent over the block. The `skill used`
-    /// adoption event reports from the admission, not here.
+    /// turn's own expansion is idempotent over the block.
     pub fn expand_skill_submission(&self, text: &str) -> String {
         crate::skills::expand_skill_command(text, &self.skills).0
     }

@@ -80,7 +80,7 @@ fn run_acp_mode(options: &RunOptions) -> Result<i32, String> {
 
 async fn acp_mode_main(options: &RunOptions) -> Result<i32, String> {
     let config = &options.config;
-    let engine = build_headless_engine_parts(options, "print").await?;
+    let engine = build_headless_engine_parts(options).await?;
     let exit_code = pa_daemon::acp::run_acp_mode(pa_daemon::acp::AcpOptions {
         engine: std::sync::Arc::new(engine.engine),
         actual_cwd: config.cwd.clone(),
@@ -109,7 +109,7 @@ fn run_print_mode(options: &RunOptions) -> Result<i32, String> {
 }
 
 async fn print_mode_main(options: &RunOptions) -> Result<i32, String> {
-    let headless = build_headless_engine(options, "print").await?;
+    let headless = build_headless_engine(options).await?;
     let engine = std::sync::Arc::new(headless.engine);
     // The CLI `--goal` seed (TS constructor seeding): a fresh root branch
     // starts the goal and queues its continuation context as the first
@@ -156,11 +156,8 @@ struct HeadlessEngine {
     provider_target: ProviderTargetSlot,
 }
 
-async fn build_headless_engine_parts(
-    options: &RunOptions,
-    execution_mode: &str,
-) -> Result<HeadlessEngine, String> {
-    let (engine, lease) = build_headless_engine_parts_with_lease(options, execution_mode).await?;
+async fn build_headless_engine_parts(options: &RunOptions) -> Result<HeadlessEngine, String> {
+    let (engine, lease) = build_headless_engine_parts_with_lease(options).await?;
     std::mem::forget(lease);
     Ok(engine)
 }
@@ -171,15 +168,13 @@ async fn build_headless_engine_parts(
 /// modes forget it for the process lifetime).
 async fn build_headless_engine_parts_with_lease(
     options: &RunOptions,
-    execution_mode: &str,
 ) -> Result<(HeadlessEngine, Option<pa_daemon::lease::SessionLease>), String> {
     let (session_manager, lease) = select_session_manager_with_lease(options)?;
     if let Ok(script) = std::env::var("PRIME_AGENT_FAUX_SCRIPT") {
-        let engine =
-            build_faux_engine_with(options, &script, session_manager, execution_mode).await?;
+        let engine = build_faux_engine_with(options, &script, session_manager).await?;
         return Ok((engine, lease));
     }
-    let engine = build_headless_engine_with(options, session_manager, execution_mode).await?;
+    let engine = build_headless_engine_with(options, session_manager).await?;
     Ok((engine, lease))
 }
 
@@ -208,7 +203,6 @@ fn select_session_manager_with_lease(
 async fn build_headless_engine_with(
     options: &RunOptions,
     session_manager: Option<pa_core::session::manager::SessionManager>,
-    execution_mode: &str,
 ) -> Result<HeadlessEngine, String> {
     let config = &options.config;
 
@@ -269,20 +263,9 @@ async fn build_headless_engine_with(
     );
     let agent_model: AgentModel = json_round_trip(&model).ok_or("model conversion failed")?;
 
-    // Telemetry (TS `installAgentTelemetry` parity for headless sessions):
-    // the CLI's env/settings opt-out decides; enabled sessions resolve the
-    // configured sinks. Depth 0 only, enforced by the engine.
-    let telemetry = (!config.telemetry_disabled).then(|| {
-        let settings = pa_core::settings::SettingsManager::create(&config.cwd, &config.agent_dir);
-        pa_core::session_engine::telemetry::TelemetryWiring {
-            client: pa_core::session_engine::telemetry::build_client(&settings, &config.agent_dir),
-            execution_mode: Some(execution_mode.to_string()),
-            now: None,
-        }
-    });
     // TS `sdk.ts` seeds the Agent's queue modes from the settings manager
     // (`steeringMode`/`followUpMode`): the print runtime reads the same
-    // settings its telemetry does, so the agent-level queues drain per
+    // settings, so the agent-level queues drain per
     // the configured modes (the steering default is "all"; follow-ups
     // keep "one-at-a-time").
     let queue_settings = pa_core::settings::SettingsManager::create(&config.cwd, &config.agent_dir);
@@ -313,7 +296,6 @@ async fn build_headless_engine_with(
     };
     let engine = pa_core::session_engine::engine::create_session(
         pa_core::session_engine::engine::SessionEngineConfig {
-            telemetry,
             steering_mode,
             follow_up_mode,
             cwd: config.cwd.clone(),
@@ -580,11 +562,8 @@ fn headless_image_model_router(
 }
 
 /// The engine alone (callers that do not drive session commands).
-async fn build_headless_engine(
-    options: &RunOptions,
-    execution_mode: &str,
-) -> Result<HeadlessEngine, String> {
-    build_headless_engine_parts(options, execution_mode).await
+async fn build_headless_engine(options: &RunOptions) -> Result<HeadlessEngine, String> {
+    build_headless_engine_parts(options).await
 }
 
 /// The session header line: the session file's `type: "session"` entry in
@@ -1159,9 +1138,6 @@ async fn build_faux_engine_with(
     options: &RunOptions,
     script: &str,
     session_manager: Option<pa_core::session::manager::SessionManager>,
-    // The faux harness installs no product telemetry, so the execution
-    // mode label carries through the real path only.
-    _execution_mode: &str,
 ) -> Result<HeadlessEngine, String> {
     let config = &options.config;
     let script: serde_json::Value = serde_json::from_str(script)
@@ -1272,10 +1248,8 @@ async fn build_faux_engine_with(
     // tests can verify persistence without the network.
     let engine = pa_core::session_engine::engine::create_session(
         pa_core::session_engine::engine::SessionEngineConfig {
-            // Faux verification harness: no product telemetry.
             steering_mode: None,
             follow_up_mode: None,
-            telemetry: None,
             cwd: config.cwd.clone(),
             agent_dir: config.agent_dir.clone(),
             mcp_manager: None,

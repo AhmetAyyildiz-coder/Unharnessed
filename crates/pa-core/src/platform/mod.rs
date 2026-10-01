@@ -8,6 +8,7 @@ pub mod browser;
 pub mod lock_dir;
 pub mod perms;
 pub mod process;
+mod rename;
 pub mod shell;
 
 pub use lock_dir::LockDir;
@@ -19,9 +20,6 @@ pub use process::{
     termination_signal, Signal,
 };
 // The rename-onto-destination primitive (bounded win32 destination-busy
-// retry, TS `renameOntoSync`) lives in pa-telemetry - the bottom crate every
-// persist owner (pa-telemetry install id, pa-core, pa-daemon) already
-// depends on. Re-exported so the platform wall stays the engine's single
-// platform entry.
-pub use pa_telemetry::rename_onto;
+// retry, TS `renameOntoSync`).
+pub use rename::rename_onto;
 pub use shell::{get_shell_config, resolve_kernel_bash_shell, ShellConfig};

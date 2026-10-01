@@ -263,7 +263,6 @@ mod tests {
                     image_model_router: None,
                     steering_mode: None,
                     follow_up_mode: None,
-                    telemetry: None,
                     cwd: dir.path().to_path_buf(),
                     agent_dir: agent_dir.clone(),
                     mcp_manager: None,

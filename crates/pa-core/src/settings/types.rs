@@ -213,33 +213,6 @@ pub struct WarningSettings {
     pub anthropic_extra_usage: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentTracesSettings {
-    pub enabled: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TelemetrySettings {
-    pub enabled: Option<bool>,
-    pub notice_shown: Option<bool>,
-    /// Self-hosted `PostHog` capture configuration. Nothing is compiled in;
-    /// an empty configuration resolves to the no-op sink.
-    pub posthog: Option<PostHogSettings>,
-    /// Local JSONL mirror at `<agentDir>/telemetry.jsonl` (default on:
-    /// user-observable transparency).
-    pub local_mirror: Option<bool>,
-}
-
-/// Settings `telemetry.posthog`: endpoint + project capture key.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PostHogSettings {
-    pub endpoint: Option<String>,
-    pub api_key: Option<String>,
-}
-
 /// User-declared MCP server (settings `mcpServers` entry).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -313,8 +286,6 @@ pub struct Settings {
     pub follow_up_mode: Option<QueueModeSetting>,
     pub theme: Option<String>,
     pub compaction: Option<CompactionSettings>,
-    pub agent_traces: Option<AgentTracesSettings>,
-    pub telemetry: Option<TelemetrySettings>,
     pub branch_summary: Option<BranchSummarySettings>,
     pub retry: Option<RetrySettings>,
     pub provider_backup_model: Option<String>,

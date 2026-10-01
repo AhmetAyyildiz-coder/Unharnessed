@@ -16,7 +16,6 @@ pub mod compaction_exec;
 pub mod compaction_trace;
 pub mod compaction_utils;
 pub mod engine;
-pub mod error_classify;
 pub mod goal_boundary;
 pub mod goal_driver;
 pub mod headless;
@@ -37,7 +36,6 @@ pub mod side_question;
 pub mod skills_unavailable_notice;
 pub mod slash_commands;
 pub mod state_restore_notice;
-pub mod telemetry;
 pub mod tool_bridge;
 pub mod turn_boundary;
 
@@ -156,9 +154,6 @@ pub struct AgentSession {
     /// reads `resourceLoader.getSkills()` at expansion time; the engine
     /// wiring installs the loaded list once the session is assembled).
     skills: Vec<crate::skills::Skill>,
-    /// The telemetry handle for the `skill used` adoption event the
-    /// prompt path owns (`None` in sessions without telemetry).
-    skill_telemetry: Option<std::sync::Arc<telemetry::SessionTelemetry>>,
     /// The image-model routing host seam (`None` keeps the session model on
     /// image turns: verification harnesses, and the daemon worker whose
     /// turn dispatch owns routing itself).
@@ -229,7 +224,6 @@ impl AgentSession {
             kernel_state: None,
             pending_next_turn_rows: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             skills: Vec::new(),
-            skill_telemetry: None,
             image_model_router: None,
             compaction_summary_sink: std::sync::Mutex::new(None),
         };
