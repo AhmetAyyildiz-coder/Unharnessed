@@ -26,11 +26,6 @@ pub(crate) fn is_override_pattern(entry: &str) -> bool {
     entry.starts_with('!') || entry.starts_with('+') || entry.starts_with('-')
 }
 
-/// True when the entry contains glob metacharacters.
-pub(crate) fn has_glob_pattern(entry: &str) -> bool {
-    entry.contains('*') || entry.contains('?')
-}
-
 /// Split entries into plain paths and patterns.
 pub(crate) fn split_patterns(entries: &[String]) -> (Vec<String>, Vec<String>) {
     let mut plain = Vec::new();
@@ -259,55 +254,4 @@ pub(crate) fn apply_patterns(
         result.retain(|path| !matches_any_exact_pattern(path, &force_excludes, base_dir));
     }
     result
-}
-
-/// `globSync`-equivalent discovery: every filesystem path under `root`
-/// (directories included) matching the glob, as absolute paths in
-/// lexicographic order. Dotfiles are only matched when the pattern itself
-/// references a dot-prefixed segment.
-pub(crate) fn glob_paths(pattern: &str, root: &Path) -> Vec<PathBuf> {
-    let pattern = pattern
-        .strip_prefix("./")
-        .map_or_else(|| pattern.to_string(), str::to_string);
-    let Ok(glob) = GlobBuilder::new(&pattern)
-        .literal_separator(true)
-        .backslash_escape(true)
-        .build()
-    else {
-        return Vec::new();
-    };
-    let matcher = glob.compile_matcher();
-    let allow_dot = pattern.starts_with('.') || pattern.contains("/.");
-
-    let mut matched_paths = Vec::new();
-    let mut queue = vec![root.to_path_buf()];
-    while let Some(dir) = queue.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        let mut children: Vec<PathBuf> = entries
-            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-            .collect();
-        children.sort();
-        for child in children {
-            let Ok(meta) = std::fs::metadata(&child) else {
-                continue; // broken symlink or unreadable entry
-            };
-            let rel = super::super::source::path_relative(root, &child);
-            if !rel.is_empty()
-                && !allow_dot
-                && rel.split('/').any(|segment| segment.starts_with('.'))
-            {
-                continue;
-            }
-            if !rel.is_empty() && matcher.is_match(&rel) {
-                matched_paths.push(child.clone());
-            }
-            if meta.is_dir() {
-                queue.push(child);
-            }
-        }
-    }
-    matched_paths.sort();
-    matched_paths
 }

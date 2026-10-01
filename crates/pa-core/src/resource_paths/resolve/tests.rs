@@ -1,27 +1,26 @@
 //! Ported TS resolve test cases (package-manager.test.ts): settings entries,
 //! auto-discovery (settings-base dirs, `.agents/skills` ancestors, ignore
-//! files, symlinks), pattern filtering (top-level arrays, pi manifest,
-//! package filters, `+`/`-` force forms), package dedupe, and the
-//! offline/missing-source policies.
+//! files, symlinks), and pattern filtering (top-level arrays, `+`/`-` force
+//! forms).
 
 use std::path::{Path, PathBuf};
 
 use super::{MetadataSource, ResolvedResource, ResourceOrigin};
-use crate::packages::manager::BundledSkillsDir;
-use crate::packages::source::SourceScope;
-use crate::packages::{PackageManager, PackageManagerOptions};
+use crate::resource_paths::manager::BundledSkillsDir;
+use crate::resource_paths::source::SourceScope;
+use crate::resource_paths::{ResourceResolver, ResourceResolverOptions};
 use crate::settings::SettingsManager;
 
 /// Environment mutations (HOME, `PI_OFFLINE`) are process-wide: tests that
 /// touch them, and tests that read the env-sensitive update flows,
 /// serialize through the shared packages lock.
-use crate::packages::test_support::ENV_MUTEX;
+use crate::resource_paths::test_support::ENV_MUTEX;
 
 struct Fixture {
     root: tempfile::TempDir,
     temp_dir: PathBuf,
     agent_dir: PathBuf,
-    manager: PackageManager,
+    manager: ResourceResolver,
 }
 
 impl Fixture {
@@ -37,7 +36,7 @@ impl Fixture {
         std::fs::create_dir_all(&cwd).unwrap();
         let temp_dir = root.path().to_path_buf();
         let settings = SettingsManager::create(&cwd, &agent_dir);
-        let manager = PackageManager::with_options(PackageManagerOptions {
+        let manager = ResourceResolver::with_options(ResourceResolverOptions {
             cwd,
             agent_dir: agent_dir.clone(),
             settings,
@@ -50,18 +49,6 @@ impl Fixture {
             agent_dir,
             manager,
         }
-    }
-
-    fn set_user_packages(&mut self, packages: serde_json::Value) {
-        std::fs::create_dir_all(&self.agent_dir).unwrap();
-        let path = self.agent_dir.join("settings.json");
-        let mut settings = std::fs::read_to_string(&path).map_or_else(
-            |_| serde_json::json!({}),
-            |content| serde_json::from_str::<serde_json::Value>(&content).unwrap(),
-        );
-        settings["packages"] = packages;
-        std::fs::write(&path, settings.to_string()).unwrap();
-        self.reload();
     }
 
     fn set_user_array(&mut self, field: &str, entries: serde_json::Value) {
@@ -122,18 +109,12 @@ fn is_disabled(resources: &[ResolvedResource], suffix: &str) -> bool {
         .any(|r| r.path.to_string_lossy().ends_with(suffix) && !r.enabled)
 }
 
-fn has_path(resources: &[ResolvedResource], suffix: &str) -> bool {
-    resources
-        .iter()
-        .any(|r| r.path.to_string_lossy().ends_with(suffix))
-}
-
 // -- resolve: settings entries and auto-discovery --------------------------------
 
 #[test]
 fn resolve_without_configured_sources_returns_only_auto_resources() {
-    let mut fixture = Fixture::new();
-    let result = fixture.manager.resolve().unwrap();
+    let fixture = Fixture::new();
+    let result = fixture.manager.resolve();
     assert!(result.prompts.is_empty());
     assert!(result.themes.is_empty());
     assert!(result.skills.iter().all(|r| {
@@ -151,7 +132,7 @@ fn resolve_skill_paths_from_settings() {
     );
     fixture.set_user_array("skills", serde_json::json!(["skills"]));
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(result
         .skills
         .iter()
@@ -160,14 +141,14 @@ fn resolve_skill_paths_from_settings() {
 
 #[test]
 fn auto_discovers_root_markdown_skills() {
-    let mut fixture = Fixture::new();
+    let fixture = Fixture::new();
     let skill_file = fixture.agent_dir.join("skills").join("single-file.md");
     write(
         &skill_file,
         "---\nname: single-file\ndescription: A root markdown skill\n---\nContent",
     );
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(result
         .skills
         .iter()
@@ -182,7 +163,7 @@ fn resolves_project_paths_relative_to_project_config_dir() {
     write(&prompt_path, "Project prompt");
     fixture.set_project_array("prompts", serde_json::json!(["prompts/project.md"]));
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(result
         .prompts
         .iter()
@@ -196,7 +177,7 @@ fn auto_discovers_user_prompts_with_overrides() {
     write(&prompt_path, "Auto prompt");
     fixture.set_user_array("prompts", serde_json::json!(["!prompts/auto.md"]));
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(result
         .prompts
         .iter()
@@ -211,7 +192,7 @@ fn auto_discovers_project_prompts_with_overrides() {
     write(&prompt_path, "Is prompt");
     fixture.set_project_array("prompts", serde_json::json!(["!prompts/is.md"]));
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(result
         .prompts
         .iter()
@@ -226,7 +207,7 @@ fn resolves_symlinked_user_and_project_resources_once() {
     use std::os::unix::fs::symlink;
     let _guard = ENV_MUTEX.lock().unwrap();
     let previous_home = std::env::var("HOME").ok();
-    let mut fixture = Fixture::new();
+    let fixture = Fixture::new();
     std::env::set_var("HOME", &fixture.temp_dir);
 
     let shared = fixture.temp_dir.join("shared-resources");
@@ -243,7 +224,7 @@ fn resolves_symlinked_user_and_project_resources_once() {
     symlink(shared.join("prompts"), project_dir.join("prompts")).unwrap();
     symlink(shared.join("themes"), project_dir.join("themes")).unwrap();
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert_eq!(result.skills.len(), 1);
     assert_eq!(result.prompts.len(), 1);
     assert_eq!(result.themes.len(), 1);
@@ -283,8 +264,8 @@ fn agents_skills_scan_stops_at_git_repo_root() {
         "nested",
     );
 
-    let mut nested_manager = Fixture::with_cwd(fixture.root, nested_cwd, fixture.agent_dir);
-    let result = nested_manager.manager.resolve().unwrap();
+    let nested_manager = Fixture::with_cwd(fixture.root, nested_cwd, fixture.agent_dir);
+    let result = nested_manager.manager.resolve();
     assert!(result
         .skills
         .iter()
@@ -311,8 +292,8 @@ fn agents_skills_scan_goes_to_fs_root_without_a_repo() {
         "middle",
     );
 
-    let mut nested_manager = Fixture::with_cwd(fixture.root, nested_cwd, fixture.agent_dir);
-    let result = nested_manager.manager.resolve().unwrap();
+    let nested_manager = Fixture::with_cwd(fixture.root, nested_cwd, fixture.agent_dir);
+    let result = nested_manager.manager.resolve();
     assert!(result
         .skills
         .iter()
@@ -325,7 +306,7 @@ fn agents_skills_scan_goes_to_fs_root_without_a_repo() {
 
 #[test]
 fn agents_skills_ignores_root_markdown_files() {
-    let mut fixture = Fixture::new();
+    let fixture = Fixture::new();
     let agents_skills = fixture.temp_dir.join(".agents").join("skills");
     let root_file = agents_skills.join("root-file.md");
     write(
@@ -334,7 +315,7 @@ fn agents_skills_ignores_root_markdown_files() {
     );
     let nested = skill_md(&agents_skills, "nested-skill", "Nested skill");
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(!result.skills.iter().any(|r| r.path == root_file));
     assert!(result.skills.iter().any(|r| r.path == nested && r.enabled));
 }
@@ -351,15 +332,17 @@ fn home_agents_skills_stays_user_scoped_when_cwd_is_under_home() {
         "home-skill",
         "home",
     );
-    let mut manager = PackageManager::new(
-        fixture.temp_dir.join("scratch").join("nested"),
-        fixture.temp_dir.join(".prime").join("agent"),
-        SettingsManager::create(
+    let manager = ResourceResolver::with_options(ResourceResolverOptions {
+        cwd: fixture.temp_dir.join("scratch").join("nested"),
+        agent_dir: fixture.temp_dir.join(".prime").join("agent"),
+        settings: SettingsManager::create(
             fixture.temp_dir.join("scratch").join("nested"),
             fixture.temp_dir.join(".prime").join("agent"),
         ),
-    );
-    let result = manager.resolve().unwrap();
+        bundled_skills_dir: BundledSkillsDir::Packaged,
+        extra_builtin_skill_overrides: Vec::new(),
+    });
+    let result = manager.resolve();
     let matching: Vec<_> = result
         .skills
         .iter()
@@ -383,7 +366,7 @@ fn user_skill_entries_dedupe_when_agent_skills_symlinks_agents_skills() {
     use std::os::unix::fs::symlink;
     let _guard = ENV_MUTEX.lock().unwrap();
     let previous_home = std::env::var("HOME").ok();
-    let mut fixture = Fixture::new();
+    let fixture = Fixture::new();
     std::env::set_var("HOME", &fixture.temp_dir);
 
     let agents_skills = fixture.temp_dir.join(".agents").join("skills");
@@ -391,7 +374,7 @@ fn user_skill_entries_dedupe_when_agent_skills_symlinks_agents_skills() {
     symlink(&agents_skills, fixture.agent_dir.join("skills")).unwrap();
     skill_md(&agents_skills, "foo", "foo");
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     let foo: Vec<_> = result
         .skills
         .iter()
@@ -418,20 +401,20 @@ fn skill_directories_respect_gitignore() {
 
     fixture.set_user_array("skills", serde_json::json!(["skills"]));
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(result.skills.iter().any(|r| r.path == good && r.enabled));
     assert!(!result.skills.iter().any(|r| r.path == bad && r.enabled));
 }
 
 #[test]
 fn parent_gitignore_does_not_apply_to_auto_discovery() {
-    let mut fixture = Fixture::new();
+    let fixture = Fixture::new();
     write(&fixture.temp_dir.join(".gitignore"), ".prime/agent\n");
 
     let project_dir = fixture.manager.cwd().join(crate::settings::CONFIG_DIR_NAME);
     let skill_path = skill_md(&project_dir.join("skills"), "auto-skill", "Auto");
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(result
         .skills
         .iter()
@@ -449,7 +432,7 @@ fn top_level_filters_themes_with_glob_patterns() {
     }
     fixture.set_user_array("themes", serde_json::json!(["themes", "!funky.json"]));
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(is_enabled(&result.themes, "dark.json"));
     assert!(is_enabled(&result.themes, "light.json"));
     assert!(is_disabled(&result.themes, "funky.json"));
@@ -463,7 +446,7 @@ fn top_level_filters_prompts_with_exclusion_pattern() {
     write(&prompts_dir.join("explain.md"), "Explain code");
     fixture.set_user_array("prompts", serde_json::json!(["prompts", "!explain.md"]));
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(is_enabled(&result.prompts, "review.md"));
     assert!(is_disabled(&result.prompts, "explain.md"));
 }
@@ -476,7 +459,7 @@ fn top_level_filters_skills_with_exclusion_pattern() {
     skill_md(&skills_dir, "bad-skill", "Bad");
     fixture.set_user_array("skills", serde_json::json!(["skills", "!**/bad-skill"]));
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(result
         .skills
         .iter()
@@ -489,196 +472,9 @@ fn top_level_filters_skills_with_exclusion_pattern() {
 
 // -- pattern filtering: pi manifest ----------------------------------------------
 
-#[test]
-fn manifest_supports_glob_patterns_for_skills() {
-    let mut fixture = Fixture::new();
-    let pkg_dir = fixture.temp_dir.join("skill-manifest-pkg");
-    write(
-        &pkg_dir.join("package.json"),
-        r#"{"name":"skill-manifest-pkg","pi":{"skills":["skills","!**/bad-skill"]}}"#,
-    );
-    skill_md(&pkg_dir.join("skills"), "good-skill", "Good");
-    skill_md(&pkg_dir.join("skills"), "bad-skill", "Bad");
-
-    fixture.set_user_packages(serde_json::json!([pkg_dir.display().to_string()]));
-    let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("good-skill") && r.enabled));
-    assert!(!result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("bad-skill")));
-}
-
-#[test]
-fn manifest_expands_positive_glob_entries_before_collecting_skills() {
-    let mut fixture = Fixture::new();
-    let pkg_dir = fixture.temp_dir.join("skill-manifest-glob-pkg");
-    write(
-        &pkg_dir.join("package.json"),
-        r#"{"name":"skill-manifest-glob-pkg","pi":{"skills":["./plugins/*/skills"]}}"#,
-    );
-    skill_md(
-        &pkg_dir
-            .join("plugins")
-            .join("pdf-to-markdown")
-            .join("skills"),
-        "pdf-to-markdown",
-        "PDF to Markdown",
-    );
-    skill_md(
-        &pkg_dir.join("plugins").join("nutrient-dws").join("skills"),
-        "document-processor-api",
-        "DWS",
-    );
-
-    fixture.set_user_packages(serde_json::json!([pkg_dir.display().to_string()]));
-    let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("pdf-to-markdown") && r.enabled));
-    assert!(result.skills.iter().any(|r| r
-        .path
-        .to_string_lossy()
-        .contains("document-processor-api")
-        && r.enabled));
-}
-
 // -- pattern filtering: package filters ------------------------------------------
 
-#[test]
-fn user_filters_layer_on_top_of_manifest_filters() {
-    let mut fixture = Fixture::new();
-    let pkg_dir = fixture.temp_dir.join("layered-pkg");
-    write(
-        &pkg_dir.join("package.json"),
-        r#"{"name":"layered-pkg","pi":{"prompts":["prompts","!**/baz.md"]}}"#,
-    );
-    for name in ["foo.md", "bar.md", "baz.md"] {
-        write(&pkg_dir.join("prompts").join(name), "A prompt");
-    }
-    fixture.set_user_packages(serde_json::json!([{
-        "source": pkg_dir.display().to_string(),
-        "skills": [],
-        "prompts": ["!**/bar.md"],
-        "themes": [],
-    }]));
-
-    let result = fixture.manager.resolve().unwrap();
-    assert!(is_enabled(&result.prompts, "foo.md"));
-    assert!(is_disabled(&result.prompts, "bar.md"));
-    assert!(!has_path(&result.prompts, "baz.md"));
-}
-
-#[test]
-fn package_filters_filter_themes() {
-    let mut fixture = Fixture::new();
-    let pkg_dir = fixture.temp_dir.join("theme-pkg");
-    write(&pkg_dir.join("themes").join("nice.json"), "{}");
-    write(&pkg_dir.join("themes").join("ugly.json"), "{}");
-    fixture.set_user_packages(serde_json::json!([{
-        "source": pkg_dir.display().to_string(),
-        "skills": [],
-        "prompts": [],
-        "themes": ["!ugly.json"],
-    }]));
-
-    let result = fixture.manager.resolve().unwrap();
-    assert!(is_enabled(&result.themes, "nice.json"));
-    assert!(is_disabled(&result.themes, "ugly.json"));
-}
-
-#[test]
-fn package_filters_combine_include_and_exclude_patterns() {
-    let mut fixture = Fixture::new();
-    let pkg_dir = fixture.temp_dir.join("combo-pkg");
-    for name in ["alpha.md", "beta.md", "gamma.md"] {
-        write(&pkg_dir.join("prompts").join(name), "A prompt");
-    }
-    fixture.set_user_packages(serde_json::json!([{
-        "source": pkg_dir.display().to_string(),
-        "skills": [],
-        "prompts": ["**/alpha.md", "**/beta.md", "!**/beta.md"],
-        "themes": [],
-    }]));
-
-    let result = fixture.manager.resolve().unwrap();
-    assert!(is_enabled(&result.prompts, "alpha.md"));
-    assert!(is_disabled(&result.prompts, "beta.md"));
-    assert!(is_disabled(&result.prompts, "gamma.md"));
-}
-
-#[test]
-fn package_filters_work_with_direct_paths() {
-    let mut fixture = Fixture::new();
-    let pkg_dir = fixture.temp_dir.join("direct-pkg");
-    write(&pkg_dir.join("prompts").join("one.md"), "One");
-    write(&pkg_dir.join("prompts").join("two.md"), "Two");
-    fixture.set_user_packages(serde_json::json!([{
-        "source": pkg_dir.display().to_string(),
-        "skills": [],
-        "prompts": ["prompts/one.md"],
-        "themes": [],
-    }]));
-
-    let result = fixture.manager.resolve().unwrap();
-    assert!(is_enabled(&result.prompts, "one.md"));
-    assert!(is_disabled(&result.prompts, "two.md"));
-}
-
 // -- force-include / force-exclude ---------------------------------------------
-
-#[test]
-fn force_include_overrides_exclude_in_package_filters() {
-    let mut fixture = Fixture::new();
-    let pkg_dir = fixture.temp_dir.join("force-pkg");
-    for name in ["alpha.md", "beta.md", "gamma.md"] {
-        write(&pkg_dir.join("prompts").join(name), "A prompt");
-    }
-    fixture.set_user_packages(serde_json::json!([{
-        "source": pkg_dir.display().to_string(),
-        "skills": [],
-        "prompts": ["!**/*.md", "+prompts/beta.md"],
-        "themes": [],
-    }]));
-
-    let result = fixture.manager.resolve().unwrap();
-    assert!(is_disabled(&result.prompts, "alpha.md"));
-    assert!(is_enabled(&result.prompts, "beta.md"));
-    assert!(is_disabled(&result.prompts, "gamma.md"));
-}
-
-#[test]
-fn force_include_multiple_resources() {
-    let mut fixture = Fixture::new();
-    let pkg_dir = fixture.temp_dir.join("multi-force-pkg");
-    for name in ["skill-a", "skill-b", "skill-c"] {
-        skill_md(&pkg_dir.join("skills"), name, "A skill");
-    }
-    fixture.set_user_packages(serde_json::json!([{
-        "source": pkg_dir.display().to_string(),
-        "skills": ["!**/*", "+skills/skill-a", "+skills/skill-c"],
-        "prompts": [],
-        "themes": [],
-    }]));
-
-    let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("skill-a") && r.enabled));
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("skill-b") && !r.enabled));
-    assert!(result
-        .skills
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("skill-c") && r.enabled));
-}
 
 #[test]
 fn force_include_after_specific_exclusion() {
@@ -691,28 +487,9 @@ fn force_include_after_specific_exclusion() {
         serde_json::json!(["prompts", "!prompts/b.md", "+prompts/b.md"]),
     );
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(is_enabled(&result.prompts, "a.md"));
     assert!(is_enabled(&result.prompts, "b.md"));
-}
-
-#[test]
-fn force_include_in_manifest_patterns() {
-    let mut fixture = Fixture::new();
-    let pkg_dir = fixture.temp_dir.join("manifest-force-pkg");
-    write(
-        &pkg_dir.join("package.json"),
-        r#"{"name":"manifest-force-pkg","pi":{"prompts":["prompts","!**/two.md","+prompts/two.md"]}}"#,
-    );
-    for name in ["one.md", "two.md", "three.md"] {
-        write(&pkg_dir.join("prompts").join(name), "A prompt");
-    }
-
-    fixture.set_user_packages(serde_json::json!([pkg_dir.display().to_string()]));
-    let result = fixture.manager.resolve().unwrap();
-    assert!(is_enabled(&result.prompts, "one.md"));
-    assert!(is_enabled(&result.prompts, "two.md"));
-    assert!(is_enabled(&result.prompts, "three.md"));
 }
 
 #[test]
@@ -727,7 +504,7 @@ fn force_include_themes() {
         serde_json::json!(["themes", "!themes/*.json", "+themes/special.json"]),
     );
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(is_disabled(&result.themes, "dark.json"));
     assert!(is_disabled(&result.themes, "light.json"));
     assert!(is_enabled(&result.themes, "special.json"));
@@ -745,7 +522,7 @@ fn force_include_prompts() {
         serde_json::json!(["prompts", "!prompts/*.md", "+prompts/debug.md"]),
     );
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(is_disabled(&result.prompts, "review.md"));
     assert!(is_disabled(&result.prompts, "explain.md"));
     assert!(is_enabled(&result.prompts, "debug.md"));
@@ -762,151 +539,14 @@ fn force_exclude_top_level_resources() {
         serde_json::json!(["themes", "+themes/alpha.json", "-themes/alpha.json"]),
     );
 
-    let result = fixture.manager.resolve().unwrap();
+    let result = fixture.manager.resolve();
     assert!(is_disabled(&result.themes, "alpha.json"));
     assert!(is_enabled(&result.themes, "beta.json"));
 }
 
-#[test]
-fn force_exclude_in_package_filters() {
-    let mut fixture = Fixture::new();
-    let pkg_dir = fixture.temp_dir.join("force-exclude-pkg");
-    write(&pkg_dir.join("prompts").join("alpha.md"), "A prompt");
-    write(&pkg_dir.join("prompts").join("beta.md"), "B prompt");
-    fixture.set_user_packages(serde_json::json!([{
-        "source": pkg_dir.display().to_string(),
-        "skills": [],
-        "prompts": ["prompts/*.md", "+prompts/alpha.md", "-prompts/alpha.md"],
-        "themes": [],
-    }]));
-
-    let result = fixture.manager.resolve().unwrap();
-    assert!(is_disabled(&result.prompts, "alpha.md"));
-    assert!(is_enabled(&result.prompts, "beta.md"));
-}
-
 // -- package deduplication -------------------------------------------------------
 
-#[test]
-fn same_local_package_in_both_scopes_resolves_once_with_project_scope() {
-    let mut fixture = Fixture::new();
-    let pkg_dir = fixture.temp_dir.join("shared-pkg");
-    skill_md(&pkg_dir.join("skills"), "shared-skill", "Shared skill");
-
-    fixture.set_user_packages(serde_json::json!([pkg_dir.display().to_string()]));
-    let project_dir = fixture.manager.cwd().join(crate::settings::CONFIG_DIR_NAME);
-    std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(
-        project_dir.join("settings.json"),
-        serde_json::json!({"packages": [pkg_dir.display().to_string()]}).to_string(),
-    )
-    .unwrap();
-    fixture.reload();
-
-    let result = fixture.manager.resolve().unwrap();
-    let shared: Vec<_> = result
-        .skills
-        .iter()
-        .filter(|r| r.path.to_string_lossy().contains("shared-pkg"))
-        .collect();
-    assert_eq!(shared.len(), 1);
-    assert_eq!(shared[0].metadata.scope, SourceScope::Project);
-}
-
-#[test]
-fn different_packages_in_both_scopes_both_resolve() {
-    let mut fixture = Fixture::new();
-    let pkg1 = fixture.temp_dir.join("pkg1");
-    let pkg2 = fixture.temp_dir.join("pkg2");
-    write(&pkg1.join("prompts").join("from-pkg1.md"), "Pkg1 prompt");
-    write(&pkg2.join("prompts").join("from-pkg2.md"), "Pkg2 prompt");
-
-    fixture.set_user_packages(serde_json::json!([pkg1.display().to_string()]));
-    let project_dir = fixture.manager.cwd().join(crate::settings::CONFIG_DIR_NAME);
-    std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(
-        project_dir.join("settings.json"),
-        serde_json::json!({"packages": [pkg2.display().to_string()]}).to_string(),
-    )
-    .unwrap();
-    fixture.reload();
-
-    let result = fixture.manager.resolve().unwrap();
-    assert!(result
-        .prompts
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("pkg1")));
-    assert!(result
-        .prompts
-        .iter()
-        .any(|r| r.path.to_string_lossy().contains("pkg2")));
-}
-
 // -- offline / missing-source policies -------------------------------------------
-
-#[test]
-fn offline_mode_skips_installing_missing_sources() {
-    let _guard = ENV_MUTEX.lock().unwrap();
-    let previous = std::env::var("PI_OFFLINE").ok();
-    std::env::set_var("PI_OFFLINE", "1");
-    let mut fixture = Fixture::new();
-    fixture.set_user_packages(serde_json::json!(["npm:missing-package"]));
-    let project_dir = fixture.manager.cwd().join(crate::settings::CONFIG_DIR_NAME);
-    std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(
-        project_dir.join("settings.json"),
-        serde_json::json!({"packages": ["git:github.com/example/missing-repo"]}).to_string(),
-    )
-    .unwrap();
-    fixture.reload();
-
-    let result = fixture.manager.resolve().unwrap();
-    assert!(!result
-        .skills
-        .iter()
-        .chain(&result.prompts)
-        .chain(&result.themes)
-        .any(|r| r.metadata.origin == ResourceOrigin::Package));
-
-    match previous {
-        Some(value) => std::env::set_var("PI_OFFLINE", value),
-        None => std::env::remove_var("PI_OFFLINE"),
-    }
-}
-
-#[test]
-fn on_missing_error_fails_resolution() {
-    let _guard = ENV_MUTEX.lock().unwrap();
-    let mut fixture = Fixture::new();
-    fixture.set_user_packages(serde_json::json!(["npm:missing-package"]));
-
-    let error = fixture
-        .manager
-        .resolve_with_on_missing(Some(&mut |source| {
-            assert_eq!(source, "npm:missing-package");
-            crate::packages::MissingSourceAction::Error
-        }))
-        .unwrap_err();
-    assert_eq!(error.to_string(), "Missing source: npm:missing-package");
-}
-
-#[test]
-fn on_missing_skip_leaves_the_source_out() {
-    let _guard = ENV_MUTEX.lock().unwrap();
-    let mut fixture = Fixture::new();
-    fixture.set_user_packages(serde_json::json!(["npm:missing-package"]));
-
-    let result = fixture
-        .manager
-        .resolve_with_on_missing(Some(&mut |_| crate::packages::MissingSourceAction::Skip))
-        .unwrap();
-    assert!(result
-        .skills
-        .iter()
-        .chain(&result.prompts)
-        .chain(&result.themes)
-        .all(|r| r.metadata.origin != ResourceOrigin::Package));
-}
 
 // -- bundled skills -------------------------------------------------------------
 
@@ -921,14 +561,14 @@ fn bundled_skills_collect_with_websearch_excluded_until_enabled() {
 
     // Default: websearch is bundled and enabled.
     std::fs::write(&settings_path, serde_json::json!({}).to_string()).unwrap();
-    let mut manager = PackageManager::with_options(PackageManagerOptions {
+    let mut manager = ResourceResolver::with_options(ResourceResolverOptions {
         cwd: fixture.manager.cwd().to_path_buf(),
         agent_dir: fixture.agent_dir.clone(),
         settings: SettingsManager::create(fixture.manager.cwd(), &fixture.agent_dir),
         bundled_skills_dir: BundledSkillsDir::Directory(bundled),
         extra_builtin_skill_overrides: vec!["-other-skill/SKILL.md".to_string()],
     });
-    let result = manager.resolve().unwrap();
+    let result = manager.resolve();
     let websearch = result
         .skills
         .iter()
@@ -950,7 +590,7 @@ fn bundled_skills_collect_with_websearch_excluded_until_enabled() {
     )
     .unwrap();
     manager.reload_settings().unwrap();
-    let result = manager.resolve().unwrap();
+    let result = manager.resolve();
     let websearch = result
         .skills
         .iter()
@@ -963,7 +603,7 @@ fn bundled_skills_collect_with_websearch_excluded_until_enabled() {
 fn empty_bundled_skills_dir_warns() {
     let fixture = Fixture::new();
     let settings = SettingsManager::create(fixture.manager.cwd(), &fixture.agent_dir);
-    let mut manager = PackageManager::with_options(PackageManagerOptions {
+    let manager = ResourceResolver::with_options(ResourceResolverOptions {
         cwd: fixture.manager.cwd().to_path_buf(),
         agent_dir: fixture.agent_dir.clone(),
         settings,
@@ -971,7 +611,7 @@ fn empty_bundled_skills_dir_warns() {
         extra_builtin_skill_overrides: Vec::new(),
     });
 
-    let result = manager.resolve().unwrap();
+    let result = manager.resolve();
     assert!(result.diagnostics.iter().any(|d| {
         matches!(
             d,
@@ -993,7 +633,7 @@ fn disabled_builtin_skills_are_not_collected() {
     )
     .unwrap();
     let settings = SettingsManager::create(fixture.manager.cwd(), &fixture.agent_dir);
-    let mut manager = PackageManager::with_options(PackageManagerOptions {
+    let manager = ResourceResolver::with_options(ResourceResolverOptions {
         cwd: fixture.manager.cwd().to_path_buf(),
         agent_dir: fixture.agent_dir.clone(),
         settings,
@@ -1001,7 +641,7 @@ fn disabled_builtin_skills_are_not_collected() {
         extra_builtin_skill_overrides: Vec::new(),
     });
 
-    let result = manager.resolve().unwrap();
+    let result = manager.resolve();
     assert!(!result
         .skills
         .iter()

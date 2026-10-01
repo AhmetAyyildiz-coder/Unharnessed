@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::super::PackageManager;
+use super::super::ResourceResolver;
 use super::discovery::{
     collect_ancestor_agents_skill_dirs, collect_auto_prompt_entries, collect_auto_theme_entries,
     collect_skill_entries, SkillDiscoveryMode,
@@ -21,7 +21,7 @@ fn home_dir() -> PathBuf {
     pa_types::platform::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
-impl PackageManager {
+impl ResourceResolver {
     /// Add settings-base convention directories (project first), the
     /// `.agents/skills` ancestor scan, and the bundled built-in skills.
     pub(super) fn add_auto_discovered_resources(

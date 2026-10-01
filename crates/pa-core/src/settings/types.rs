@@ -12,13 +12,6 @@ pub enum MermaidRenderingMode {
     Streaming,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum UpdateChannel {
-    Stable,
-    Nightly,
-}
-
 /// Thinking levels in wire form ("off" | "minimal" | "low" | "medium" |
 /// "high" | "xhigh" | "max").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -265,7 +258,6 @@ pub struct Settings {
     pub onboarding_completed: Option<bool>,
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
-    pub update_channel: Option<UpdateChannel>,
     pub recent_models: Option<Vec<String>>,
     pub auxiliary_model: Option<String>,
     pub default_thinking_level: Option<ThinkingLevelSetting>,
@@ -298,13 +290,11 @@ pub struct Settings {
     pub shell_path: Option<String>,
     pub quiet_startup: Option<bool>,
     pub shell_command_prefix: Option<String>,
-    pub npm_command: Option<Vec<String>>,
     pub mcp_servers: Option<serde_json::Map<String, serde_json::Value>>,
     /// Extra local MCP service-catalog files (TS `mcpCatalogSources`;
     /// ~-relative allowed), merged after the compiled built-ins, first
     /// source wins per id, and no bundled id can be shadowed.
     pub mcp_catalog_sources: Option<Vec<String>>,
-    pub packages: Option<Vec<serde_json::Value>>,
     pub skills: Option<Vec<String>>,
     pub prompts: Option<Vec<String>>,
     pub themes: Option<Vec<String>>,

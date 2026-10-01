@@ -8,9 +8,7 @@ use anyhow::Result;
 use super::load::from_value_lenient;
 use super::merge::{deep_merge, migrate};
 use super::storage::{SettingsScope, SettingsStorage};
-use super::types::{
-    QueueModeSetting, Settings, ThinkingLevelSetting, TransportSetting, UpdateChannel,
-};
+use super::types::{QueueModeSetting, Settings, ThinkingLevelSetting, TransportSetting};
 
 pub const RECENT_MODELS_LIMIT: usize = 20;
 pub const DEFAULT_IDLE_EVICTION_MINUTES: u64 = 90;
@@ -325,16 +323,6 @@ impl SettingsManager {
         self.save_global()
     }
 
-    /// `updateChannel` setter.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the global settings file cannot be written.
-    pub fn set_update_channel(&mut self, channel: UpdateChannel) -> Result<()> {
-        self.global.update_channel = Some(channel);
-        self.save_global()
-    }
-
     /// `defaultThinkingLevel` setter.
     ///
     /// # Errors
@@ -424,28 +412,6 @@ impl SettingsManager {
             .as_ref()
             .and_then(|compaction| compaction.enabled)
             .unwrap_or(true)
-    }
-
-    /// Replace the `packages` array in the global settings file.
-    pub fn set_packages(&mut self, packages: Vec<serde_json::Value>) {
-        self.global.packages = Some(packages.clone());
-        self.persist_scope_field(
-            SettingsScope::Global,
-            "packages",
-            &serde_json::Value::Array(packages),
-        );
-        self.merged = deep_merge(&self.global, &self.project);
-    }
-
-    /// Replace the `packages` array in the project settings file.
-    pub fn set_project_packages(&mut self, packages: Vec<serde_json::Value>) {
-        self.project.packages = Some(packages.clone());
-        self.persist_scope_field(
-            SettingsScope::Project,
-            "packages",
-            &serde_json::Value::Array(packages),
-        );
-        self.merged = deep_merge(&self.global, &self.project);
     }
 
     /// Replace one resource-path array (`skills`/`prompts`/`themes`) in the
@@ -648,12 +614,6 @@ impl SettingsManager {
     #[must_use]
     pub fn get_theme(&self) -> Option<&str> {
         self.merged.theme.as_deref()
-    }
-
-    /// Global-only read of the two known values; anything else is unset.
-    #[must_use]
-    pub fn get_update_channel(&self) -> Option<UpdateChannel> {
-        self.global.update_channel
     }
 
     #[must_use]

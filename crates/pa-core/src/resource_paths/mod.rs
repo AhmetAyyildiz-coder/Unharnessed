@@ -1,50 +1,24 @@
-//! Package manager subsystem: install/remove/list/update of `npm:`, git, and
-//! local-dir package sources against the settings store, plus the
-//! configured-npm/git child-process flows.
-//!
-//! Session resource resolution lives here as well: `PackageManager::resolve`
-//! produces the ranked skill/prompt/theme paths sessions consume.
-//!
-//! Non-goals: loading/executing session-resource code and Prime Agent
-//! self-updates.
+//! Session resource resolution: `ResourceResolver::resolve` produces the
+//! ranked skill/prompt/theme paths sessions consume, from the settings
+//! arrays and auto-discovery (settings-base directories, `.agents/skills`
+//! ancestor scan, bundled skills). It was the package manager's resolve
+//! step; the package manager itself (the `packages` setting, npm/git
+//! installs, updates) was removed.
 
-mod git;
 mod manager;
-mod npm;
-mod process;
 pub(crate) mod resolve;
-pub mod resource_config;
 mod source;
-mod update;
 
-#[cfg(test)]
-mod tests;
-
-pub use manager::{
-    BundledSkillsDir, ConfiguredPackage, PackageManager, PackageManagerOptions, PackageUpdate,
-    ProgressAction, ProgressEvent, ProgressEventKind, UserOrProject,
-};
+pub use manager::{BundledSkillsDir, ResourceResolver, ResourceResolverOptions};
 pub use resolve::{
-    MetadataSource, MissingSourceAction, PathMetadata, ResolvedPaths, ResolvedResource,
-    ResourceOrigin, ResourceType,
+    MetadataSource, PathMetadata, ResolvedPaths, ResolvedResource, ResourceOrigin, ResourceType,
 };
-pub use source::{parse_git_url, GitSource, LocalSource, NpmSource, ParsedSource, SourceScope};
+pub use source::{parse_git_url, GitSource, SourceScope};
 
-use std::fmt::Write as _;
 use std::path::PathBuf;
 
-/// The TS `CONFIG_DIR_NAME` (project-local settings/packages root).
+/// The TS `CONFIG_DIR_NAME` (project-local settings root).
 pub use crate::settings::CONFIG_DIR_NAME;
-
-/// Network probe timeout for npm/git operations (10s).
-pub(crate) use npm::NETWORK_TIMEOUT_MS;
-
-/// True when `PI_OFFLINE` disables all package network operations.
-pub(crate) fn is_offline_mode_enabled() -> bool {
-    std::env::var("PI_OFFLINE").is_ok_and(|value| {
-        value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes")
-    })
-}
 
 /// The package directory: `PI_PACKAGE_DIR` wins (matching the TS
 /// `getPackageDir` override), then the directory of the executable (the
@@ -114,29 +88,10 @@ pub(crate) fn get_bundled_skills_dir() -> PathBuf {
     packaged
 }
 
-/// Stable temporary directory for resolve-only package installs (the hash
-/// keys on prefix+suffix so the same source always maps to one checkout).
-pub(crate) fn temporary_dir(prefix: &str, suffix: Option<&str>) -> PathBuf {
-    use sha2::{Digest, Sha256};
-
-    let mut hasher = Sha256::new();
-    hasher.update(format!("{prefix}-{}", suffix.unwrap_or_default()).as_bytes());
-    let digest = hasher.finalize();
-    let hash: String = digest[..4].iter().fold(String::new(), |mut output, byte| {
-        let _ = write!(output, "{byte:02x}");
-        output
-    });
-    std::env::temp_dir()
-        .join("pi-extensions")
-        .join(prefix)
-        .join(&hash)
-        .join(suffix.unwrap_or_default())
-}
-
 #[cfg(test)]
 pub(crate) mod test_support {
     /// Process-wide env reads and writes (HOME, `PI_OFFLINE`) serialize
-    /// through one lock across the packages test modules: parallel test
+    /// through one lock across the resolution test modules: parallel test
     /// threads in the same binary otherwise race the process env.
     pub(crate) static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 }

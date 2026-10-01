@@ -355,40 +355,6 @@ fn collect_top_level_files(dir: &Path, kind: FileKind) -> Vec<PathBuf> {
     entries
 }
 
-/// The `pi` manifest in a package's `package.json` (parse failures are no
-/// manifest, per the TS product).
-pub(crate) fn read_pi_manifest(package_root: &Path) -> Option<super::PiManifest> {
-    let package_json = package_root.join("package.json");
-    if !package_json.exists() {
-        return None;
-    }
-    read_pi_manifest_file(&package_json)
-}
-
-fn read_pi_manifest_file(package_json: &Path) -> Option<super::PiManifest> {
-    let content = std::fs::read_to_string(package_json).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let pi = value.get("pi")?.as_object()?;
-    Some(super::PiManifest {
-        skills: string_array(pi.get("skills")),
-        prompts: string_array(pi.get("prompts")),
-        themes: string_array(pi.get("themes")),
-    })
-}
-
-fn string_array(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
-    match value {
-        Some(serde_json::Value::Array(entries)) => Some(
-            entries
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .map(str::to_string)
-                .collect(),
-        ),
-        _ => None,
-    }
-}
-
 /// Collect resource files from a directory by kind: skills use the
 /// skill-entry scanner, others recursive file collection.
 pub(crate) fn collect_resource_files(

@@ -236,7 +236,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         system_prompt: config.custom_system_prompt.clone(),
         append_system_prompt: Vec::new(),
         ..Default::default()
-    })?;
+    });
 
     let model = config
         .model

@@ -59,26 +59,19 @@ pub fn run_prompt_command(args: &[String]) -> i32 {
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    match assemble_breakdown(&cwd, parsed.model.as_deref()) {
-        Ok(breakdown) => {
-            if parsed.json {
-                print_json(&breakdown);
-            } else {
-                print_text(&breakdown);
-            }
-            0
-        }
-        Err(error) => {
-            eprintln!("Error: {error:#}");
-            1
-        }
+    let breakdown = assemble_breakdown(&cwd, parsed.model.as_deref());
+    if parsed.json {
+        print_json(&breakdown);
+    } else {
+        print_text(&breakdown);
     }
+    0
 }
 
 fn assemble_breakdown(
     cwd: &std::path::Path,
     model: Option<&str>,
-) -> anyhow::Result<pa_core::prompts::SystemPromptBreakdown> {
+) -> pa_core::prompts::SystemPromptBreakdown {
     let agent_dir = get_agent_dir();
     let settings = SettingsManager::create(cwd, &agent_dir);
     // MCP gating: auth-gated built-in integrations drop their skills;
@@ -101,8 +94,8 @@ fn assemble_breakdown(
         extra_builtin_skill_overrides: skill_overrides,
         system_prompt: None,
         ..ResourceLoaderOptions::new(cwd.to_path_buf(), agent_dir)
-    })?;
-    Ok(pa_core::prompts::system_prompt::system_prompt_breakdown(
+    });
+    pa_core::prompts::system_prompt::system_prompt_breakdown(
         &pa_core::prompts::BuildSystemPromptOptions {
             cwd: cwd.display().to_string(),
             // A dump has no session file; the tail states the value it uses.
@@ -123,7 +116,7 @@ fn assemble_breakdown(
             rlm_depth: Some(0),
             ..Default::default()
         },
-    ))
+    )
 }
 
 fn print_text(breakdown: &pa_core::prompts::SystemPromptBreakdown) {
@@ -218,7 +211,7 @@ mod tests {
     #[test]
     fn assembles_the_layered_prompt_for_a_directory() {
         let dir = tempfile::tempdir().unwrap();
-        let breakdown = assemble_breakdown(dir.path(), Some("mock/mock-1")).unwrap();
+        let breakdown = assemble_breakdown(dir.path(), Some("mock/mock-1"));
         assert!(breakdown.assembled.starts_with("# prime-agent harness"));
         assert!(breakdown
             .assembled

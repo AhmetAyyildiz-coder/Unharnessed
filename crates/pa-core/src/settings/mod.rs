@@ -18,5 +18,5 @@ pub use storage::{
 };
 pub use types::{
     AutonomousSettings, CompactionSettings, McpServerConfig, QueueModeSetting, Settings,
-    ThinkingLevelSetting, TransportSetting, UpdateChannel,
+    ThinkingLevelSetting, TransportSetting,
 };

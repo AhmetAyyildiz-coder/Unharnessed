@@ -51,7 +51,7 @@ async fn list(options: &RunOptions) -> Result<i32, String> {
 /// The TS `formatNoModelsAvailableMessage`: guidance plus the bundled docs
 /// paths for providers and models.
 fn no_models_available_message() -> String {
-    let docs = pa_core::packages::docs_path();
+    let docs = pa_core::resource_paths::docs_path();
     format!(
         "No models available. Use /login to log into a provider via OAuth or API key. See:\n  {}\n  {}",
         docs.join("providers.md").display(),

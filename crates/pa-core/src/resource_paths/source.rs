@@ -1,63 +1,19 @@
-//! Package source parsing: `npm:` specs, git URLs, and local paths, plus the
-//! path-resolution helpers the package manager uses to bind sources to
-//! install locations and settings entries.
+//! Git URL parsing (the session git context identifies its remote with it)
+//! and the path helpers resource resolution uses.
 //!
-//! Behavior contract (user-visible strings included):
-//! - `npm:<spec>` is always an npm source; the spec may pin a version
-//!   (`npm:@scope/pkg@1.2.3`), which disables auto-updates.
-//! - Local sources are anything that is not an `npm:`/`git:`/URL protocol
-//!   prefix, including bare relative paths.
-//! - Git sources are explicit protocol URLs (`https://`, `http://`, `ssh://`,
-//!   `git://`) or - with the `git:` prefix - host/path shorthand and
-//!   scp-like forms. `git://` URLs are *not* git sources: the `git:` prefix
-//!   is stripped first, so `git://host/path` parses as a local path. This
-//!   quirk is product behavior, not a bug to fix here.
+//! Git sources are explicit protocol URLs (`https://`, `http://`, `ssh://`,
+//! `git://`) or - with the `git:` prefix - host/path shorthand and
+//! scp-like forms.
 
 use std::path::{Path, PathBuf};
 
-/// Scope a package source belongs to: user settings, project settings, or an
-/// ephemeral resolve-only scope (temporary sources are never persisted).
+/// Scope a resolved resource belongs to: user settings, project settings, or
+/// an ephemeral scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SourceScope {
     User,
     Project,
     Temporary,
-}
-
-/// Persisted settings scope for package sources.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UserOrProject {
-    User,
-    Project,
-}
-
-impl UserOrProject {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            UserOrProject::User => "user",
-            UserOrProject::Project => "project",
-        }
-    }
-}
-
-impl From<UserOrProject> for SourceScope {
-    fn from(scope: UserOrProject) -> Self {
-        match scope {
-            UserOrProject::User => SourceScope::User,
-            UserOrProject::Project => SourceScope::Project,
-        }
-    }
-}
-
-/// A parsed `npm:` source.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NpmSource {
-    /// The spec with the `npm:` prefix removed (`@scope/pkg@1.2.3`).
-    pub spec: String,
-    pub name: String,
-    /// True when the spec pins a version; pinned packages never auto-update.
-    pub pinned: bool,
 }
 
 /// A parsed git source (subset of the hosted-git-info forms; the generic
@@ -72,22 +28,8 @@ pub struct GitSource {
     pub path: String,
     /// Optional ref (branch, tag, or commit).
     pub r#ref: Option<String>,
-    /// True when a ref was specified; pinned packages never auto-update.
+    /// True when a ref was specified.
     pub pinned: bool,
-}
-
-/// A local filesystem source.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalSource {
-    pub path: String,
-}
-
-/// The parsed form of a package source string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ParsedSource {
-    Npm(NpmSource),
-    Git(GitSource),
-    Local(LocalSource),
 }
 
 /// Split a possibly ref-suffixed git URL into clone URL and ref, matching the
@@ -271,7 +213,7 @@ fn parse_generic_git_url(url: &str) -> Option<GitSource> {
     })
 }
 
-/// Parse a package source into a git source.
+/// Parse a source string into a git source.
 ///
 /// Rules: with the `git:` prefix every historical shorthand form is accepted;
 /// without it only explicit protocol URLs parse as git.
@@ -334,62 +276,6 @@ fn is_protocol_url(url: &str) -> bool {
         || lower.starts_with("git://")
 }
 
-/// True when the value is a package source or URL protocol prefix rather than
-/// a local path; bare names and relative paths are local.
-pub fn is_local_path(value: &str) -> bool {
-    let trimmed = value.trim();
-    !(trimmed.starts_with("npm:")
-        || trimmed.starts_with("git:")
-        || trimmed.starts_with("github:")
-        || trimmed.starts_with("http:")
-        || trimmed.starts_with("https:")
-        || trimmed.starts_with("ssh:"))
-}
-
-/// Parse an npm spec into name and optional pinned version.
-pub fn parse_npm_spec(spec: &str) -> (String, Option<String>) {
-    // `^(@?[^@]+(?:\/?[^@]+)?)(?:@(.+))?$`: a scope marker may lead, and the
-    // version is everything after the first `@` that follows any other char.
-    let version_at = spec
-        .char_indices()
-        .skip(1)
-        .find(|(_, c)| *c == '@')
-        .map(|(index, _)| index);
-    let Some(version_at) = version_at else {
-        return (spec.to_string(), None);
-    };
-    let name = &spec[..version_at];
-    let version = &spec[version_at + 1..];
-    if name.is_empty() || version.is_empty() {
-        return (spec.to_string(), None);
-    }
-    (name.to_string(), Some(version.to_string()))
-}
-
-/// Parse a raw package source string.
-pub fn parse_source(source: &str) -> ParsedSource {
-    if let Some(spec) = source.strip_prefix("npm:") {
-        let spec = spec.trim();
-        let (name, version) = parse_npm_spec(spec);
-        return ParsedSource::Npm(NpmSource {
-            spec: spec.to_string(),
-            name,
-            pinned: version.is_some(),
-        });
-    }
-    if is_local_path(source) {
-        return ParsedSource::Local(LocalSource {
-            path: source.to_string(),
-        });
-    }
-    if let Some(git) = parse_git_url(source) {
-        return ParsedSource::Git(git);
-    }
-    ParsedSource::Local(LocalSource {
-        path: source.to_string(),
-    })
-}
-
 /// Lexical absolutization (node `path.resolve`): joins onto the base and
 /// collapses `.`/`..` without touching the filesystem.
 pub fn lexical_resolve(base: &Path, input: &str) -> PathBuf {
@@ -434,44 +320,9 @@ pub fn path_relative(from: &Path, to: &Path) -> String {
 mod tests {
     use super::*;
 
-    fn kind(source: &str) -> &'static str {
-        match parse_source(source) {
-            ParsedSource::Npm(_) => "npm",
-            ParsedSource::Git(_) => "git",
-            ParsedSource::Local(_) => "local",
-        }
-    }
-
-    #[test]
-    fn parses_documented_source_forms() {
-        assert_eq!(kind("npm:@scope/pkg@1.2.3"), "npm");
-        assert_eq!(kind("npm:pkg"), "npm");
-        assert_eq!(kind("git:github.com/user/repo@v1"), "git");
-        assert_eq!(kind("https://github.com/user/repo@v1"), "git");
-        assert_eq!(kind("git:git@github.com:user/repo@v1"), "git");
-        assert_eq!(kind("ssh://git@github.com/user/repo@v1"), "git");
-        assert_eq!(kind("/absolute/path/to/package"), "local");
-        assert_eq!(kind("./relative/path"), "local");
-        assert_eq!(kind("../relative/path"), "local");
-    }
-
-    #[test]
-    fn never_parses_dot_relative_paths_as_git() {
-        let ParsedSource::Local(local) = parse_source("./packages/agent-timers") else {
-            panic!("expected local");
-        };
-        assert_eq!(local.path, "./packages/agent-timers");
-        let ParsedSource::Local(local) = parse_source("../packages/agent-timers") else {
-            panic!("expected local");
-        };
-        assert_eq!(local.path, "../packages/agent-timers");
-    }
-
     #[test]
     fn parses_https_github_urls() {
-        let ParsedSource::Git(git) = parse_source("https://github.com/user/repo") else {
-            panic!("expected git");
-        };
+        let git = parse_git_url("https://github.com/user/repo").expect("expected git");
         assert_eq!(git.host, "github.com");
         assert_eq!(git.path, "user/repo");
         assert_eq!(git.repo, "https://github.com/user/repo");
@@ -480,46 +331,36 @@ mod tests {
 
     #[test]
     fn parses_https_urls_with_git_prefix() {
-        let ParsedSource::Git(git) = parse_source("git:https://github.com/user/repo") else {
-            panic!("expected git");
-        };
+        let git = parse_git_url("git:https://github.com/user/repo").expect("expected git");
         assert_eq!(git.host, "github.com");
         assert_eq!(git.path, "user/repo");
     }
 
     #[test]
     fn parses_https_urls_with_ref() {
-        let ParsedSource::Git(git) = parse_source("https://github.com/user/repo@v1.2.3") else {
-            panic!("expected git");
-        };
+        let git = parse_git_url("https://github.com/user/repo@v1.2.3").expect("expected git");
         assert_eq!(git.repo, "https://github.com/user/repo");
         assert_eq!(git.r#ref.as_deref(), Some("v1.2.3"));
         assert!(git.pinned);
 
-        let ParsedSource::Git(git) = parse_source("https://github.com/user/repo@feature/branch")
-        else {
-            panic!("expected git");
-        };
+        let git =
+            parse_git_url("https://github.com/user/repo@feature/branch").expect("expected git");
         assert_eq!(git.r#ref.as_deref(), Some("feature/branch"));
     }
 
     #[test]
     fn parses_host_path_shorthand_only_with_git_prefix() {
-        let ParsedSource::Git(git) = parse_source("git:github.com/user/repo") else {
-            panic!("expected git");
-        };
+        let git = parse_git_url("git:github.com/user/repo").expect("expected git");
         assert_eq!(git.repo, "https://github.com/user/repo");
         assert_eq!(git.host, "github.com");
         assert_eq!(git.path, "user/repo");
 
-        assert_eq!(kind("github.com/user/repo"), "local");
+        assert!(parse_git_url("github.com/user/repo").is_none());
     }
 
     #[test]
     fn parses_https_urls_with_git_suffix() {
-        let ParsedSource::Git(git) = parse_source("https://github.com/user/repo.git") else {
-            panic!("expected git");
-        };
+        let git = parse_git_url("https://github.com/user/repo.git").expect("expected git");
         assert_eq!(git.path, "user/repo");
     }
 
@@ -530,18 +371,14 @@ mod tests {
             "https://bitbucket.org/user/repo",
             "https://codeberg.org/user/repo",
         ] {
-            let ParsedSource::Git(git) = parse_source(url) else {
-                panic!("expected git for {url}");
-            };
+            let git = parse_git_url(url).expect("expected git for {url}");
             assert_eq!(git.path, "user/repo");
         }
     }
 
     #[test]
     fn keeps_scp_clone_urls_for_scp_like_sources() {
-        let ParsedSource::Git(git) = parse_source("git:git@github.com:user/repo") else {
-            panic!("expected git");
-        };
+        let git = parse_git_url("git:git@github.com:user/repo").expect("expected git");
         assert_eq!(git.repo, "git@github.com:user/repo");
         assert_eq!(git.host, "github.com");
         assert_eq!(git.path, "user/repo");
@@ -549,32 +386,10 @@ mod tests {
 
     #[test]
     fn parses_ssh_protocol_urls() {
-        let ParsedSource::Git(git) = parse_source("git:ssh://git@github.com/user/repo") else {
-            panic!("expected git")
-        };
+        let git = parse_git_url("git:ssh://git@github.com/user/repo").expect("expected git");
         assert_eq!(git.repo, "ssh://git@github.com/user/repo");
         assert_eq!(git.host, "github.com");
         assert_eq!(git.path, "user/repo");
-    }
-
-    #[test]
-    fn treats_protocol_git_urls_with_git_prefix_as_local() {
-        // The `git:` prefix is stripped before parsing, so `git://host/path`
-        // never reaches the protocol branch - product behavior.
-        assert_eq!(kind("git://localhost/fixtures/repo.git"), "local");
-    }
-
-    #[test]
-    fn parses_npm_specs() {
-        let (name, version) = parse_npm_spec("@scope/pkg@1.2.3");
-        assert_eq!(name, "@scope/pkg");
-        assert_eq!(version.as_deref(), Some("1.2.3"));
-        let (name, version) = parse_npm_spec("pkg");
-        assert_eq!(name, "pkg");
-        assert_eq!(version, None);
-        let (name, version) = parse_npm_spec("@scope/pkg");
-        assert_eq!(name, "@scope/pkg");
-        assert_eq!(version, None);
     }
 
     #[test]

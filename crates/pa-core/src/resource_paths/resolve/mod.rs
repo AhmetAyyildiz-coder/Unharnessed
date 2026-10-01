@@ -1,6 +1,5 @@
 //! Session resource resolution (`resolve()`): precedence-ranked collection of
-//! skill/prompt/theme paths from configured packages (pi manifest,
-//! convention directories, filter patterns), settings top-level arrays, and
+//! skill/prompt/theme paths from the settings top-level arrays and
 //! auto-discovery (settings-base directories, `.agents/skills` ancestor
 //! scan, bundled skills).
 //!
@@ -10,7 +9,6 @@
 //! canonicalized path.
 
 pub(crate) mod auto;
-pub(crate) mod collect;
 pub(crate) mod discovery;
 pub(crate) mod manager;
 pub(crate) mod patterns;
@@ -92,14 +90,6 @@ pub struct ResolvedPaths {
     pub diagnostics: Vec<crate::skills::diagnostics::ResourceDiagnostic>,
 }
 
-/// Response to a missing configured package source during resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MissingSourceAction {
-    Install,
-    Skip,
-    Error,
-}
-
 /// Lower rank = higher precedence: project settings (0), project auto (1),
 /// user settings (2), user auto (3), package (4), builtin (5).
 pub(crate) fn resource_precedence_rank(metadata: &PathMetadata) -> u8 {
@@ -109,51 +99,6 @@ pub(crate) fn resource_precedence_rank(metadata: &PathMetadata) -> u8 {
         _ => {
             let scope_base = u8::from(metadata.scope != SourceScope::Project) * 2;
             scope_base + u8::from(metadata.source != MetadataSource::Local)
-        }
-    }
-}
-
-/// Per-kind filter patterns of a package entry (the object form of a
-/// `packages` settings entry). An explicit empty list disables the kind.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PackageFilter {
-    pub skills: Option<Vec<String>>,
-    pub prompts: Option<Vec<String>>,
-    pub themes: Option<Vec<String>>,
-}
-
-impl PackageFilter {
-    fn get(&self, resource_type: ResourceType) -> Option<&Vec<String>> {
-        match resource_type {
-            ResourceType::Skills => self.skills.as_ref(),
-            ResourceType::Prompts => self.prompts.as_ref(),
-            ResourceType::Themes => self.themes.as_ref(),
-        }
-    }
-}
-
-/// One configured package source plus its scope and filter patterns.
-pub(crate) struct ConfiguredSource {
-    pub source: String,
-    pub scope: SourceScope,
-    pub filter: Option<PackageFilter>,
-}
-
-/// The `pi` manifest in a package's `package.json` (parse failures are no
-/// manifest, per the TS product).
-#[derive(Debug, Default)]
-pub(crate) struct PiManifest {
-    pub skills: Option<Vec<String>>,
-    pub prompts: Option<Vec<String>>,
-    pub themes: Option<Vec<String>>,
-}
-
-impl PiManifest {
-    pub(crate) fn entries(&self, resource_type: ResourceType) -> Option<Vec<String>> {
-        match resource_type {
-            ResourceType::Skills => self.skills.clone(),
-            ResourceType::Prompts => self.prompts.clone(),
-            ResourceType::Themes => self.themes.clone(),
         }
     }
 }

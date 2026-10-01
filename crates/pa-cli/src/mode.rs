@@ -136,7 +136,6 @@ pub struct RunOptions {
 pub enum MissingSubsystem {
     SessionEngine,
     ModelRegistry,
-    PackageManager,
 }
 
 impl MissingSubsystem {
@@ -145,7 +144,6 @@ impl MissingSubsystem {
         match self {
             MissingSubsystem::SessionEngine => "the session engine (pa-core)",
             MissingSubsystem::ModelRegistry => "the model registry (pa-ai)",
-            MissingSubsystem::PackageManager => "the capability package manager (pa-core)",
         }
     }
 

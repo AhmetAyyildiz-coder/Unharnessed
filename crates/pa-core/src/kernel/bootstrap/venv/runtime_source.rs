@@ -37,7 +37,7 @@ fn runtime_candidate_dirs() -> Vec<PathBuf> {
     let mut candidates = packaged_runtime_dir().into_iter().collect::<Vec<_>>();
     // Source checkouts keep the sidecar at the workspace root (TS resolves
     // module-relative monorepo candidates the same way).
-    if let Some(root) = crate::packages::source_checkout_root() {
+    if let Some(root) = crate::resource_paths::source_checkout_root() {
         candidates.push(root.join("prime-agent-runtime"));
     }
     candidates

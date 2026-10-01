@@ -1,8 +1,8 @@
 //! Project context files (AGENTS.md/CLAUDE.md discovery) and the resource
 //! loader. Port of core/resource-loader.ts, scoped to the session engine's
 //! needs: skills, prompt templates, agents files, and system-prompt sources,
-//! resolved from configured packages, settings, auto-discovery, and bundled
-//! skills through the package manager. Theme loading lives in pa-tui.
+//! resolved from the settings arrays, auto-discovery, and bundled skills
+//! (`resource_paths`).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -69,13 +69,11 @@ pub fn load_project_context_files(cwd: &Path, agent_dir: &Path) -> Vec<ContextFi
     context_files
 }
 
-// Session resource resolution (package-manager `resolve()`) feeds the
+// Session resource resolution (`ResourceResolver::resolve`) feeds the
 // loader below.
 pub(crate) mod resolution;
 
-use anyhow::Result;
-
-use crate::packages::BundledSkillsDir;
+use crate::resource_paths::BundledSkillsDir;
 use crate::settings::SettingsManager;
 
 /// Loaded resources for a session.
@@ -121,20 +119,15 @@ impl ResourceLoaderOptions {
     }
 }
 
-/// Load all session resources: package-manager resolution (configured
-/// packages, settings arrays, auto-discovery, bundled skills) feeds the
-/// enabled skill and prompt paths.
-///
-/// # Errors
-///
-/// Returns an error when the session resource resolution fails (a
-/// configured package source cannot be parsed, installed, or refreshed).
-pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResources> {
+/// Load all session resources: the resolution (settings arrays,
+/// auto-discovery, bundled skills) feeds the enabled skill and prompt paths.
+#[must_use]
+pub fn load_resources(mut options: ResourceLoaderOptions) -> LoadedResources {
     let settings = options
         .settings
         .take()
         .unwrap_or_else(|| SettingsManager::create(&options.cwd, &options.agent_dir));
-    let resolution = resolution::resolve_session_resources(&options, settings)?;
+    let resolution = resolution::resolve_session_resources(&options, settings);
 
     let mut resources = LoadedResources::default();
 
@@ -242,7 +235,7 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> Result<LoadedResour
         .filter_map(|source| resolve_prompt_input(source))
         .collect();
 
-    Ok(resources)
+    resources
 }
 
 fn diagnostics_path(diagnostic: &ResourceDiagnostic) -> Option<String> {
@@ -389,61 +382,13 @@ mod tests {
             cwd,
             agent_dir,
             ..Default::default()
-        })
-        .unwrap();
+        });
         assert!(resources.skills.iter().any(|s| s.name == "alpha"));
         assert!(resources.prompts.iter().any(|p| p.name == "fix"));
         assert_eq!(resources.agents_files.len(), 1);
         assert_eq!(resources.agents_files[0].content, "Project rules");
         assert_eq!(resources.system_prompt.as_deref(), Some("custom system"));
         assert!(resources.append_system_prompt.is_empty());
-    }
-
-    #[test]
-    fn package_provided_skills_and_prompts_load_into_a_session() {
-        let tmp = tempfile::tempdir().unwrap();
-        let agent_dir = tmp.path().join("agent");
-        let cwd = tmp.path().join("proj");
-        fs::create_dir_all(&agent_dir).unwrap();
-        fs::create_dir_all(&cwd).unwrap();
-        // A local package with a skill and a prompt.
-        let pkg = tmp.path().join("fixture-pkg");
-        fs::create_dir_all(pkg.join("skills").join("pack-skill")).unwrap();
-        fs::create_dir_all(pkg.join("prompts")).unwrap();
-        fs::write(
-            pkg.join("package.json"),
-            r#"{"name":"fixture-pkg","version":"1.0.0"}"#,
-        )
-        .unwrap();
-        fs::write(
-            pkg.join("skills").join("pack-skill").join("SKILL.md"),
-            "---\nname: pack-skill\ndescription: From the package\n---\nBody",
-        )
-        .unwrap();
-        fs::write(pkg.join("prompts").join("fix.md"), "Fix $1").unwrap();
-        fs::write(
-            agent_dir.join("settings.json"),
-            serde_json::json!({"packages": ["../fixture-pkg"]}).to_string(),
-        )
-        .unwrap();
-
-        let resources = load_resources(ResourceLoaderOptions::new(&cwd, &agent_dir)).unwrap();
-        let skill = resources
-            .skills
-            .iter()
-            .find(|skill| skill.name == "pack-skill")
-            .expect("package skill loaded");
-        assert_eq!(skill.source_info.source, "../fixture-pkg");
-        assert_eq!(
-            skill.source_info.origin,
-            crate::skills::SourceOrigin::Package
-        );
-        let prompt = resources
-            .prompts
-            .iter()
-            .find(|prompt| prompt.name == "fix")
-            .expect("package prompt loaded");
-        assert_eq!(prompt.source_info.source, "../fixture-pkg");
     }
 
     #[test]
@@ -475,7 +420,7 @@ mod tests {
         )
         .unwrap();
 
-        let resources = load_resources(ResourceLoaderOptions::new(&cwd, &agent_dir)).unwrap();
+        let resources = load_resources(ResourceLoaderOptions::new(&cwd, &agent_dir));
         let alpha: Vec<_> = resources
             .skills
             .iter()

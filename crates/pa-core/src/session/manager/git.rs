@@ -38,7 +38,7 @@ pub fn capture_git_context(cwd: &Path) -> Option<GitContext> {
     }
     Some(GitContext {
         repo_url: remote.map(|url| {
-            crate::packages::parse_git_url(&url)
+            crate::resource_paths::parse_git_url(&url)
                 .map(|source| source.repo)
                 .unwrap_or(url)
         }),

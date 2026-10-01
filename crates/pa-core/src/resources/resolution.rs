@@ -1,19 +1,16 @@
-//! Resource resolution wiring: the package manager resolves configured
-//! packages, settings arrays, auto-discovery, and bundled skills; the loader
-//! consumes the enabled paths (skills and prompts join the session). Theme
-//! loading is a downstream seam.
+//! Resource resolution wiring: the resolver collects the settings arrays,
+//! auto-discovery, and bundled skills; the loader consumes the enabled paths
+//! (skills and prompts join the session).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
-
 use crate::resources::ResourceLoaderOptions;
 use crate::settings::SettingsManager;
 
-use crate::packages::PathMetadata;
-use crate::packages::{
-    MetadataSource, PackageManager, PackageManagerOptions, ResolvedPaths, ResolvedResource,
+use crate::resource_paths::PathMetadata;
+use crate::resource_paths::{
+    MetadataSource, ResolvedPaths, ResolvedResource, ResourceResolver, ResourceResolverOptions,
 };
 use crate::skills::{
     SourceInfo as SkillSourceInfo, SourceOrigin as SkillSourceOrigin,
@@ -30,13 +27,13 @@ fn metadata_source_info(metadata: &PathMetadata, path: &Path) -> SkillSourceInfo
         path: path.display().to_string(),
         source: metadata.source.source_label(),
         scope: match metadata.scope {
-            crate::packages::SourceScope::User => SkillSourceScope::User,
-            crate::packages::SourceScope::Project => SkillSourceScope::Project,
-            crate::packages::SourceScope::Temporary => SkillSourceScope::Temporary,
+            crate::resource_paths::SourceScope::User => SkillSourceScope::User,
+            crate::resource_paths::SourceScope::Project => SkillSourceScope::Project,
+            crate::resource_paths::SourceScope::Temporary => SkillSourceScope::Temporary,
         },
         origin: match metadata.origin {
-            crate::packages::ResourceOrigin::Package => SkillSourceOrigin::Package,
-            crate::packages::ResourceOrigin::TopLevel => SkillSourceOrigin::TopLevel,
+            crate::resource_paths::ResourceOrigin::Package => SkillSourceOrigin::Package,
+            crate::resource_paths::ResourceOrigin::TopLevel => SkillSourceOrigin::TopLevel,
         },
         base_dir: metadata
             .base_dir
@@ -88,7 +85,7 @@ pub(crate) fn find_source_info(
 /// resolve to its `SKILL.md` when present.
 fn map_skill_path(resource: &ResolvedResource) -> PathBuf {
     let is_mappable = resource.metadata.source == MetadataSource::Auto
-        || resource.metadata.origin == crate::packages::ResourceOrigin::Package;
+        || resource.metadata.origin == crate::resource_paths::ResourceOrigin::Package;
     if !is_mappable {
         return resource.path.clone();
     }
@@ -151,7 +148,7 @@ fn home_dir() -> PathBuf {
     pa_types::platform::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// The full resolve step of resource loading: package-manager resolution,
+/// The full resolve step of resource loading: the resolution,
 /// returning the resolved paths, the enabled session paths (skills mapped
 /// to `SKILL.md`), and the provenance index.
 pub(crate) struct ResolutionOutput {
@@ -171,15 +168,15 @@ fn as_strings(paths: &[PathBuf]) -> Vec<String> {
 pub(crate) fn resolve_session_resources(
     options: &ResourceLoaderOptions,
     settings: SettingsManager,
-) -> Result<ResolutionOutput> {
-    let mut manager = PackageManager::with_options(PackageManagerOptions {
+) -> ResolutionOutput {
+    let manager = ResourceResolver::with_options(ResourceResolverOptions {
         cwd: options.cwd.clone(),
         agent_dir: options.agent_dir.clone(),
         settings,
         bundled_skills_dir: options.bundled_skills_dir.clone(),
         extra_builtin_skill_overrides: options.extra_builtin_skill_overrides.clone(),
     });
-    let resolved = manager.resolve()?;
+    let resolved = manager.resolve();
 
     let mut source_infos: SourceInfoIndex = Vec::new();
     index_source_infos(&mut source_infos, &resolved.skills);
@@ -212,10 +209,10 @@ pub(crate) fn resolve_session_resources(
         merge_paths(&primary, &[], &options.cwd)
     };
 
-    Ok(ResolutionOutput {
+    ResolutionOutput {
         resolved,
         skill_paths,
         prompt_paths,
         source_infos,
-    })
+    }
 }
