@@ -172,11 +172,11 @@ pub fn create_compaction_outcome_message(
 /// `createAsyncBashCompletionMessage`): an `async_bash_completion`
 /// custom message carrying `[bash-done pid:N exit:M]` plus the
 /// JSON-encoded command, with the completion's `{pid, command,
-/// exitCode}` in details. The daemon's `bash.completed` host handler
-/// admits the row as the woken turn's injected prompt (the turn runs on
-/// the row, so the transcript renders the bash-done component); a
-/// later kernel read that reaches the model first withdraws it through
-/// its details (`bash.consumed`).
+/// exitCode}` in details. The `bash.completed` host handler
+/// (`session_engine::wakes`) queues the row as the woken turn's injected
+/// prompt (the turn runs on the row, so the transcript renders the
+/// bash-done component); a later kernel read that reaches the model
+/// first withdraws it through its details (`bash.consumed`).
 #[must_use]
 pub fn create_async_bash_completion_message(
     pid: u32,

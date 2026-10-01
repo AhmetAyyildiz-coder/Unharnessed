@@ -118,6 +118,7 @@ async fn acp_test_bed(
         session: Some(SessionEntry {
             session,
             prompt_task: None,
+            prompt_is_wake: false,
             config: std::sync::Arc::new(super::super::InProcessConfig {
                 published: tokio::sync::Mutex::new(Vec::new()),
                 models: tokio::sync::Mutex::new(Vec::new()),

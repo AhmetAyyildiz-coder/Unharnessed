@@ -171,6 +171,9 @@ pub struct Args {
     pub autonomous_max_turns: Option<u32>,
     pub autonomous_max_tokens: Option<u64>,
     pub autonomous_timeout_ms: Option<u64>,
+    /// `--background-wait-ms`: how long `-p` waits for pending wakes
+    /// (background `bash()`, goal backoff, quota park) once idle.
+    pub background_wait_ms: Option<u64>,
     pub goal: Option<String>,
     pub goal_token_budget: Option<u32>,
     /// The `--list-models` flag's tri-state (None = absent,
@@ -221,6 +224,16 @@ fn parse_positive_u64(value: &str, flag: &str, diagnostics: &mut Vec<Diagnostic>
             None
         }
     }
+}
+
+fn parse_u64(value: &str, flag: &str, diagnostics: &mut Vec<Diagnostic>) -> Option<u64> {
+    let parsed = value.trim().parse::<u64>().ok();
+    if parsed.is_none() {
+        diagnostics.push(Diagnostic::error(format!(
+            "{flag} must be an integer between 0 and u64::MAX (18446744073709551615)"
+        )));
+    }
+    parsed
 }
 
 /// Parse the CLI arguments the same way `parseArgs` in `cli/args.ts` does.
@@ -434,6 +447,10 @@ pub fn parse_args(args: &[String]) -> Args {
                 let value = require_value!(arg);
                 result.autonomous_timeout_ms =
                     parse_positive_u64(&value, arg, &mut result.diagnostics);
+            }
+            "--background-wait-ms" => {
+                let value = require_value!(arg);
+                result.background_wait_ms = parse_u64(&value, arg, &mut result.diagnostics);
             }
             "--goal" => {
                 let value = require_value!(arg);

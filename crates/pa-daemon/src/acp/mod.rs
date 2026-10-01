@@ -141,6 +141,9 @@ impl AcpModeState {
 struct SessionEntry {
     session: Arc<AcpSession>,
     prompt_task: Option<tokio::task::JoinHandle<()>>,
+    /// The running turn is a wake the agent started (a client prompt
+    /// waits for it instead of being refused).
+    prompt_is_wake: bool,
     /// The picker state (TS `AcpSessionEntry`'s configOptions/models).
     config: Arc<InProcessConfig>,
     /// The agent-end refresh subscription (unsubscribed at close so a
@@ -191,6 +194,10 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
         mcp_owner_id: Arc::new(uuid::Uuid::new_v4().to_string()),
         mcp_server_names: Arc::new(Mutex::new(Vec::new())),
     };
+    // The idle wakes (UNHARNESSED_PLAN.md Q7): the agent starts a turn on
+    // its own when a detached `bash()` finishes, a goal backoff passes or
+    // a quota park resets while no prompt runs.
+    let wake_watcher = tokio::spawn(watch_wakes(state.clone(), mode.clone(), tx.clone()));
     let mut stdin = BufReader::new(tokio::io::stdin());
     let mut line = String::new();
     loop {
@@ -215,6 +222,7 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
 
     // Exit when the client disconnects: stop the resident work, release the
     // subscription, fence the producer, and let the writer drain.
+    wake_watcher.abort();
     teardown(&state, &mode).await;
     // The final namespace snapshot (TS session dispose): the next process
     // that resumes this session revives it.
@@ -222,6 +230,25 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
     drop(tx);
     let _ = writer.await;
     Ok(0)
+}
+
+/// Start a wake turn for each wake that comes due. A wake that cannot run
+/// yet (a prompt turn holds the session and delivers it at its end, or no
+/// session is open) goes back to the queue until the next change.
+async fn watch_wakes(
+    state: Arc<Mutex<ConnectionState>>,
+    mode: AcpModeState,
+    tx: producer::FrameSink,
+) {
+    loop {
+        let Some(wake) = mode.engine.next_wake(None).await else {
+            continue;
+        };
+        if let Err(wake) = prompt::start_wake_turn(wake, &state, &mode, &tx).await {
+            mode.engine.wakes().requeue(wake);
+            mode.engine.wakes().changed().await;
+        }
+    }
 }
 
 /// Stop the hosted session after stdin closes: abort work, settle the prompt
@@ -503,6 +530,7 @@ async fn session_new(
         SessionEntry {
             session,
             prompt_task: None,
+            prompt_is_wake: false,
             config,
             config_refresh: Some(config_refresh),
         },

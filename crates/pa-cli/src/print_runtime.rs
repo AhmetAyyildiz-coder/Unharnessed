@@ -121,14 +121,20 @@ async fn print_mode_main(options: &RunOptions) -> Result<i32, String> {
             .await
             .map_err(|error| format!("{error:#}"))?;
     }
-    let outcome =
-        run_prompts_and_emit(&engine, &headless.model, headless.api_key.clone(), options).await;
-    // The final namespace snapshot (TS session dispose): the debounced
-    // flush cannot outlive this process, so a persisted session flushes
-    // here for the next `-c`/`-r` run to revive.
-    if !options.session.no_session {
-        engine.dispose_kernel().await;
-    }
+    let outcome = run_prompts_and_emit(
+        &engine,
+        &headless.model,
+        headless.api_key.clone(),
+        &headless.provider_target,
+        options,
+    )
+    .await;
+    // The kernel shutdown (TS session dispose): a persisted session takes
+    // its final namespace snapshot here (the debounced flush cannot outlive
+    // this process) for the next `-c`/`-r` run to revive, and the
+    // background `bash()` commands still alive die with the kernel
+    // (UNHARNESSED_PLAN.md Q7), with or without a session.
+    engine.dispose_kernel().await;
     outcome
 }
 
@@ -897,6 +903,56 @@ fn builtin_tools(_cwd: &std::path::Path) -> Vec<Arc<dyn pa_agent::types::AgentTo
     Vec::new()
 }
 
+/// How long `-p` waits, once idle, for a pending wake (`--background-wait-ms`).
+const DEFAULT_BACKGROUND_WAIT_MS: u64 = 10 * 60 * 1000;
+
+/// The boundaries every settled print turn crosses, prompt or wake.
+#[allow(clippy::too_many_arguments)]
+async fn settle_turn(
+    engine: &pa_core::session_engine::engine::SessionEngine,
+    boundary: &mut crate::print_boundary::TurnBoundary,
+    goal: &crate::print_goal::PrintGoalSurface,
+    autonomous: &HeadlessAutonomous,
+    model: &Model,
+    api_key: Option<String>,
+) -> Result<(), String> {
+    // The settled-turn boundary (TS `agent_end`): the provider retry of a
+    // failed turn, the overflow compact-and-retry arm, the turn-boundary
+    // requests the kernel scheduled mid-turn (`compact.run`), and the
+    // threshold arm. The outcomes persist in the session entries the
+    // terminal result reads.
+    boundary
+        .run_at_settled_turn(engine, model, api_key.clone())
+        .await?;
+    // The goal boundary's queue drain: the threshold-held continuation
+    // (minted ahead of the boundary's compaction) and the budget-limit
+    // steer (armed at the crossing turn's message end) run as this
+    // invocation's follow-up turns, each crossing the same boundary
+    // pair; a turn that still ends in a terminal error fails an active
+    // goal once the arms could not save it (TS
+    // `_finishGoalForTerminalAssistantMessage` at `agent_end`, after
+    // `_checkCompaction`).
+    let goal_owns_boundary = goal
+        .drive_boundary(engine, boundary, model, api_key.clone())
+        .await?;
+    // The autonomous arm runs only when the goal does not own the
+    // boundary (TS `_getContinuationMessages`: the goal arm takes
+    // exclusive priority; autonomous is never consulted while a goal
+    // is active).
+    if !goal_owns_boundary {
+        // The held threshold continuation drains as this invocation's
+        // follow-up turn (TS's queued `followUp` admission); its own
+        // natural end churns the in-run hook again. The stop surfaces
+        // only through the headless exit contract (TS: no row, no
+        // stream frame).
+        autonomous
+            .drive_boundary(engine, boundary, model, api_key)
+            .await
+            .map_err(|error| format!("{error:#}"))?;
+    }
+    Ok(())
+}
+
 /// Admit prompts, stream json events when requested, and decide the exit code
 /// from the headless terminal result plus the autonomous gate contract.
 /// Shared by the real and faux paths. The turn-boundary compaction checks
@@ -909,12 +965,25 @@ fn builtin_tools(_cwd: &std::path::Path) -> Vec<Arc<dyn pa_agent::types::AgentTo
 /// threshold continuation drains through the boundary pair, and a stop
 /// surfaces only through the headless exit contract (TS: no row, no
 /// stream frame).
+///
+/// Once the prompts settle, the run waits for the session's wakes (a
+/// background `bash()` that outlived its cell, the goal's backoff, a quota
+/// park) and runs each as a turn through the same boundaries. Each wait is
+/// bounded by `--background-wait-ms` and by the autonomous run's deadline;
+/// the commands still alive at exit die with the kernel.
 async fn run_prompts_and_emit(
     engine: &std::sync::Arc<pa_core::session_engine::engine::SessionEngine>,
     model: &Model,
     api_key: Option<String>,
+    provider_target: &ProviderTargetSlot,
     options: &RunOptions,
 ) -> Result<i32, String> {
+    let wake_limit = std::time::Duration::from_millis(
+        options
+            .config
+            .background_wait_ms
+            .unwrap_or(DEFAULT_BACKGROUND_WAIT_MS),
+    );
     let json_mode = options.app_mode == AppMode::Json;
     let mut unsubscribe: Option<pa_agent::agent::Subscription> = None;
     if json_mode {
@@ -968,7 +1037,15 @@ async fn run_prompts_and_emit(
         &goal,
         &autonomous,
     );
-    let mut boundary = crate::print_boundary::TurnBoundary::new(json_mode);
+    let mut boundary = crate::print_boundary::TurnBoundary::new(json_mode).with_retry(
+        crate::print_boundary::PrintRetry {
+            cwd: options.config.cwd.clone(),
+            agent_dir: options.config.agent_dir.clone(),
+            provider_target: std::sync::Arc::clone(provider_target),
+            failover: std::env::var_os("PRIME_AGENT_FAUX_SCRIPT").is_none(),
+            max_park: wake_limit,
+        },
+    );
     // The autonomous runtime state the session-command executor mutates —
     // the run's own shared state (the session always carries one, TS
     // `createAgentSession`), so `/autonomous` rewrites the state the hook,
@@ -1041,39 +1118,52 @@ async fn run_prompts_and_emit(
             .await
             .map_err(|error| format!("{error:#}"))?;
         engine.session.agent().wait_for_idle().await;
-        // The settled-turn boundary (TS `agent_end`): the overflow
-        // compact-and-retry arm, the turn-boundary requests the kernel
-        // scheduled mid-turn (`compact.run`), and the
-        // threshold arm. The outcomes persist in the session entries the
-        // terminal result reads.
-        boundary
-            .run_at_settled_turn(engine, model, api_key.clone())
-            .await?;
-        // The goal boundary's queue drain: the threshold-held continuation
-        // (minted ahead of the boundary's compaction) and the budget-limit
-        // steer (armed at the crossing turn's message end) run as this
-        // invocation's follow-up turns, each crossing the same boundary
-        // pair; a turn that still ends in a terminal error fails an active
-        // goal once the arms could not save it (TS
-        // `_finishGoalForTerminalAssistantMessage` at `agent_end`, after
-        // `_checkCompaction`).
-        let goal_owns_boundary = goal
-            .drive_boundary(engine, &mut boundary, model, api_key.clone())
-            .await?;
-        // The autonomous arm runs only when the goal does not own the
-        // boundary (TS `_getContinuationMessages`: the goal arm takes
-        // exclusive priority; autonomous is never consulted while a goal
-        // is active).
-        if !goal_owns_boundary {
-            // The held threshold continuation drains as this invocation's
-            // follow-up turn (TS's queued `followUp` admission); its own
-            // natural end churns the in-run hook again. The stop surfaces
-            // only through the headless exit contract (TS: no row, no
-            // stream frame).
-            autonomous
-                .drive_boundary(engine, &mut boundary, model, api_key.clone())
+        settle_turn(
+            engine,
+            &mut boundary,
+            &goal,
+            &autonomous,
+            model,
+            api_key.clone(),
+        )
+        .await?;
+    }
+    // The idle wakes, each run as one more turn until none is left or a
+    // wait runs out (UNHARNESSED_PLAN.md Q7).
+    if command_failure.is_none() {
+        loop {
+            let limit = autonomous
+                .remaining_time()
                 .await
-                .map_err(|error| format!("{error:#}"))?;
+                .map_or(wake_limit, |remaining| remaining.min(wake_limit));
+            let Some(wake) = engine.next_wake(Some(limit)).await else {
+                break;
+            };
+            boundary
+                .run_pre_turn(engine, model, api_key.clone())
+                .await?;
+            match wake {
+                pa_core::session_engine::wakes::Wake::BashDone(message) => {
+                    engine.session.prompt_injected_message(&message).await
+                }
+                pa_core::session_engine::wakes::Wake::Marker(text) => {
+                    engine
+                        .session
+                        .prompt(text, pa_core::session_engine::PromptOptions::default())
+                        .await
+                }
+            }
+            .map_err(|error| format!("{error:#}"))?;
+            engine.session.agent().wait_for_idle().await;
+            settle_turn(
+                engine,
+                &mut boundary,
+                &goal,
+                &autonomous,
+                model,
+                api_key.clone(),
+            )
+            .await?;
         }
     }
     goal_accounting.unsubscribe().await;

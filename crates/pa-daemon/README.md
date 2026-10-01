@@ -18,7 +18,12 @@ its name so the ACP code stays where it was.
   namespaced `_meta` (`ai.primeintellect.prime-agent`). The transport hosts the
   automatic compaction arms at its turn boundaries (`acp/compaction_arms.rs`:
   overflow compact-and-retry, model-requested `compact.run`, threshold) and the
-  goal/autonomous continuation loop (`acp/goal_continuation.rs`).
+  goal/autonomous continuation loop (`acp/goal_continuation.rs`). A failed turn
+  goes through the provider retry/failover chain first. When a background
+  `bash()` finishes, a goal backoff passes or a quota resets while no prompt
+  runs, the agent starts the turn itself (`acp/prompt.rs`, `start_wake_turn`):
+  it streams like a prompt turn but answers no request, and a client prompt
+  waits for it to settle.
 - `lease` — the per-session-file runtime lease
   (`<agent-dir>/session-leases/<sha256(path)>.lock`, atomic acquisition, stale
   owner reclaim), so two processes never drive the same session file.

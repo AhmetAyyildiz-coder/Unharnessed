@@ -89,6 +89,8 @@ pub struct RuntimeConfig {
     pub no_context_files: bool,
     pub autonomous: Option<AutonomousConfig>,
     pub initial_goal: Option<InitialGoal>,
+    /// `--background-wait-ms` (`None`: the 10-minute default).
+    pub background_wait_ms: Option<u64>,
 }
 
 /// Session selection options that stay client-side.
@@ -254,5 +256,6 @@ pub fn runtime_config_from_args(
             objective: objective.clone(),
             token_budget: parsed.goal_token_budget,
         }),
+        background_wait_ms: parsed.background_wait_ms,
     }
 }

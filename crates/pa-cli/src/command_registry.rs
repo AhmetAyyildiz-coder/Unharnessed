@@ -111,6 +111,10 @@ const TOP_LEVEL_OPTION_GROUPS: &[OptionGroup] = &[
                 "Select the output mode (default: text)",
             ),
             ("--cwd <dir>", "Use a specific working directory"),
+            (
+                "--background-wait-ms <n>",
+                "Wait for background work before -p exits (default: 600000)",
+            ),
             ("--offline", "Disable startup network operations"),
             ("--verbose", "Force verbose startup"),
         ],

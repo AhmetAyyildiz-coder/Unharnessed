@@ -132,6 +132,10 @@ pub struct SessionEngine {
     /// loops the graph and keeps a dropped session's kernel process alive
     /// until the process exits.
     pub(crate) provisioner: std::sync::Arc<crate::kernel::provisioner::IpythonKernelProvisioner>,
+    /// The deferred wakes of the idle session (detached `bash()`
+    /// completions, a quota park, the goal backoff): the in-process
+    /// hosts drain them through [`SessionEngine::next_wake`].
+    pub(crate) wakes: std::sync::Arc<super::wakes::SessionWakes>,
 }
 
 /// Resolve the MCP gating the resource loader and prompt need: skill
@@ -273,6 +277,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // the compaction `agentCallable` setting.
     let turn_boundary = Arc::new(super::turn_boundary::TurnBoundaryRequests::new());
     turn_boundary.register_model_info_handler(&mut handlers, model_info.clone());
+    // The detached `bash()` completions (`bash.completed`/`bash.consumed`)
+    // queue the wakes the idle host delivers.
+    let wakes = Arc::new(super::wakes::SessionWakes::default());
+    super::wakes::SessionWakes::register_host_handlers(&wakes, &mut handlers);
     let keep_recent_tokens = compaction_settings
         .keep_recent_tokens
         .unwrap_or(super::compaction::DEFAULT_KEEP_RECENT_TOKENS);
@@ -342,7 +350,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         &config.agent_dir,
         session_artifact_dir,
         on_restore,
-        config.on_background_work_settled.clone(),
+        Some(background_work_settled(
+            &wakes,
+            config.on_background_work_settled.clone(),
+        )),
         on_unavailable_skills,
     );
     let mut tools = config.tools.clone();
@@ -630,6 +641,23 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         mcp_manager,
         turn_boundary,
         provisioner,
+        wakes,
+    })
+}
+
+/// The kernel's last background `bash()` settling (or the kernel tearing
+/// down while one runs) wakes a host waiting on the session's wakes, then
+/// runs the embedding's own callback.
+fn background_work_settled(
+    wakes: &Arc<super::wakes::SessionWakes>,
+    host: Option<crate::kernel::shared::BackgroundWorkSettledCallback>,
+) -> crate::kernel::shared::BackgroundWorkSettledCallback {
+    let wakes = Arc::clone(wakes);
+    Arc::new(move || {
+        wakes.poke();
+        if let Some(host) = &host {
+            host();
+        }
     })
 }
 

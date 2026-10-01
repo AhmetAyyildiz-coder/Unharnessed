@@ -14,7 +14,13 @@ What it keeps:
   and `attach-image`.
 - **Automatic compaction** (threshold, overflow recovery, model-requested,
   `/compact`), **goals**, **autonomous mode** with turn/token/time budgets, and
-  **provider retry/failover**.
+  **provider retry/failover** (backoff, the same model on another configured
+  provider, waiting out a quota reset).
+- **Wake-ups of an idle session**: a background `bash()` that outlives its
+  cell, a goal's backoff and a quota reset start the next turn. `-p` waits for
+  them before exiting, at most `--background-wait-ms` per wait (default 10
+  minutes, `0` = no wait), then kills the commands still running; in ACP the
+  agent starts the turn itself and streams it as `session/update`.
 - **Sessions** saved as append-only JSONL, resumable.
 - **Skills** from `~/.prime/agent/skills`, `<project>/.prime/agent/skills`,
   `.agents/skills` in parent directories, and the `skills` setting; `AGENTS.md`
@@ -60,7 +66,8 @@ providers' usual environment variables.
 `make check` runs fmt, clippy (`-D warnings`), the tests and the release build.
 `scripts/unharnessed-smoke.sh <dir>` drives the real binary end to end against a
 real model; `scripts/unharnessed-skill-loading.sh <dir>` checks skill loading
-without a model.
+without a model; `scripts/unharnessed-wakes-e2e.py <dir>` checks the provider
+retry and the wake-ups in `-p` and ACP with the faux provider.
 
 ## License
 

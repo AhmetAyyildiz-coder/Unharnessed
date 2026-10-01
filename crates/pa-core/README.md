@@ -8,7 +8,9 @@ The session engine.
   events out): the agent loop wiring, the `ipython` tool, prompt admission and
   session slash commands (`/compact`, `/goal`, `/autonomous`), compaction
   (threshold, overflow recovery, model-requested `compact.*`, manual), the goal
-  driver, provider retry/failover/park, auxiliary and image model routing,
+  driver, provider retry/failover/park (`turn_retry`: the chain a host runs on a
+  failed turn), the idle session's wakes (`wakes`: detached `bash()`
+  completions, the goal backoff, a quota reset), auxiliary and image model routing,
   branch summaries, side questions, and the kernel host-request handlers
   (`goal.*`, `compact.*`, `model.info`).
 - `kernel` — the persistent IPython kernel: venv bootstrap (`uv`, the

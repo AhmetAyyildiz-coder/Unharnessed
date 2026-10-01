@@ -12,12 +12,16 @@ The `prime-agent` binary and composition root.
   removal guidance.
 - **Print runtime** (`print_runtime.rs`): drives the in-process session engine
   for `-p`. It admits the prompts, runs the turn-boundary compaction checks
-  (`print_boundary.rs`: overflow compact-and-retry, model-requested
-  `compact.run`, threshold), emits the json event stream (session header,
+  (`print_boundary.rs`: provider retry/failover, overflow compact-and-retry,
+  model-requested `compact.run`, threshold), emits the json event stream (session header,
   `message_update` deltas, tool events, `compaction_start`/`compaction_end`,
   `goal_update`, `session_action_update`), and picks the terminal result
-  (stdout, stderr, exit code). A persisted session flushes its kernel snapshot
-  before the process exits, so `-c`/`-r` revive the Python namespace.
+  (stdout, stderr, exit code). Once the prompts settle, it runs the session's
+  wakes (a background `bash()` completion, a goal backoff, a quota reset) as
+  further turns, waiting at most `--background-wait-ms` (default 10 minutes)
+  each time. The kernel shuts down before the process exits: a persisted
+  session flushes its snapshot, so `-c`/`-r` revive the Python namespace, and
+  the background commands still running die with it.
 - **Goals and autonomous mode** (`print_goal.rs`, `print_autonomous.rs`): the
   `--goal` seed rides the first turn; the in-loop continuation hook runs an
   active goal's or the autonomous run's natural continuations inside one agent

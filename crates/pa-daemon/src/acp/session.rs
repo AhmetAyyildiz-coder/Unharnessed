@@ -110,6 +110,11 @@ impl AcpSession {
         self.producer.close().await;
     }
 
+    /// Signal the wake watcher that the session may be idle again.
+    pub fn poke_wakes(&self) {
+        self.engine.wakes().poke();
+    }
+
     pub fn cancel_requested(&self) -> bool {
         self.cancel_requested.load(Ordering::SeqCst)
     }

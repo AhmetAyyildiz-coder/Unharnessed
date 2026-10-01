@@ -30,6 +30,11 @@
 //! fire on continuation turns exactly like on prompt turns — #229's
 //! print flag was reconciled here).
 //!
+//! The settled boundary first re-issues a turn that failed with a
+//! retryable provider error ([`PrintRetry`], TS `_handleRetryableError`
+//! runs before `_checkCompaction` at `agent_end`); json mode streams its
+//! `auto_retry_start`/`auto_retry_end` events.
+//!
 //! Output surfaces: json mode streams the TS session events (the
 //! `compaction_start`/`compaction_end` pair and the outcome row's message
 //! pair) on stdout; text mode stays quiet here — the durable rows surface
@@ -40,6 +45,7 @@ use pa_core::session_engine::engine::SessionEngine;
 use pa_core::session_engine::messages::{CompactionOutcomeKind, CompactionOutcomeReason};
 use pa_core::session_engine::provider_adapter::json_round_trip;
 use pa_core::session_engine::provider_retry::is_context_overflow_failure;
+use pa_core::session_engine::turn_retry::{auto_retry_event_json, TurnRetryHost};
 use pa_core::session_engine::TrailingAssistantFilter;
 use pa_types::ai::Model;
 use pa_types::session::AgentMessage as SessionAgentMessage;
@@ -70,6 +76,17 @@ use compaction_arms::OVERFLOW_RECOVERY_FAILED_MESSAGE;
 /// buffer in tests.
 type EventSink = std::sync::Arc<dyn Fn(&serde_json::Value) + Send + Sync>;
 
+/// What the settled boundary's provider retry needs from the run.
+pub(crate) struct PrintRetry {
+    pub(crate) cwd: std::path::PathBuf,
+    pub(crate) agent_dir: std::path::PathBuf,
+    pub(crate) provider_target: crate::print_runtime::ProviderTargetSlot,
+    /// `false` under the faux script (scripted failures never fail over).
+    pub(crate) failover: bool,
+    /// The longest quota park the run can wait out (its wake limit).
+    pub(crate) max_park: std::time::Duration,
+}
+
 /// The print loop's turn-boundary state: the one-attempt overflow machine
 /// plus the json/text output mode the surfaces depend on.
 pub(crate) struct TurnBoundary {
@@ -78,6 +95,8 @@ pub(crate) struct TurnBoundary {
     /// the durable rows through the headless terminal result.
     json_mode: bool,
     sink: EventSink,
+    /// The provider retry of a failed turn (`None`: the turn settles as is).
+    retry: Option<PrintRetry>,
 }
 
 impl TurnBoundary {
@@ -86,7 +105,14 @@ impl TurnBoundary {
             recovery: OverflowRecovery::Idle,
             json_mode,
             sink: std::sync::Arc::new(|event| println!("{event}")),
+            retry: None,
         }
+    }
+
+    /// Re-issue failed turns under the provider retry/failover policy.
+    pub(crate) fn with_retry(mut self, retry: PrintRetry) -> Self {
+        self.retry = Some(retry);
+        self
     }
 
     /// A boundary with an explicit event sink (json-mode event-capture
@@ -97,6 +123,7 @@ impl TurnBoundary {
             recovery: OverflowRecovery::Idle,
             json_mode,
             sink,
+            retry: None,
         }
     }
 
@@ -160,6 +187,7 @@ impl TurnBoundary {
         model: &Model,
         api_key: Option<String>,
     ) -> Result<(), String> {
+        self.retry_failed_turn(engine).await?;
         let arm_finished = loop {
             let outcome = self
                 .overflow_recovery_attempt(
@@ -177,6 +205,50 @@ impl TurnBoundary {
             self.requested_and_threshold_arms(engine, model, api_key)
                 .await?;
         }
+        Ok(())
+    }
+
+    /// The provider retry of a turn that settled with an error: the
+    /// chain re-issues it until it succeeds or the policy gives up, and
+    /// the compaction arms then read whatever the turn settled on.
+    async fn retry_failed_turn(&self, engine: &SessionEngine) -> Result<(), String> {
+        let Some(retry) = &self.retry else {
+            return Ok(());
+        };
+        let failed = engine
+            .session
+            .agent()
+            .state()
+            .await
+            .messages
+            .into_iter()
+            .rev()
+            .find_map(|message| match message {
+                pa_agent::types::AgentMessage::Standard(pa_agent::types::Message::Assistant(
+                    assistant,
+                )) => Some(assistant),
+                _ => None,
+            })
+            .filter(|assistant| assistant.stop_reason == pa_agent::types::StopReason::Error);
+        let Some(failed) = failed else {
+            return Ok(());
+        };
+        let host = TurnRetryHost {
+            cwd: &retry.cwd,
+            agent_dir: &retry.agent_dir,
+            provider_target: &retry.provider_target,
+            failover: retry.failover,
+            max_park: Some(retry.max_park),
+        };
+        let mut emit = |event: &pa_core::session_engine::auto_retry::AutoRetryEvent| {
+            if self.json_mode {
+                (self.sink)(&auto_retry_event_json(event));
+            }
+        };
+        engine
+            .retry_failed_turn(&host, failed, &|| false, &mut emit)
+            .await
+            .map_err(|error| format!("{error:#}"))?;
         Ok(())
     }
 

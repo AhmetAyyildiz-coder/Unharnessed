@@ -38,6 +38,8 @@ pub mod slash_commands;
 pub mod state_restore_notice;
 pub mod tool_bridge;
 pub mod turn_boundary;
+pub mod turn_retry;
+pub mod wakes;
 
 // The concern children split out of this composition root:
 

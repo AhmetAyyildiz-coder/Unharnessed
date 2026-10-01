@@ -58,8 +58,9 @@ this repo.
 - Do not add negative tests for logic that was removed.
 - Bug fixes need a regression test that fails without the fix.
 - Verifiers over self-assessment: end-to-end runs of the real binary
-  (`scripts/unharnessed-smoke.sh`), golden corpora replayed against real captured data. No lane
-  merges without its verifier passing, rerun by the reviewer where feasible.
+  (`scripts/unharnessed-smoke.sh`, `scripts/unharnessed-wakes-e2e.py`), golden corpora
+  replayed against real captured data. No lane merges without its verifier passing, rerun
+  by the reviewer where feasible.
 - Tests must wait for observable readiness, not fixed sleeps or retry-to-green loops. If a
   test must be disabled, give a reason at the test. Use isolated ports and temporary paths, and
   restore shared state. Run focused tests when changing their behavior.

@@ -115,7 +115,9 @@ fn now_millis() -> u64 {
 mod progress;
 
 use progress::CONTINUATION_NO_PROGRESS_CAP;
-pub use progress::{terminal_provider_failure, turn_produced_no_output};
+pub use progress::{
+    terminal_provider_failure, turn_produced_no_output, GOAL_BACKOFF_WAKE_MARKER_TEXT,
+};
 
 impl GoalDriver {
     #[must_use]
@@ -839,8 +841,8 @@ impl GoalDriver {
     }
 
     /// The armed no-progress backoff window's deadline, when the goal is
-    /// Active and the window is still open: the daemon's boundary sites
-    /// schedule a one-shot wake at this instant (the 402 diagnosis's (b)
+    /// Active and the window is still open: an idle in-process host wakes
+    /// at this instant (`session_engine::wakes`, the 402 diagnosis's (b)
     /// — without it, the refusal would stall the goal until an unrelated
     /// boundary event, and the advertised 10s/20s/40s retry would never
     /// run).

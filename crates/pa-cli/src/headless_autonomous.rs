@@ -176,6 +176,17 @@ impl HeadlessAutonomous {
         Ok(())
     }
 
+    /// The running autonomous run's remaining wall-clock budget: the idle
+    /// wake wait never outlasts it.
+    pub(crate) async fn remaining_time(&self) -> Option<std::time::Duration> {
+        let status = autonomous_status(&*self.state.lock().await);
+        let started_at = status.started_at.filter(|_| status.enabled)?;
+        let elapsed = now_millis().saturating_sub(started_at);
+        Some(std::time::Duration::from_millis(
+            status.limits.timeout_ms.saturating_sub(elapsed),
+        ))
+    }
+
     /// The TS print-mode exit contract: stderr text when the run must exit
     /// non-zero — a configured gate still failing (after its retry window,
     /// or with an autonomous limit reached), or an autonomous run without

@@ -2,6 +2,11 @@
 //! continuation loop, and the correlated settlement in front of the
 //! response. One prompt turn at a time; the turn runs as its own task so
 //! the reader loop can keep serving session/cancel and session/close.
+//!
+//! The agent also starts turns on its own ([`start_wake_turn`]): a detached
+//! `bash()` completion, a goal backoff or a quota reset wakes an idle
+//! session (`UNHARNESSED_PLAN.md` Q7). Such a turn streams like a prompt
+//! turn but answers no request; a client prompt waits for it to settle.
 
 use std::sync::Arc;
 
@@ -11,6 +16,8 @@ use tokio::sync::Mutex;
 use pa_core::autonomous::{AgentAutonomousStatus, AutonomousFollowUp, AutonomousStopReason};
 use pa_core::session_engine::session_commands::execute_session_command;
 use pa_core::session_engine::session_commands::SessionCommandParams;
+use pa_core::session_engine::turn_retry::{RetriedTurn, TurnRetryHost};
+use pa_core::session_engine::wakes::Wake;
 use pa_core::session_engine::{PromptOptions, PromptOutcome, StreamingBehavior};
 
 use super::compaction_arms::{CompactionCheckRun, ThresholdGoalQueue};
@@ -30,90 +37,219 @@ fn autonomous_meta(status: &AgentAutonomousStatus) -> PrimeAgentAutonomousMeta {
 
 pub(super) async fn handle_session_prompt(
     id: Value,
-    params: Value,
+    raw_params: Value,
     state: Arc<Mutex<ConnectionState>>,
     mode: AcpModeState,
     tx: producer::FrameSink,
 ) {
-    let params = PromptParams::parse(&params);
+    if admit_session_prompt(&id, &raw_params, &state, &mode, &tx).await {
+        return;
+    }
+    // A wake turn the agent started holds the session: the prompt waits
+    // for it on its own task (the reader keeps serving session/cancel),
+    // then is admitted again.
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if !wake_turn_running(&state).await
+                && admit_session_prompt(&id, &raw_params, &state, &mode, &tx).await
+            {
+                break;
+            }
+        }
+    });
+}
+
+/// Admit one `session/prompt`. `false` when a wake turn holds the session:
+/// nothing was answered, the caller admits again once it settles. The slot
+/// is taken under one state lock, so a wake turn cannot start in between.
+async fn admit_session_prompt(
+    id: &Value,
+    raw_params: &Value,
+    state: &Arc<Mutex<ConnectionState>>,
+    mode: &AcpModeState,
+    tx: &producer::FrameSink,
+) -> bool {
+    let params = PromptParams::parse(raw_params);
     // Admission: one prompt turn at a time, behind any started cancellation.
-    let (session, turn_id) = {
-        let mut state = state.lock().await;
-        let closing = state.session_close_in_flight;
-        let Some(entry) = state.session.as_mut() else {
-            let _ = tx.send(internal_error(
-                &id,
-                &format!("Unknown ACP session: {}", params.session_id),
-            ));
-            return;
-        };
-        if closing {
-            let _ = tx.send(internal_error(
-                &id,
-                &format!("ACP session is closing: {}", params.session_id),
-            ));
-            return;
-        }
-        if entry.prompt_task.is_some() {
-            let _ = tx.send(internal_error(
-                &id,
-                "A prompt turn is already running for this ACP session",
-            ));
-            return;
-        }
-        let turn_id = entry.session.producer().begin_prompt().await;
-        (entry.session.clone(), turn_id)
+    let mut guard = state.lock().await;
+    let closing = guard.session_close_in_flight;
+    let Some(entry) = guard.session.as_mut() else {
+        let _ = tx.send(internal_error(
+            id,
+            &format!("Unknown ACP session: {}", params.session_id),
+        ));
+        return true;
     };
+    if closing {
+        let _ = tx.send(internal_error(
+            id,
+            &format!("ACP session is closing: {}", params.session_id),
+        ));
+        return true;
+    }
+    if entry.prompt_task.is_some() {
+        if entry.prompt_is_wake {
+            return false;
+        }
+        let _ = tx.send(internal_error(
+            id,
+            "A prompt turn is already running for this ACP session",
+        ));
+        return true;
+    }
+    let session = entry.session.clone();
+    let turn_id = session.producer().begin_prompt().await;
     if session.cancel_requested() {
         // This prompt was admitted after a cancellation started; it is
         // dropped by the cancel, so report the protocol stop reason instead
         // of a request error.
         session.producer().finish_prompt(turn_id).await;
         let _ = tx.send(jsonrpc::response(
-            &id,
+            id,
             &stop_reason_response(AcpStopReason::Cancelled),
         ));
-        return;
+        return true;
     }
 
     let admitted_prompt = match session::AdmittedPrompt::parse(&params.prompt) {
         Ok(prompt) => prompt,
         Err(error) => {
             session.producer().finish_prompt(turn_id).await;
-            let _ = tx.send(session::prompt_block_error(&id, &error));
-            return;
+            let _ = tx.send(session::prompt_block_error(id, &error));
+            return true;
         }
     };
 
     // The turn runs as its own task so the reader loop can keep serving
     // session/cancel and session/close while it settles.
-    let task = tokio::spawn(run_prompt_turn(
-        id,
+    entry.prompt_task = Some(tokio::spawn(run_prompt_turn(
+        TurnStart::Prompt {
+            id: id.clone(),
+            prompt: admitted_prompt,
+        },
         params.session_id.clone(),
         turn_id,
-        admitted_prompt,
         session,
         state.clone(),
-        mode,
+        mode.clone(),
         tx.clone(),
-    ));
-    let mut state = state.lock().await;
-    if let Some(entry) = state.session.as_mut() {
-        if entry.session.id == params.session_id {
-            entry.prompt_task = Some(task);
+    )));
+    entry.prompt_is_wake = false;
+    true
+}
+
+async fn wake_turn_running(state: &Arc<Mutex<ConnectionState>>) -> bool {
+    state
+        .lock()
+        .await
+        .session
+        .as_ref()
+        .is_some_and(|entry| entry.prompt_task.is_some() && entry.prompt_is_wake)
+}
+
+/// What starts a prompt turn.
+pub(super) enum TurnStart {
+    /// A client `session/prompt`; its JSON-RPC id answers the turn.
+    Prompt {
+        id: Value,
+        prompt: session::AdmittedPrompt,
+    },
+    /// A wake the agent runs on its own: no request waits for it.
+    Wake(Wake),
+}
+
+/// Start a wake turn when the session is open and idle. The wake comes
+/// back when a prompt turn holds the session (its settle loop delivers the
+/// due wakes), the session is closing or cancelled, or none is open.
+pub(super) async fn start_wake_turn(
+    wake: Wake,
+    state: &Arc<Mutex<ConnectionState>>,
+    mode: &AcpModeState,
+    tx: &producer::FrameSink,
+) -> Result<(), Wake> {
+    let mut guard = state.lock().await;
+    let closing = guard.session_close_in_flight;
+    let Some(entry) = guard.session.as_mut() else {
+        return Err(wake);
+    };
+    if closing || entry.prompt_task.is_some() || entry.session.cancel_requested() {
+        return Err(wake);
+    }
+    let turn_id = entry.session.producer().begin_prompt().await;
+    // The slot is set under the same lock the turn's settlement takes to
+    // clear it, so a quick turn can never leave a finished task behind.
+    entry.prompt_task = Some(tokio::spawn(run_prompt_turn(
+        TurnStart::Wake(wake),
+        entry.session.id.clone(),
+        turn_id,
+        entry.session.clone(),
+        state.clone(),
+        mode.clone(),
+        tx.clone(),
+    )));
+    entry.prompt_is_wake = true;
+    Ok(())
+}
+
+/// Admit a wake's turn: a `bash()` completion runs on its injected row, a
+/// timed wake on its marker prompt.
+async fn admit_wake(mode: &AcpModeState, wake: Wake) -> anyhow::Result<PromptOutcome> {
+    match wake {
+        Wake::BashDone(message) => mode.engine.session.prompt_injected_message(&message).await,
+        Wake::Marker(text) => {
+            mode.engine
+                .session
+                .prompt(text, PromptOptions::default())
+                .await
         }
     }
 }
 
+/// Re-issue a failed turn under the provider retry/failover policy. The
+/// chain's future is not `Send` (its quota-park seam), so it runs on a
+/// blocking thread; the session's cancel stops its backoff waits.
+async fn retry_failed_turn(
+    mode: &AcpModeState,
+    session: &Arc<AcpSession>,
+    failed: &pa_types::ai::AssistantMessage,
+) -> anyhow::Result<RetriedTurn> {
+    let failed = pa_core::session_engine::provider_adapter::json_round_trip(failed)
+        .ok_or_else(|| anyhow::anyhow!("the failed turn could not be converted for a retry"))?;
+    let engine = Arc::clone(&mode.engine);
+    let cwd = std::path::PathBuf::clone(&mode.actual_cwd);
+    let agent_dir = std::path::PathBuf::clone(&mode.agent_dir);
+    let provider_target = Arc::clone(&mode.provider_target);
+    let session = Arc::clone(session);
+    let runtime = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        runtime.block_on(async {
+            let host = TurnRetryHost {
+                cwd: &cwd,
+                agent_dir: &agent_dir,
+                provider_target: &provider_target,
+                failover: std::env::var_os("PRIME_AGENT_FAUX_SCRIPT").is_none(),
+                max_park: None,
+            };
+            // ACP has no retry update; the outcome row persists.
+            engine
+                .retry_failed_turn(&host, failed, &|| session.cancel_requested(), &mut |_| {})
+                .await
+        })
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!("the provider retry task failed: {error}"))?
+}
+
 /// One prompt turn: admission into the engine (a model turn or a session
 /// command), the autonomous continuation loop, and the correlated boundary /
-/// completion envelope in front of the response.
+/// completion envelope in front of the response (a wake turn answers no
+/// request).
 #[allow(clippy::too_many_arguments)]
 async fn run_prompt_turn(
-    id: Value,
+    start: TurnStart,
     session_id: String,
     turn_id: u64,
-    admitted_prompt: session::AdmittedPrompt,
     session: Arc<AcpSession>,
     state: Arc<Mutex<ConnectionState>>,
     mode: AcpModeState,
@@ -127,37 +263,46 @@ async fn run_prompt_turn(
     // prompt commit in TS, so they never fire the arms; a busy agent
     // queues the prompt below without a session-level boundary (the
     // settled-turn check after the drain covers the turn).
-    if mode
-        .engine
-        .session
-        .classify_session_command(&admitted_prompt.text)
-        .is_none()
-    {
+    let session_command = match &start {
+        TurnStart::Prompt { prompt, .. } => mode
+            .engine
+            .session
+            .classify_session_command(&prompt.text)
+            .is_some(),
+        TurnStart::Wake(_) => false,
+    };
+    if !session_command {
         let busy = mode.engine.session.agent().state().await.is_streaming;
         if !busy {
             session.run_pre_turn_compaction(&mode).await;
         }
     }
-    let admission = mode
-        .engine
-        .session
-        .prompt_with_images(
-            &admitted_prompt.text,
-            admitted_prompt
-                .images
-                .into_iter()
-                .map(|image| pa_agent::types::ImageContent {
-                    data: image.data,
-                    mime_type: image.mime_type,
-                })
-                .collect(),
-            PromptOptions {
-                streaming_behavior: Some(StreamingBehavior::FollowUp),
-                queue_if_busy: true,
-                ..Default::default()
-            },
-        )
-        .await;
+    let (id, admission) = match start {
+        TurnStart::Prompt { id, prompt } => {
+            let admission = mode
+                .engine
+                .session
+                .prompt_with_images(
+                    &prompt.text,
+                    prompt
+                        .images
+                        .into_iter()
+                        .map(|image| pa_agent::types::ImageContent {
+                            data: image.data,
+                            mime_type: image.mime_type,
+                        })
+                        .collect(),
+                    PromptOptions {
+                        streaming_behavior: Some(StreamingBehavior::FollowUp),
+                        queue_if_busy: true,
+                        ..Default::default()
+                    },
+                )
+                .await;
+            (Some(id), admission)
+        }
+        TurnStart::Wake(wake) => (None, admit_wake(&mode, wake).await),
+    };
 
     // The settled-turn outcome: the failure text (a failed turn errors the
     // request), the autonomous stop, and whether the turn ran at all.
@@ -187,7 +332,9 @@ async fn run_prompt_turn(
                     )
                     .await;
                     session.producer().finish_prompt(turn_id).await;
-                    let _ = tx.send(internal_error(&id, &format!("{error:#}")));
+                    if let Some(id) = &id {
+                        let _ = tx.send(internal_error(id, &format!("{error:#}")));
+                    }
                     clear_prompt_slot(&state, &session_id).await;
                     return;
                 }
@@ -207,7 +354,9 @@ async fn run_prompt_turn(
             )
             .await;
             session.producer().finish_prompt(turn_id).await;
-            let _ = tx.send(internal_error(&id, &format!("{error:#}")));
+            if let Some(id) = &id {
+                let _ = tx.send(internal_error(id, &format!("{error:#}")));
+            }
             clear_prompt_slot(&state, &session_id).await;
             return;
         }
@@ -243,6 +392,25 @@ async fn run_prompt_turn(
             session.clear_turn_boundary_requests(&mode.engine).await;
             break;
         }
+        // A failed turn first goes through the provider retry/failover
+        // chain (TS `_handleRetryableError` precedes `_checkCompaction` at
+        // `agent_end`): the retried turn is the one the boundary classifies,
+        // and a quota park settles the prompt until its wake resumes it.
+        let final_message = if final_message.stop_reason == pa_types::ai::StopReason::Error {
+            match retry_failed_turn(&mode, &session, &final_message).await {
+                Ok(retried) if retried.parked => break,
+                Ok(retried) => {
+                    pa_core::session_engine::provider_adapter::json_round_trip(&retried.message)
+                        .unwrap_or(final_message)
+                }
+                Err(error) => {
+                    turn_failure = Some(format!("{error:#}"));
+                    break;
+                }
+            }
+        } else {
+            final_message
+        };
         // A settled non-error assistant message resets the overflow
         // machine (TS resets `_overflowRecovery` at every non-error
         // assistant `message_end`), then the boundary check runs.
@@ -341,7 +509,21 @@ async fn run_prompt_turn(
             }
             goal_continuation::GoalFollowUp::None => {
                 match session.autonomous_follow_up(&final_message).await {
-                    AutonomousFollowUp::Inactive => break,
+                    // A wake that came due during the run (a detached
+                    // `bash()` completion, a goal backoff, a quota reset)
+                    // runs as its next turn; the daemon queued it into the
+                    // running turn the same way.
+                    AutonomousFollowUp::Inactive => match mode.engine.take_due_wake().await {
+                        Some(wake) => {
+                            session.run_pre_turn_compaction(&mode).await;
+                            if let Err(error) = admit_wake(&mode, wake).await {
+                                turn_failure = Some(format!("{error:#}"));
+                                break;
+                            }
+                            mode.engine.session.agent().wait_for_idle().await;
+                        }
+                        None => break,
+                    },
                     AutonomousFollowUp::Continue { text } => {
                         // An injected continuation runs as the next turn
                         // of the same prompt (a fresh user row: the
@@ -382,7 +564,7 @@ async fn run_prompt_turn(
     settle_turn(
         &state,
         &session,
-        &id,
+        id.as_ref(),
         &session_id,
         turn_id,
         turn_failure,
@@ -512,7 +694,7 @@ async fn publish_engine_event(session: &Arc<AcpSession>, event: &events::AcpEngi
 async fn settle_turn(
     state: &Arc<Mutex<ConnectionState>>,
     session: &Arc<AcpSession>,
-    id: &Value,
+    id: Option<&Value>,
     session_id: &str,
     turn_id: u64,
     turn_failure: Option<String>,
@@ -526,10 +708,12 @@ async fn settle_turn(
         // A cancellation before the response boundary resolves the request
         // with the protocol stop reason and no boundary frames.
         session.producer().finish_prompt(turn_id).await;
-        let _ = tx.send(jsonrpc::response(
-            id,
-            &stop_reason_response(AcpStopReason::Cancelled),
-        ));
+        if let Some(id) = id {
+            let _ = tx.send(jsonrpc::response(
+                id,
+                &stop_reason_response(AcpStopReason::Cancelled),
+            ));
+        }
         clear_prompt_slot(state, session_id).await;
         return;
     }
@@ -546,10 +730,12 @@ async fn settle_turn(
         .is_err()
     {
         session.producer().finish_prompt(turn_id).await;
-        let _ = tx.send(internal_error(
-            id,
-            "Failed to publish ACP response boundary",
-        ));
+        if let Some(id) = id {
+            let _ = tx.send(internal_error(
+                id,
+                "Failed to publish ACP response boundary",
+            ));
+        }
         clear_prompt_slot(state, session_id).await;
         return;
     }
@@ -584,10 +770,12 @@ async fn settle_turn(
     .is_err()
     {
         session.producer().finish_prompt(turn_id).await;
-        let _ = tx.send(internal_error(
-            id,
-            "Failed to publish ACP completion update",
-        ));
+        if let Some(id) = id {
+            let _ = tx.send(internal_error(
+                id,
+                "Failed to publish ACP completion update",
+            ));
+        }
         clear_prompt_slot(state, session_id).await;
         return;
     }
@@ -603,20 +791,25 @@ async fn settle_turn(
             AcpStopReason::EndTurn
         }
     };
-    let response = match turn_failure {
-        Some(failure) => internal_error(id, &format!("prime-agent turn failed: {failure}")),
-        None => jsonrpc::response(id, &stop_reason_response(stop_reason)),
-    };
-    let _ = tx.send(response);
+    if let Some(id) = id {
+        let response = match turn_failure {
+            Some(failure) => internal_error(id, &format!("prime-agent turn failed: {failure}")),
+            None => jsonrpc::response(id, &stop_reason_response(stop_reason)),
+        };
+        let _ = tx.send(response);
+    }
     clear_prompt_slot(state, session_id).await;
 }
 
-/// The running turn released the prompt slot; close/EOF no longer awaits it.
+/// The running turn released the prompt slot; close/EOF no longer awaits
+/// it, and the wake watcher may start the next wake turn.
 async fn clear_prompt_slot(state: &Arc<Mutex<ConnectionState>>, session_id: &str) {
     let mut state = state.lock().await;
     if let Some(entry) = state.session.as_mut() {
         if entry.session.id == session_id {
             entry.prompt_task = None;
+            entry.prompt_is_wake = false;
+            entry.session.poke_wakes();
         }
     }
 }
