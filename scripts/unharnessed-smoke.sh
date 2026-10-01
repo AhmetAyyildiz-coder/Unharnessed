@@ -8,6 +8,10 @@
 # installed prime-agent's venv (~/.prime/agent/kernel-venv) is never rebuilt
 # with this checkout's runtime. Credentials are read from the real agent dir
 # (a copy would rotate OAuth refresh tokens away from it). Telemetry is off.
+#
+# Kernel checks read only what the kernel returned (successful ipython
+# results, scripts/unharnessed-smoke-check.py): never the prompt, which
+# names the expected functions, nor the model's prose.
 set -u
 OUT=${1:?usage: unharnessed-smoke.sh <out-dir> [model]}
 MODEL=${2:-anthropic/claude-haiku-4-5}
@@ -18,6 +22,7 @@ OUT=$(cd "$OUT" && pwd)
 export PRIME_AGENT_KERNEL_VENV="$OUT/kernel-venv"
 export DO_NOT_TRACK=1 PRIME_AGENT_TELEMETRY=0
 WORK="$OUT/work"
+CHECK="$ROOT/scripts/unharnessed-smoke-check.py"
 FAILED=0
 
 check() { # check <name> <command-exit> <grep-pattern> <file>
@@ -25,6 +30,16 @@ check() { # check <name> <command-exit> <grep-pattern> <file>
         echo "PASS  $1"
     else
         echo "FAIL  $1 (exit $2, pattern '$3' in $4)"
+        FAILED=1
+    fi
+}
+
+kernel_check() { # kernel_check <name> <command-exit> <json|acp> <transcript> <check args...>
+    name=$1 rc=$2; shift 2
+    if [ "$rc" -eq 0 ] && python3 "$CHECK" "$@" 2> "$OUT/check.err"; then
+        echo "PASS  $name"
+    else
+        echo "FAIL  $name (exit $rc: $(cat "$OUT/check.err"))"
         FAILED=1
     fi
 }
@@ -38,8 +53,7 @@ run() { # run <name> <args...>: stdout in $OUT/<name>.out (after the command lin
 # 1. The model computes in the kernel through the ipython tool.
 run ipython --mode json --session-dir "$OUT/sessions" --model "$MODEL" \
     "Compute 2**100 with your ipython tool and answer with the number only."
-check "ipython tool call" $? '"name":"ipython"' "$OUT/ipython.out"
-check "2**100 result" 0 '1267650600228229401496703205376' "$OUT/ipython.out"
+kernel_check "2**100 computed in the kernel" $? json "$OUT/ipython.out" '1267650600228229401496703205376'
 
 # 2. --mode json emits one valid JSON value per line.
 if python3 -c "import json,sys; [json.loads(l) for l in open(sys.argv[1]).read().splitlines()[1:] if l.strip()]" "$OUT/ipython.out"; then
@@ -48,14 +62,15 @@ else
     echo "FAIL  json mode lines parse"; FAILED=1
 fi
 
-# 3. The kernel's runtime API: bash, goal, compact, mcp.
+# 3. The kernel's runtime API: bash, goal, compact, mcp. Each expected
+# string only exists once the call ran (smoke-42, the returned dict keys).
 run runtime_api --mode json --session-dir "$OUT/sessions" --model "$MODEL" \
-    "In ONE ipython cell run exactly: r = bash('echo smoke-bash-ok'); print(r.output); print('goal:', await goal.get()); print('compact:', await compact.status()); print('mcp:', type(await mcp.list_connections()).__name__). Then reply DONE."
+    'In ONE ipython cell run exactly: r = await bash("echo smoke-$((6*7))"); print("bash:", r.exit_code, r.output.strip()); print("goal:", sorted(await goal.get())); print("compact:", sorted(await compact.status())); print("mcp:", type(await mcp.list_connections()).__name__). Then reply DONE.'
 rc=$?
-check "bash() in the kernel" $rc 'smoke-bash-ok' "$OUT/runtime_api.out"
-check "goal.get()" $rc 'goal:' "$OUT/runtime_api.out"
-check "compact.status()" $rc 'compact:' "$OUT/runtime_api.out"
-check "mcp.list_connections()" $rc 'mcp:' "$OUT/runtime_api.out"
+kernel_check "bash() in the kernel" $rc json "$OUT/runtime_api.out" 'bash: 0 smoke-42'
+kernel_check "goal.get()" $rc json "$OUT/runtime_api.out" "'remaining_tokens'"
+kernel_check "compact.status()" $rc json "$OUT/runtime_api.out" "'context_window'"
+kernel_check "mcp.list_connections()" $rc json "$OUT/runtime_api.out" 'mcp: list'
 
 # 4. A kernel variable survives a session resume (kernel state snapshot):
 # an ACP session (the VS Code transport) sets it and closes, then a print
@@ -64,28 +79,20 @@ echo "\$ unharnessed-acp-session.py (sets smoke_var, then session/close)" > "$OU
 python3 "$ROOT/scripts/unharnessed-acp-session.py" "$BIN" "$WORK" "$OUT/sessions" "$MODEL" \
     "Run exactly this in your ipython tool: smoke_var = 'kept-' + str(6*7). Then reply OK." \
     >> "$OUT/state_set.out" 2> "$OUT/state_set.err"
-check "acp session sets the variable" $? '"stopReason":"end_turn"' "$OUT/state_set.out"
-run state_get -p -c --session-dir "$OUT/sessions" --model "$MODEL" \
+kernel_check "acp session sets the variable" $? acp "$OUT/state_set.out" 'smoke_var'
+run state_get -p -c --mode json --session-dir "$OUT/sessions" --model "$MODEL" \
     "Without redefining it, print the existing Python variable smoke_var with your ipython tool and reply with its value."
-rc=$?
-if [ $rc -eq 0 ] && grep -q 'kept-42' "$OUT/state_get.out" && ! grep -qi 'not defined\|not persist' "$OUT/state_get.out"; then
-    echo "PASS  kernel variable survives resume"
-else
-    echo "FAIL  kernel variable survives resume (see $OUT/state_get.out)"; FAILED=1
-fi
+kernel_check "kernel variable survives resume" $? json "$OUT/state_get.out" \
+    --forbid-code 'smoke_var\s*=(?!=)' 'kept-42'
 
 # 4b. The same through print runs only: `-p` sets it, `-p -c` reads it.
 mkdir -p "$WORK/print-resume"
 run print_set -p --session-dir "$OUT/sessions" --cwd "$WORK/print-resume" --model "$MODEL" \
     "Run exactly this in your ipython tool: smoke_print_var = 'print-' + str(6*7). Then reply OK."
-run print_get -p -c --session-dir "$OUT/sessions" --cwd "$WORK/print-resume" --model "$MODEL" \
+run print_get -p -c --mode json --session-dir "$OUT/sessions" --cwd "$WORK/print-resume" --model "$MODEL" \
     "Without redefining it, print the existing Python variable smoke_print_var with your ipython tool and reply with its value."
-rc=$?
-if [ $rc -eq 0 ] && grep -q 'print-42' "$OUT/print_get.out" && ! grep -qi 'not defined\|not persist' "$OUT/print_get.out"; then
-    echo "PASS  kernel variable survives a print resume"
-else
-    echo "FAIL  kernel variable survives a print resume (see $OUT/print_get.out)"; FAILED=1
-fi
+kernel_check "kernel variable survives a print resume" $? json "$OUT/print_get.out" \
+    --forbid-code 'smoke_print_var\s*=(?!=)' 'print-42'
 
 # 5. ACP: the initialize handshake answers.
 echo '$ prime-agent --mode acp  <<< initialize' > "$OUT/acp.out"
