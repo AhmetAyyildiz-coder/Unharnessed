@@ -275,3 +275,15 @@ mod windows_tests {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use super::*;
+
+    #[test]
+    fn shell_config_prefers_bin_bash() {
+        let cfg = get_shell_config(None).unwrap();
+        assert_eq!(cfg.shell, "/bin/bash");
+        assert_eq!(cfg.args, vec!["-c".to_string()]);
+    }
+}

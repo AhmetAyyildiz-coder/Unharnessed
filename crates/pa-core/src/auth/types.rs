@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 pub const PRIME_INFERENCE_PROVIDER_ID: &str = "prime-inference";
 
 /// The web-search credential's auth-store slot (auth.json's `serper` key,
-/// the `AuthCredential::ApiKey` form): the websearch skill's runtime reads
-/// it on every call, and the `/mcp` view's api-key entry stores it.
+/// the `AuthCredential::ApiKey` form) earlier builds wrote; the provider
+/// login still names it on its logout row.
 pub const SERPER_CREDENTIAL_ID: &str = "serper";
 
-/// The credential's display name (the `/mcp` row and the logout row).
+/// The credential's display name (the logout row).
 pub const SERPER_CREDENTIAL_NAME: &str = "Serper (web search)";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

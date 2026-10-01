@@ -196,12 +196,6 @@ pub struct MarkdownSettings {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BundledSkillsSettings {
-    pub websearch: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct WarningSettings {
     pub anthropic_extra_usage: Option<bool>,
 }
@@ -299,7 +293,6 @@ pub struct Settings {
     pub prompts: Option<Vec<String>>,
     pub themes: Option<Vec<String>>,
     pub enable_skill_commands: Option<bool>,
-    pub bundled_skills: Option<BundledSkillsSettings>,
     pub enable_builtin_skills: Option<bool>,
     pub terminal: Option<TerminalSettings>,
     pub images: Option<ImageSettings>,

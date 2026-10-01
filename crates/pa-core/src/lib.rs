@@ -42,23 +42,6 @@ pub use tools::tool_definition::{
 // tools (cwd-relative resolve with the macOS filename variants).
 pub use tools::path_utils::resolve_read_path;
 
-// Result-rendering helpers: the image metadata pair (the bounded-prefix
-// dimension read) the daemon's snapshot elision consumes alongside the
-// tool renderers. The narrow re-export keeps the rest of the module's
-// surface crate-private.
-pub use tools::render_utils::{get_image_dimensions_prefix, IMAGE_DIMENSIONS_PREFIX_BYTES};
-
-// bash tool: definition + local/remote execution seam.
-pub use tools::bash::{
-    create_bash_tool_definition, create_bash_tool_definition_with_options, BashOperations,
-    BashSpawnContext, BashSpawnHook, BashToolOptions, LocalBashOperations,
-};
-
-// edit tool: definition + filesystem operations seam.
-pub use tools::edit::{
-    create_edit_tool_definition, prepare_edit_arguments, EditOperations, LocalEditOperations,
-};
-
 // ipython tool: definition + kernel lifecycle seam (RLM bootstrap included).
 pub use tools::ipython::{
     create_ipython_tool_definition, ExecuteResult, ExecuteStatus, IpythonKernelProvisioner,

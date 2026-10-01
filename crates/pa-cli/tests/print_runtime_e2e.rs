@@ -732,10 +732,11 @@ fn print_mode_json_streams_the_threshold_compaction_pair() {
         }),
     );
     // A small context window so the crossing turn exceeds the threshold:
-    // the ~8.1k seed turn stays below the combined input+output ceiling
-    // (24k window - 4_096 output budget - 4_096 headroom floor = 15_808),
-    // and the ~12k-token crossing turn pushes the context past it (the
-    // faux provider estimates usage from the serialized context).
+    // the seed turn (mostly the system prompt) stays below the combined
+    // input+output ceiling (24k window - 4_096 output budget - 4_096
+    // headroom floor = 15_808), and the ~15k-token crossing turn pushes
+    // the context past it (the faux provider estimates usage from the
+    // serialized context).
     let script = serde_json::json!({
         "contextWindow": 24000,
         "responses": [
@@ -745,7 +746,7 @@ fn print_mode_json_streams_the_threshold_compaction_pair() {
         ]
     });
     let first = "seed turn".to_string();
-    let second = format!("crossing turn {}", "x".repeat(48_000));
+    let second = format!("crossing turn {}", "x".repeat(60_000));
     let (stdout, stderr, code) = run_in_home(
         home.path(),
         &["--mode", "json", "-p", &first, &second],

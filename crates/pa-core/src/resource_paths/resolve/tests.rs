@@ -551,55 +551,6 @@ fn force_exclude_top_level_resources() {
 // -- bundled skills -------------------------------------------------------------
 
 #[test]
-fn bundled_skills_collect_with_websearch_excluded_until_enabled() {
-    let fixture = Fixture::new();
-    let bundled = fixture.temp_dir.join("bundled-skills");
-    skill_md(&bundled, "websearch", "Search the web");
-    skill_md(&bundled, "other-skill", "Other");
-    let settings_path = fixture.agent_dir.join("settings.json");
-    std::fs::create_dir_all(&fixture.agent_dir).unwrap();
-
-    // Default: websearch is bundled and enabled.
-    std::fs::write(&settings_path, serde_json::json!({}).to_string()).unwrap();
-    let mut manager = ResourceResolver::with_options(ResourceResolverOptions {
-        cwd: fixture.manager.cwd().to_path_buf(),
-        agent_dir: fixture.agent_dir.clone(),
-        settings: SettingsManager::create(fixture.manager.cwd(), &fixture.agent_dir),
-        bundled_skills_dir: BundledSkillsDir::Directory(bundled),
-        extra_builtin_skill_overrides: vec!["-other-skill/SKILL.md".to_string()],
-    });
-    let result = manager.resolve();
-    let websearch = result
-        .skills
-        .iter()
-        .find(|r| r.path.to_string_lossy().contains("websearch"))
-        .expect("websearch collected");
-    assert!(websearch.enabled, "websearch enabled by default");
-    assert_eq!(websearch.metadata.source, MetadataSource::Builtin);
-    let other = result
-        .skills
-        .iter()
-        .find(|r| r.path.to_string_lossy().contains("other-skill"))
-        .expect("other collected");
-    assert!(!other.enabled, "extra builtin overrides apply");
-
-    // bundledSkills.websearch=false force-excludes the websearch skill.
-    std::fs::write(
-        &settings_path,
-        serde_json::json!({"bundledSkills": {"websearch": false}}).to_string(),
-    )
-    .unwrap();
-    manager.reload_settings().unwrap();
-    let result = manager.resolve();
-    let websearch = result
-        .skills
-        .iter()
-        .find(|r| r.path.to_string_lossy().contains("websearch"))
-        .expect("websearch still collected");
-    assert!(!websearch.enabled, "websearch excluded until enabled");
-}
-
-#[test]
 fn empty_bundled_skills_dir_warns() {
     let fixture = Fixture::new();
     let settings = SettingsManager::create(fixture.manager.cwd(), &fixture.agent_dir);

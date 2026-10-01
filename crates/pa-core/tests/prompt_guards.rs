@@ -490,20 +490,11 @@ fn core_layer_documents_the_real_tool_surface() {
 // Packaged-set parity (TS packages/coding-agent/skills)
 // ---------------------------------------------------------------------
 
-/// The packaged skill set at TS tip `f62dae4d0`
-/// (`packages/coding-agent/skills/`): 12 skills — the generic `mcp` doc
-/// skill in, the per-service linear/notion pair out (TS removed theirs
-/// when the generic MCP surface landed).
-const TS_PACKAGED_SKILL_SET: &[&str] = &[
-    "attach-image",
-    "compact",
-    "edit",
-    "goal",
-    "mcp",
-    "prime-intellect",
-    "skill-creator",
-    "websearch",
-];
+/// The packaged skill set: the TS tip `f62dae4d0` set
+/// (`packages/coding-agent/skills/`) reduced to the four Unharnessed keeps,
+/// the kernel's API to the runtime (the generic `mcp` doc skill in, the
+/// per-service linear/notion pair out).
+const TS_PACKAGED_SKILL_SET: &[&str] = &["attach-image", "compact", "goal", "mcp"];
 
 /// The bundled skills directory matches the TS packaged set name-for-name:
 /// the generic `mcp` skill is present and markdown-only, and the retired
