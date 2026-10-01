@@ -15,7 +15,6 @@ pub mod manager;
 pub mod orphan_journal;
 pub mod protocol;
 pub mod provisioner;
-pub mod rlm_runtime;
 pub mod shared;
 pub mod state_snapshot;
 
@@ -26,16 +25,9 @@ pub use bootstrap::{
 pub use cancellation::AbortSignal;
 pub use manager::ReplKernelManager;
 pub use provisioner::IpythonKernelProvisioner;
-pub use rlm_runtime::{
-    create_default_rlm_subagent_session_name, find_rlm_model_matches,
-    find_unique_rlm_short_form_model_match, format_rlm_model_unavailable_error,
-    normalize_requested_rlm_subagent_model, normalize_requested_rlm_subagent_session_name,
-    normalize_requested_rlm_subagent_thinking_level, RlmModelInfo, RlmModelMatch, THINKING_LEVELS,
-};
 pub use shared::{
     HostRequestHandler, HostRequestHandlers, HostRequestPayload, KernelBusyAfterInterruptError,
-    KernelDiffDisplay, KernelManagerOptions, KernelSentAgentMessage, KernelShutdownOptions,
-    KernelSnapshotConfig, StreamName, EXECUTE_STATUS_ABORTED, EXECUTE_STATUS_ERROR,
-    EXECUTE_STATUS_OK,
+    KernelDiffDisplay, KernelManagerOptions, KernelShutdownOptions, KernelSnapshotConfig,
+    StreamName, EXECUTE_STATUS_ABORTED, EXECUTE_STATUS_ERROR, EXECUTE_STATUS_OK,
 };
 pub use state_snapshot::{manifest_path_in, snapshot_path_in, RestoreResult, SnapshotResult};

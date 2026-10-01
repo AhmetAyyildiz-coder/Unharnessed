@@ -12,13 +12,11 @@ const KNOWN_FIELDS: &[&str] = &[
     "onboardingCompleted",
     "defaultProvider",
     "defaultModel",
-    "subagentDefaultModel",
     "updateChannel",
     "recentModels",
     "auxiliaryModel",
     "defaultThinkingLevel",
     "defaultServiceTier",
-    "rlmMaxDepth",
     "idleEvictionMinutes",
     "transport",
     "steeringMode",
@@ -131,10 +129,9 @@ mod tests {
 
     #[test]
     fn clean_document_strict_parses() {
-        let value: Value = serde_json::json!({ "theme": "prime", "rlmMaxDepth": 4 });
+        let value: Value = serde_json::json!({ "theme": "prime" });
         let settings = from_value_lenient(&value);
         assert_eq!(settings.theme.as_deref(), Some("prime"));
-        assert_eq!(settings.rlm_max_depth, Some(4));
     }
 
     /// A config that still carries the removed `extensions` resource key

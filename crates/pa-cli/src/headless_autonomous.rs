@@ -43,7 +43,6 @@ pub fn autonomous_runtime_config(config: &AutonomousConfig) -> AgentAutonomousCo
                 max_retries: gates.max_retries.map(u64::from),
                 timeout_ms: gates.timeout_ms,
             }),
-        subagent_keep_alive_ms: None,
     }
 }
 

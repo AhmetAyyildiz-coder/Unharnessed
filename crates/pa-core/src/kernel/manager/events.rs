@@ -2,10 +2,10 @@
 //! and background output buffers.
 
 use super::{
-    append_truncated, lock, parse_attachment_display, parse_diff_display, parse_sent_agent_message,
-    Arc, Event, ExecBuffers, ExecuteStatus, Guarded, Inner, KernelError, StreamName, Value,
-    AGENT_MESSAGE_DISPLAY_MIME, ATTACHMENT_DISPLAY_MIME, BASH_ACTIVITY_DISPLAY_MIME,
-    DIFF_DISPLAY_MIME, MAX_ATTACHMENT_DATA_CHARS, MAX_BACKGROUND_OUTPUT_CHARS,
+    append_truncated, lock, parse_attachment_display, parse_diff_display, Arc, Event, ExecBuffers,
+    ExecuteStatus, Guarded, Inner, KernelError, StreamName, Value, ATTACHMENT_DISPLAY_MIME,
+    BASH_ACTIVITY_DISPLAY_MIME, DIFF_DISPLAY_MIME, MAX_ATTACHMENT_DATA_CHARS,
+    MAX_BACKGROUND_OUTPUT_CHARS,
 };
 use std::fmt::Write as _;
 
@@ -180,24 +180,12 @@ impl Inner {
         }
     }
 
-    /// display events: diffs, attachments, sent agent messages, late or live.
+    /// display events: diffs and attachments of the live cell.
     fn dispatch_display(&self, id: Option<&str>, data: &Value) {
         let execution = lock(&self.guarded).active_execution.clone();
-        let matching = execution
-            .as_ref()
-            .filter(|e| Some(e.request_id.as_str()) == id);
-        // A settled cell keeps receiving late agent messages via its handler.
-        if matching.is_none() {
-            if self.dispatch_late_sent_agent_message(id, data) {
-                return;
-            }
+        let Some(execution) = execution.filter(|e| Some(e.request_id.as_str()) == id) else {
             return;
-        }
-        let execution = matching.expect("filter guarantees presence").clone();
-        let settled = lock(&execution.buffers).settled;
-        if settled && self.dispatch_late_sent_agent_message(id, data) {
-            return;
-        }
+        };
         let mut buffers = lock(&execution.buffers);
         if let Some(payload) = data.get(DIFF_DISPLAY_MIME) {
             if let Some(diff) = parse_diff_display(payload) {
@@ -222,11 +210,6 @@ impl Inner {
             }
             Some(Ok(attachment)) => buffers.attachments.push(attachment),
             None => {}
-        }
-        if let Some(payload) = data.get(AGENT_MESSAGE_DISPLAY_MIME) {
-            if let Some(message) = parse_sent_agent_message(payload) {
-                buffers.sent_agent_messages.push(message);
-            }
         }
     }
 

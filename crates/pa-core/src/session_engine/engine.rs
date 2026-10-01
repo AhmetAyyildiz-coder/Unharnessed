@@ -56,8 +56,6 @@ pub struct SessionEngineConfig {
     /// Force-exclude patterns for built-in skills (e.g. unauthenticated
     /// integrations); the MCP manager seam.
     pub extra_builtin_skill_overrides: Vec<String>,
-    /// Daemon child-session host backing the `rlm.*` recursion surface.
-    pub rlm_subagent_host: Option<Arc<dyn super::rlm_host::RlmSubagentHost>>,
     /// The session's depth in the RLM recursion tree (0 for top-level
     /// sessions). Gates the `refine.*` host requests, like the TS
     /// `_autoRefineAllowedForSession` depth check.
@@ -154,11 +152,6 @@ pub struct SessionEngine {
     /// Installed session telemetry (agent-event subscriber). `None` when
     /// telemetry is disabled or the session is not depth 0.
     pub telemetry: Option<std::sync::Arc<super::telemetry::SessionTelemetry>>,
-    /// The RLM child-usage attribution producer: the kernel `rlm.spawn`
-    /// handler registers spawn targets into it, and the embedding wires
-    /// the child-observation sink (the daemon children registry) onto it
-    /// after the build.
-    pub rlm_usage: std::sync::Arc<super::rlm_usage::RlmChildUsageAttributions>,
     /// The session's kernel provisioner. The engine is the STRONG owner on
     /// purpose: the `ipython` tool on the agent and the compaction
     /// kernel-state probe on the session hold weak references, because the
@@ -240,10 +233,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let wiring = super::runtime_wiring::wire_session_runtime(
         session_manager,
         &config.agent_dir,
-        super::runtime_wiring::RlmWiring {
-            model_registry: None,
-            subagent_host: config.rlm_subagent_host.clone(),
-        },
         config.queued_goal_context_purge.clone(),
         config.cron_store.clone(),
     );
@@ -794,9 +783,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // whether this session reports at all).
     if let Some(telemetry) = telemetry.as_ref() {
         session.set_skill_telemetry(telemetry.clone());
-        // Same lifetime for the `rlm child usage attributed` adoption
-        // event: the producer's flush reports through this handle.
-        wiring.rlm_usage.set_telemetry(telemetry.clone());
     }
     let goal_driver = wiring.runtime.goal_driver().clone();
     Ok(SessionEngine {
@@ -811,7 +797,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         mcp_manager,
         turn_boundary,
         telemetry,
-        rlm_usage: wiring.rlm_usage,
         provisioner,
     })
 }

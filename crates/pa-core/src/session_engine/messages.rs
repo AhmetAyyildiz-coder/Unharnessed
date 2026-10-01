@@ -1,7 +1,6 @@
 //! LLM-facing message conversion. Port of convertToLlm and the message
 //! presentation constants in core/messages.ts.
 
-use super::agent_messaging::sanitize_message_header_value;
 use crate::cron::AgentCronJob;
 use pa_types::ai::{
     AssistantMessage, TextContent, ToolResultMessage, UserContent, UserContentBlock, UserMessage,
@@ -461,6 +460,28 @@ pub fn engine_convert_to_llm() -> pa_agent::agent_loop::ConvertToLlmFn {
     std::sync::Arc::new(|messages: Vec<pa_agent::types::AgentMessage>| {
         Box::pin(async move { Ok(loop_convert_to_llm(messages)) })
     })
+}
+
+/// Names interpolated into a `[<kind> ...]` header line must not carry the
+/// characters that delimit the header itself (brackets, newlines, commas,
+/// or the relationship separator ":"): runs of those collapse into one
+/// space, then the value trims (TS `sanitizeMessageHeaderValue`).
+fn sanitize_message_header_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut pending_space = false;
+    for char in value.chars() {
+        let delimiter = char.is_whitespace() || matches!(char, ',' | ':' | '[' | ']');
+        if delimiter {
+            pending_space = true;
+        } else {
+            if pending_space && !out.is_empty() {
+                out.push(' ');
+            }
+            pending_space = false;
+            out.push(char);
+        }
+    }
+    out
 }
 
 #[cfg(test)]

@@ -13,13 +13,11 @@ pub use super::types::{AcpToolKind, AcpToolStatus};
 /// The model-facing Python REPL tool.
 pub const IPYTHON_TOOL_NAME: &str = "ipython";
 
-/// Correlates streamed assistant chunks with their owning message and bash
-/// output chunks with the run that produced them.
+/// Correlates streamed assistant chunks with their owning message.
 #[derive(Debug, Default)]
 pub struct MappingState {
     next_assistant_message_sequence: u64,
     active_assistant_message_id: Option<String>,
-    active_bash_run_id: Option<String>,
 }
 
 impl MappingState {
@@ -96,59 +94,10 @@ pub enum AcpEngineEvent {
     RefineFailed {
         error: String,
     },
-    /// One RLM subagent roster change.
-    ///
-    /// No in-process producer yet: in-process sessions have no RLM
-    /// children. The mapping is the daemon-attached parity contract
-    /// (slice 4) and is locked by unit tests.
-    #[allow(dead_code)]
-    RlmChildUpdate {
-        child: RlmChildRow,
-    },
-    /// A kernel cell sent an agent-to-agent message. No in-process producer
-    /// yet (the messaging host is daemon-wired); mapping locked by tests.
-    #[allow(dead_code)]
-    IpythonSentAgentMessage {
-        tool_call_id: String,
-        target: Option<String>,
-        delivery_status: Option<String>,
-    },
     /// The session's heartbeat/cron schedule changed (connection-scoped).
     /// No in-process producer yet; mapping locked by tests.
     #[allow(dead_code)]
     HeartbeatsChanged,
-    /// A user-level bash run started: outside the tool-call lifecycle, so
-    /// it gets a synthetic tool call keyed by run id. No in-process
-    /// producer yet (user bash is an interactive/daemon surface); mapping
-    /// locked by tests.
-    #[allow(dead_code)]
-    BashStart {
-        command: String,
-        run_id: Option<String>,
-    },
-    /// Incremental output of the active user-level bash run.
-    #[allow(dead_code)]
-    BashOutput {
-        chunk: String,
-    },
-    /// The active user-level bash run finished.
-    #[allow(dead_code)]
-    BashEnd {
-        run_id: Option<String>,
-        exit_code: Option<i64>,
-        cancelled: bool,
-    },
-}
-
-/// One RLM subagent roster row in the `_meta.subagents` payload.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RlmChildRow {
-    pub id: String,
-    pub session_name: Option<String>,
-    pub status: String,
-    pub model: Option<String>,
-    pub token_count: Option<u64>,
-    pub error: Option<String>,
 }
 
 /// Map one loop event to zero or more ACP updates.
@@ -269,77 +218,11 @@ pub fn acp_updates_for_event(
                 ..Default::default()
             })]
         }
-        AcpEngineEvent::RlmChildUpdate { child } => {
-            vec![session_info_update(&PrimeAgentSessionMeta {
-                subagents: Some(vec![super::meta::PrimeAgentSubagentMeta {
-                    id: child.id.clone(),
-                    session_name: child.session_name.clone(),
-                    status: child.status.clone(),
-                    model: child.model.clone(),
-                    depth: None,
-                    token_count: child.token_count,
-                    error: child.error.clone(),
-                }]),
-                ..Default::default()
-            })]
-        }
-        AcpEngineEvent::IpythonSentAgentMessage {
-            tool_call_id,
-            target,
-            delivery_status,
-        } => {
-            vec![session_info_update(&PrimeAgentSessionMeta {
-                agent_message: Some(super::meta::PrimeAgentAgentMessageMeta {
-                    tool_call_id: tool_call_id.clone(),
-                    target: target.clone(),
-                    delivery_status: delivery_status.clone(),
-                }),
-                ..Default::default()
-            })]
-        }
         AcpEngineEvent::HeartbeatsChanged => {
             vec![session_info_update(&PrimeAgentSessionMeta {
                 heartbeats_changed: Some(true),
                 ..Default::default()
             })]
-        }
-        AcpEngineEvent::BashStart { command, run_id } => {
-            state.active_bash_run_id.clone_from(run_id);
-            vec![AcpSessionUpdate::ToolCall {
-                tool_call_id: bash_tool_call_id(run_id.clone()),
-                title: command.clone(),
-                kind: AcpToolKind::Execute,
-                status: AcpToolStatus::InProgress,
-                raw_input: json!({ "command": command }),
-            }]
-        }
-        AcpEngineEvent::BashOutput { chunk } => {
-            vec![AcpSessionUpdate::ToolCallUpdate {
-                tool_call_id: bash_tool_call_id(state.active_bash_run_id.clone()),
-                status: Some(AcpToolStatus::InProgress),
-                content: Some(vec![ToolCallContent::new(chunk.clone())]),
-                meta: None,
-            }]
-        }
-        AcpEngineEvent::BashEnd {
-            run_id,
-            exit_code,
-            cancelled,
-        } => {
-            if state.active_bash_run_id == *run_id {
-                state.active_bash_run_id = None;
-            }
-            let completed = *exit_code == Some(0) && !cancelled;
-            vec![AcpSessionUpdate::ToolCallUpdate {
-                tool_call_id: bash_tool_call_id(run_id.clone()),
-                status: Some(if completed {
-                    AcpToolStatus::Completed
-                } else {
-                    AcpToolStatus::Failed
-                }),
-                content: None,
-                meta: None,
-            }]
         }
         AcpEngineEvent::ToolExecutionEnd {
             tool_call_id,
@@ -376,14 +259,6 @@ pub fn acp_updates_for_event(
 fn session_info_update(meta: &PrimeAgentSessionMeta) -> AcpSessionUpdate {
     AcpSessionUpdate::SessionInfoUpdate {
         meta: super::meta::prime_agent_meta(meta),
-    }
-}
-
-/// The synthetic tool-call id for a bash run: `prime-agent-bash-<runId>`.
-fn bash_tool_call_id(run_id: Option<String>) -> String {
-    match run_id {
-        Some(run_id) => format!("prime-agent-bash-{run_id}"),
-        None => "prime-agent-bash".to_string(),
     }
 }
 
@@ -720,46 +595,6 @@ mod tests {
     }
 
     #[test]
-    fn rlm_child_and_agent_message_map_to_namespaced_meta() {
-        let mut state = MappingState::default();
-        let updates = acp_updates_for_event(
-            &AcpEngineEvent::RlmChildUpdate {
-                child: RlmChildRow {
-                    id: "child-1".into(),
-                    session_name: Some("worker-a".into()),
-                    status: "running".into(),
-                    model: Some("z-ai/glm-5.3-flash".into()),
-                    token_count: Some(500),
-                    error: None,
-                },
-            },
-            &mut state,
-        );
-        assert_eq!(
-            meta_of(&updates[0].to_bare_value())["subagents"][0],
-            json!({
-                "id": "child-1",
-                "sessionName": "worker-a",
-                "status": "running",
-                "model": "z-ai/glm-5.3-flash",
-                "tokenCount": 500,
-            })
-        );
-        let updates = acp_updates_for_event(
-            &AcpEngineEvent::IpythonSentAgentMessage {
-                tool_call_id: "t3".into(),
-                target: Some("worker-a".into()),
-                delivery_status: Some("delivered".into()),
-            },
-            &mut state,
-        );
-        assert_eq!(
-            meta_of(&updates[0].to_bare_value())["agentMessage"],
-            json!({ "toolCallId": "t3", "target": "worker-a", "deliveryStatus": "delivered" })
-        );
-    }
-
-    #[test]
     fn heartbeats_changed_maps_to_namespaced_meta() {
         let mut state = MappingState::default();
         let updates = acp_updates_for_event(&AcpEngineEvent::HeartbeatsChanged, &mut state);
@@ -767,63 +602,6 @@ mod tests {
             meta_of(&updates[0].to_bare_value())["heartbeatsChanged"],
             true
         );
-    }
-
-    #[test]
-    fn bash_runs_map_to_synthetic_tool_calls() {
-        let mut state = MappingState::default();
-        let start = acp_updates_for_event(
-            &AcpEngineEvent::BashStart {
-                command: "echo hi".into(),
-                run_id: Some("run-7".into()),
-            },
-            &mut state,
-        );
-        let value = start[0].to_bare_value();
-        assert_eq!(value["sessionUpdate"], "tool_call");
-        assert_eq!(value["toolCallId"], "prime-agent-bash-run-7");
-        assert_eq!(value["title"], "echo hi");
-        assert_eq!(value["kind"], "execute");
-        assert_eq!(value["status"], "in_progress");
-        assert_eq!(value["rawInput"], json!({ "command": "echo hi" }));
-
-        let output = acp_updates_for_event(
-            &AcpEngineEvent::BashOutput {
-                chunk: "hi\n".into(),
-            },
-            &mut state,
-        );
-        let value = output[0].to_bare_value();
-        assert_eq!(value["sessionUpdate"], "tool_call_update");
-        assert_eq!(value["toolCallId"], "prime-agent-bash-run-7");
-        assert_eq!(value["status"], "in_progress");
-        assert_eq!(value["content"][0]["content"]["text"], "hi\n");
-
-        let end = acp_updates_for_event(
-            &AcpEngineEvent::BashEnd {
-                run_id: Some("run-7".into()),
-                exit_code: Some(0),
-                cancelled: false,
-            },
-            &mut state,
-        );
-        let value = end[0].to_bare_value();
-        assert_eq!(value["status"], "completed");
-        assert!(value.get("content").is_none());
-        // The active run cleared, so later output keys the bare id.
-        assert_eq!(state.active_bash_run_id, None);
-
-        let end = acp_updates_for_event(
-            &AcpEngineEvent::BashEnd {
-                run_id: None,
-                exit_code: Some(1),
-                cancelled: true,
-            },
-            &mut state,
-        );
-        let value = end[0].to_bare_value();
-        assert_eq!(value["toolCallId"], "prime-agent-bash");
-        assert_eq!(value["status"], "failed");
     }
 
     #[test]

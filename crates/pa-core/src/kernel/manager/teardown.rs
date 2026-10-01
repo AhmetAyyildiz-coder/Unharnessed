@@ -152,7 +152,6 @@ impl Inner {
             if let Some(timer) = lock(&self.snapshot_timer).take() {
                 timer.abort();
             }
-            g.late_handlers.clear();
             g.pending_done_waiters.clear();
             g.bash_activity_waiters.clear();
             let had_background_work = !g.background_bash_handles.is_empty();

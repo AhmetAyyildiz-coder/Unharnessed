@@ -21,7 +21,6 @@ pub const RESTORE_EXECUTION_TIMEOUT_MS: u64 = 30_000;
 pub const KERNEL_ABORT_GRACE_MS: u64 = 1_000;
 pub const KERNEL_BUSY_REUSE_WAIT_MS: u64 = 5_000;
 pub const KERNEL_BUSY_INTERRUPT_INTERVAL_MS: u64 = 500;
-pub const MAX_LATE_SENT_AGENT_MESSAGE_HANDLERS: usize = 256;
 pub const KERNEL_BUSY_AFTER_INTERRUPT_MESSAGE: &str = "The Python kernel is still running the previously interrupted cell. Wait and try again, or kill the kernel to start fresh.";
 
 /// Cap for unattributed background output buffered between and during cells.
@@ -41,8 +40,6 @@ pub const MAX_ATTACHMENT_DATA_CHARS: usize = 10_000_000;
 pub const DIFF_DISPLAY_MIME: &str = "application/vnd.prime-agent.diff+json";
 /// MIME tag the `attach-image` skill emits media payloads under.
 pub const ATTACHMENT_DISPLAY_MIME: &str = "application/vnd.prime-agent.attachment+json";
-/// MIME tag the `agent-message` skill emits after sending a message.
-pub const AGENT_MESSAGE_DISPLAY_MIME: &str = "application/vnd.prime-agent.agent-message+json";
 /// Internal lifetime notices, consumed before user display rendering.
 pub const BASH_ACTIVITY_DISPLAY_MIME: &str = "application/vnd.prime-agent.bash-activity+json";
 
@@ -85,9 +82,6 @@ pub type StreamCallback = Arc<dyn Fn(&str, StreamName) + Send + Sync>;
 /// continuations can resume (TS `KernelManagerOptions.onBackgroundWorkSettled`).
 pub type BackgroundWorkSettledCallback = Arc<dyn Fn() + Send + Sync>;
 
-/// Callback receiving an agent message sent late by the kernel.
-pub type LateSentAgentMessageCallback = Arc<dyn Fn(KernelSentAgentMessage) + Send + Sync>;
-
 /// One file edit, captured from a [`DIFF_DISPLAY_MIME`] display payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KernelDiffDisplay {
@@ -106,47 +100,6 @@ pub struct KernelAttachment {
     pub data: String,
     /// Source path, surfaced to the TUI renderer.
     pub path: Option<String>,
-}
-
-/// A delivery receipt for one agent message sent from the kernel.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KernelSentAgentMessage {
-    pub id: String,
-    pub message: String,
-    pub delivery_status: SentDeliveryStatus,
-    pub receiver_role: Option<ReceiverRole>,
-    pub target: SentAgentMessageTarget,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SentDeliveryStatus {
-    Delivered,
-    Queued,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReceiverRole {
-    Parent,
-    Sibling,
-    Child,
-}
-
-impl ReceiverRole {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ReceiverRole::Parent => "parent",
-            ReceiverRole::Sibling => "sibling",
-            ReceiverRole::Child => "child",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SentAgentMessageTarget {
-    pub active_session_id: String,
-    pub session_id: String,
-    pub session_name: Option<String>,
 }
 
 /// A kernel error reported by a failed cell.
@@ -168,8 +121,6 @@ pub struct ExecuteResult {
     pub diffs: Option<Vec<KernelDiffDisplay>>,
     /// Media attachments emitted via display events, in order.
     pub attachments: Option<Vec<KernelAttachment>>,
-    /// Agent messages sent from this cell, in order.
-    pub sent_agent_messages: Option<Vec<KernelSentAgentMessage>>,
     /// Output that arrived without this cell's id (user threads, other cells' leftovers, raw fd writes).
     pub background_output: Option<String>,
     pub status: ExecuteStatus,
@@ -184,8 +135,6 @@ pub struct ExecuteOptions {
     pub signal: Option<crate::kernel::cancellation::AbortSignal>,
     /// Streaming callback for stdout/stderr chunks.
     pub on_stream: Option<StreamCallback>,
-    /// Receives agent messages the kernel reports after the cell settled.
-    pub on_late_sent_agent_message: Option<LateSentAgentMessageCallback>,
     /// Cap stdout / stderr / result at this many characters. Default 65536.
     pub max_output_chars: Option<usize>,
     /// Synthetic host cell (snapshot/restore/list); excluded from lastCellCode attribution.
@@ -370,38 +319,3 @@ pub fn parse_attachment_display(
 /// Marker for an attachment exceeding the size ceiling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AttachmentOversized;
-
-/// Parse an [`AGENT_MESSAGE_DISPLAY_MIME`] payload, tolerating malformed input.
-pub fn parse_sent_agent_message(payload: &Value) -> Option<KernelSentAgentMessage> {
-    let obj = payload.as_object()?;
-    let target = obj.get("target")?.as_object()?;
-    let id = obj.get("id")?.as_str()?;
-    let message = obj.get("message")?.as_str()?;
-    let delivery_status = match obj.get("deliveryStatus")?.as_str()? {
-        "delivered" => SentDeliveryStatus::Delivered,
-        "queued" => SentDeliveryStatus::Queued,
-        _ => return None,
-    };
-    let active_session_id = target.get("activeSessionId")?.as_str()?;
-    let session_id = target.get("sessionId")?.as_str()?;
-    let receiver_role = match obj.get("receiverRole").and_then(Value::as_str) {
-        Some("parent") => Some(ReceiverRole::Parent),
-        Some("sibling") => Some(ReceiverRole::Sibling),
-        Some("child") => Some(ReceiverRole::Child),
-        _ => None,
-    };
-    Some(KernelSentAgentMessage {
-        id: id.to_string(),
-        message: message.to_string(),
-        delivery_status,
-        receiver_role,
-        target: SentAgentMessageTarget {
-            active_session_id: active_session_id.to_string(),
-            session_id: session_id.to_string(),
-            session_name: target
-                .get("sessionName")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-        },
-    })
-}

@@ -7,7 +7,7 @@ use crate::autonomous::{AgentAutonomousConfig, AgentAutonomousStatus, UNLIMITED_
 use crate::goals::{validate_goal_objective, MAX_THREAD_GOAL_OBJECTIVE_CHARS};
 use crate::skills::parse_command_args;
 
-pub const AUTONOMOUS_BUDGET_USAGE: &str = "Usage: /autonomous [status|off] or /autonomous on [--max-continuations <n|unlimited>] [--max-turns <n|unlimited>] [--max-tokens <n|unlimited>] [--timeout-ms <n|unlimited>] [--gate <command>] [--gate-retries <n>] [--gate-timeout-ms <n>] [--subagent-keep-alive-ms <n>]";
+pub const AUTONOMOUS_BUDGET_USAGE: &str = "Usage: /autonomous [status|off] or /autonomous on [--max-continuations <n|unlimited>] [--max-turns <n|unlimited>] [--max-tokens <n|unlimited>] [--timeout-ms <n|unlimited>] [--gate <command>] [--gate-retries <n>] [--gate-timeout-ms <n>]";
 
 /// A parsed `/goal` argument string.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,7 +144,7 @@ pub fn parse_autonomous_command(args: &str) -> Result<AutonomousCommand, String>
 
 /// `/autonomous` budget flags mirror the `--autonomous-*` CLI options; the
 /// CLI spelling is accepted as an alias.
-const AUTONOMOUS_BUDGET_FLAGS: [&str; 8] = [
+const AUTONOMOUS_BUDGET_FLAGS: [&str; 7] = [
     "max-continuations",
     "max-turns",
     "max-tokens",
@@ -152,7 +152,6 @@ const AUTONOMOUS_BUDGET_FLAGS: [&str; 8] = [
     "gate",
     "gate-retries",
     "gate-timeout-ms",
-    "subagent-keep-alive-ms",
 ];
 
 /// `parseAutonomousBudgetOptions`: `--flag value` and `--flag=value` pairs.
@@ -223,9 +222,6 @@ pub fn parse_autonomous_budget_options(tokens: &[String]) -> Result<AgentAutonom
             "max-turns" => config.max_turns = Some(parse_budget_int(flag, &value, true)?),
             "max-tokens" => config.max_tokens = Some(parse_budget_int(flag, &value, true)?),
             "timeout-ms" => config.timeout_ms = Some(parse_budget_int(flag, &value, true)?),
-            "subagent-keep-alive-ms" => {
-                config.subagent_keep_alive_ms = Some(parse_subagent_keep_alive_ms(&value)?);
-            }
             _ => unreachable!("flag membership checked above"),
         }
         index += 1;
@@ -281,26 +277,6 @@ fn parse_budget_int(flag: &str, value: &str, allow_unlimited: bool) -> Result<u6
     })
 }
 
-/// Keep-alive windows accept 0 (disable the valve) or a positive integer.
-fn parse_subagent_keep_alive_ms(value: &str) -> Result<u64, String> {
-    let digits: String = value.chars().filter(|c| *c != ',' && *c != '_').collect();
-    if digits == "0" {
-        return Ok(0);
-    }
-    if !digits.is_empty() && !digits.starts_with('0') && digits.bytes().all(|b| b.is_ascii_digit())
-    {
-        if let Ok(parsed) = digits.parse::<u64>() {
-            if parsed <= crate::autonomous::MAX_SUBAGENT_KEEP_ALIVE_MS {
-                return Ok(parsed);
-            }
-        }
-    }
-    Err(format!(
-        "--subagent-keep-alive-ms must be 0 or a positive integer up to {}. {AUTONOMOUS_BUDGET_USAGE}",
-        crate::autonomous::MAX_SUBAGENT_KEEP_ALIVE_MS
-    ))
-}
-
 /// `formatCount` for autonomous status values: unlimited or en-US grouping.
 fn format_count(value: u64) -> String {
     if value == UNLIMITED_AUTONOMOUS_LIMIT {
@@ -341,18 +317,8 @@ pub fn format_autonomous_status(status: &AgentAutonomousStatus) -> String {
     } else {
         format!("{}s", format_count(status.limits.timeout_ms / 1000))
     };
-    let subagent_keep_alive_ms = status.subagent_keep_alive_ms.unwrap_or(0);
-    let keep_alive = if subagent_keep_alive_ms > 0 {
-        if subagent_keep_alive_ms >= 60_000 {
-            format!("{}m", format_count(subagent_keep_alive_ms / 60_000))
-        } else {
-            format!("{}ms", format_count(subagent_keep_alive_ms))
-        }
-    } else {
-        "off".to_string()
-    };
     format!(
-        "[autonomous-status: {state}]\n\nContinuations: {}/{}. Turns: {}/{}. Tokens: {}/{}. Time: {elapsed_seconds}s/{time_budget}. Gates: {gate_summary}. Subagent keep-alive: {keep_alive}.",
+        "[autonomous-status: {state}]\n\nContinuations: {}/{}. Turns: {}/{}. Tokens: {}/{}. Time: {elapsed_seconds}s/{time_budget}. Gates: {gate_summary}.",
         format_count(status.continuations_used),
         format_count(status.limits.max_continuations),
         format_count(status.turns_used),
@@ -459,6 +425,6 @@ mod tests {
         let text = format_autonomous_status(&status);
         assert!(text.starts_with("[autonomous-status: off]"));
         assert!(text.contains("Continuations: 0/3. Turns: 0/12. Tokens: 0/80,000."));
-        assert!(text.contains("Time: 0s/1,800s. Gates: none. Subagent keep-alive: 25m."));
+        assert!(text.contains("Time: 0s/1,800s. Gates: none."));
     }
 }

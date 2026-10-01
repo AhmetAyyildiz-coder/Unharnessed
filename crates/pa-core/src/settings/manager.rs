@@ -385,16 +385,6 @@ impl SettingsManager {
         self.save_global()
     }
 
-    /// `rlmMaxDepth` setter.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the global settings file cannot be written.
-    pub fn set_rlm_max_depth(&mut self, depth: u64) -> Result<()> {
-        self.global.rlm_max_depth = Some(depth);
-        self.save_global()
-    }
-
     /// `telemetry.enabled` setter.
     ///
     /// # Errors
@@ -620,16 +610,6 @@ impl SettingsManager {
         self.merged.default_model.as_deref()
     }
 
-    /// Model for `rlm.spawn` without a pinned model; unset inherits parent.
-    #[must_use]
-    pub fn get_subagent_default_model(&self) -> Option<String> {
-        self.merged
-            .subagent_default_model
-            .as_ref()
-            .map(|m| m.trim().to_string())
-            .filter(|m| !m.is_empty())
-    }
-
     #[must_use]
     pub fn get_auxiliary_model(&self) -> Option<&str> {
         self.merged.auxiliary_model.as_deref()
@@ -851,11 +831,6 @@ impl SettingsManager {
                     parks.min(u64::from(u32::MAX)) as u32
                 }),
         }
-    }
-
-    #[must_use]
-    pub fn get_rlm_max_depth(&self) -> Option<u64> {
-        self.global.rlm_max_depth
     }
 
     /// `number | "off" | "none"` -> finite minutes or Off; malformed falls

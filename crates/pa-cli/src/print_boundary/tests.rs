@@ -138,7 +138,6 @@ async fn faux_engine_with_telemetry(
         additional_skill_paths: Vec::new(),
         additional_prompt_paths: Vec::new(),
         extra_builtin_skill_overrides: Vec::new(),
-        rlm_subagent_host: None,
         rlm_depth: None,
         model_info: Some(model.clone()),
         prewarm_ipython_kernel: None,

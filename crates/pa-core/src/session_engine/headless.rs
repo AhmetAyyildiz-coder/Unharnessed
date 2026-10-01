@@ -372,7 +372,6 @@ mod tests {
             },
             gate_attempts: [("make check".to_string(), 2u64)].into_iter().collect(),
             last_gate_failure: None,
-            subagent_keep_alive_ms: None,
         };
         assert_eq!(
             crate::autonomous::latest_autonomous_gate_attempt(&status),

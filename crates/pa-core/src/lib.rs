@@ -65,7 +65,6 @@ pub use tools::ipython::{
     IpythonToolOptions, IpythonToolUi, KernelAttachment, KernelBusyAfterInterruptError,
     KernelErrorInfo, KernelExecError, KernelExecutor,
 };
-pub use tools::rlm_bootstrap::{build_rlm_bootstrap_code, PythonSkillRuntimeInfo};
 // RLM kernel subsystem: persistent IPython kernel lifecycle.
 pub mod agent_traces;
 pub mod auth;

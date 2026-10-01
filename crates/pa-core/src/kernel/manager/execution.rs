@@ -1,12 +1,11 @@
 //! Execution bookkeeping: request writes, interrupts, abort forcing, and
-//! active-execution resolution plus late-sent agent message handlers.
+//! active-execution resolution.
 
 use super::{
-    anyhow, json, lock, parse_sent_agent_message, AbortSignal, ActiveExecution, Arc, AsyncWriteExt,
-    Duration, ExecuteResult, ExecuteStatus, Inner, Instant, InternalExecuteResult, KernelState,
-    LateSentAgentMessageCallback, Value, AGENT_MESSAGE_DISPLAY_MIME,
+    anyhow, json, lock, AbortSignal, ActiveExecution, Arc, AsyncWriteExt, Duration, ExecuteResult,
+    ExecuteStatus, Inner, Instant, InternalExecuteResult, KernelState, Value,
     KERNEL_BUSY_AFTER_INTERRUPT_MESSAGE, KERNEL_BUSY_INTERRUPT_INTERVAL_MS,
-    KERNEL_BUSY_REUSE_WAIT_MS, MAX_BACKGROUND_OUTPUT_CHARS, MAX_LATE_SENT_AGENT_MESSAGE_HANDLERS,
+    KERNEL_BUSY_REUSE_WAIT_MS, MAX_BACKGROUND_OUTPUT_CHARS,
 };
 use std::fmt::Write as _;
 
@@ -168,10 +167,6 @@ impl Inner {
                     g.freshness_epoch += 1;
                 }
             }
-            if let Some(callback) = execution.opts.on_late_sent_agent_message.clone() {
-                self.register_late_sent_agent_message_handler(&execution.request_id, callback);
-            }
-
             let mut stdout = std::mem::take(&mut buffers.stdout);
             buffers.stdout_chars = 0;
             let mut stderr = std::mem::take(&mut buffers.stderr);
@@ -231,8 +226,6 @@ impl Inner {
                 diffs: (!buffers.diffs.is_empty()).then(|| std::mem::take(&mut buffers.diffs)),
                 attachments: (!buffers.attachments.is_empty())
                     .then(|| std::mem::take(&mut buffers.attachments)),
-                sent_agent_messages: (!buffers.sent_agent_messages.is_empty())
-                    .then(|| std::mem::take(&mut buffers.sent_agent_messages)),
                 background_output: (!background_output.is_empty()).then_some(background_output),
                 status,
                 error: buffers.error.take(),
@@ -249,53 +242,5 @@ impl Inner {
         if did_clear_active {
             self.notify_active_execution_idle();
         }
-    }
-
-    fn register_late_sent_agent_message_handler(
-        &self,
-        request_id: &str,
-        callback: LateSentAgentMessageCallback,
-    ) {
-        let mut g = lock(&self.guarded);
-        g.late_handlers
-            .retain(|(existing, _)| existing != request_id);
-        g.late_handlers
-            .push_back((request_id.to_string(), callback));
-        while g.late_handlers.len() > MAX_LATE_SENT_AGENT_MESSAGE_HANDLERS {
-            g.late_handlers.pop_front();
-        }
-    }
-
-    pub(crate) fn dispatch_late_sent_agent_message(
-        &self,
-        request_id: Option<&str>,
-        data: &Value,
-    ) -> bool {
-        let Some(request_id) = request_id else {
-            return false;
-        };
-        let Some(payload) = data.get(AGENT_MESSAGE_DISPLAY_MIME) else {
-            return false;
-        };
-        let Some(message) = parse_sent_agent_message(payload) else {
-            return false;
-        };
-        let callback = {
-            let mut g = lock(&self.guarded);
-            let Some(position) = g.late_handlers.iter().position(|(id, _)| id == request_id) else {
-                return false;
-            };
-            let callback = g
-                .late_handlers
-                .remove(position)
-                .expect("position checked")
-                .1;
-            // Refresh recency, matching the TS map delete+set.
-            g.late_handlers
-                .push_back((request_id.to_string(), callback.clone()));
-            callback
-        };
-        callback(message);
-        true
     }
 }

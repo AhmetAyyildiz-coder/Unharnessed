@@ -29,11 +29,6 @@ pub const DEFAULT_MAX_TOKENS: u64 = 80_000;
 pub const DEFAULT_TIMEOUT_MS: u64 = 30 * 60 * 1000;
 pub const DEFAULT_GATE_MAX_RETRIES: u64 = 3;
 pub const DEFAULT_GATE_TIMEOUT_MS: u64 = 5 * 60 * 1000;
-/// One keep-alive continuation per 25 minutes of continuous subagent
-/// activity, strictly below the default wall-clock budget.
-pub const DEFAULT_SUBAGENT_KEEP_ALIVE_MS: u64 = 25 * 60 * 1000;
-/// Largest keep-alive window accepted (a Node-era clamp; still a sane cap).
-pub const MAX_SUBAGENT_KEEP_ALIVE_MS: u64 = 2_147_483_647;
 /// JSON-safe sentinel meaning "no cap".
 pub const UNLIMITED_AUTONOMOUS_LIMIT: u64 = 9_007_199_254_740_991;
 
@@ -52,8 +47,6 @@ pub struct AgentAutonomousConfig {
     pub timeout_ms: Option<u64>,
     pub continuation_prompt: Option<String>,
     pub gates: Option<AgentAutonomousGateConfig>,
-    /// `0` disables the subagent keep-alive valve.
-    pub subagent_keep_alive_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -97,8 +90,6 @@ pub struct AgentAutonomousStatus {
     pub gate_attempts: HashMap<String, u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_gate_failure: Option<AgentAutonomousGateFailure>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub subagent_keep_alive_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -123,7 +114,6 @@ pub struct AutonomousRuntimeState {
     pub gate_attempts: HashMap<String, u64>,
     pub last_gate_failure: Option<AgentAutonomousGateFailure>,
     pub last_gate_failure_snapshot: Option<GitWorktreeSnapshot>,
-    pub subagent_keep_alive_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,13 +161,6 @@ fn normalize_limit(value: Option<u64>, default: u64) -> u64 {
     value.filter(|value| *value > 0).unwrap_or(default)
 }
 
-fn normalize_subagent_keep_alive_ms(value: Option<u64>) -> u64 {
-    if value == Some(0) {
-        return 0;
-    }
-    normalize_limit(value, DEFAULT_SUBAGENT_KEEP_ALIVE_MS).min(MAX_SUBAGENT_KEEP_ALIVE_MS)
-}
-
 pub fn create_autonomous_runtime_state(
     config: Option<&AgentAutonomousConfig>,
     default_limits: Option<&AgentAutonomousConfig>,
@@ -210,7 +193,6 @@ pub fn create_autonomous_runtime_state(
             gate_attempts: HashMap::new(),
             last_gate_failure: None,
             last_gate_failure_snapshot: None,
-            subagent_keep_alive_ms: normalize_subagent_keep_alive_ms(None),
         };
     };
     AutonomousRuntimeState {
@@ -262,7 +244,6 @@ pub fn create_autonomous_runtime_state(
         gate_attempts: HashMap::new(),
         last_gate_failure: None,
         last_gate_failure_snapshot: None,
-        subagent_keep_alive_ms: normalize_subagent_keep_alive_ms(config.subagent_keep_alive_ms),
     }
 }
 
@@ -301,10 +282,6 @@ pub fn set_autonomous_limits(state: &mut AutonomousRuntimeState, config: &AgentA
         state.gates.max_retries = normalize_limit(gates.max_retries, state.gates.max_retries);
         state.gates.timeout_ms = normalize_limit(gates.timeout_ms, state.gates.timeout_ms);
     }
-    if config.subagent_keep_alive_ms.is_some() {
-        state.subagent_keep_alive_ms =
-            normalize_subagent_keep_alive_ms(config.subagent_keep_alive_ms);
-    }
 }
 
 #[must_use]
@@ -319,7 +296,6 @@ pub fn autonomous_status(state: &AutonomousRuntimeState) -> AgentAutonomousStatu
         gates: state.gates.clone(),
         gate_attempts: state.gate_attempts.clone(),
         last_gate_failure: state.last_gate_failure.clone(),
-        subagent_keep_alive_ms: Some(state.subagent_keep_alive_ms),
     }
 }
 
@@ -460,16 +436,6 @@ pub fn autonomous_continuation_loop_row(
     ))
 }
 
-/// Keep-alive message delivered while subagents are still active.
-#[must_use]
-pub fn create_autonomous_subagent_keep_alive_text(state: &AutonomousRuntimeState) -> String {
-    let minutes = (state.subagent_keep_alive_ms / 60_000).max(1);
-    let plural = if minutes == 1 { "" } else { "s" };
-    format!(
-        "[autonomous-continuation: subagent-keep-alive]\n\nSubagents have been running for at least {minutes} minute{plural} without a reply or exit being delivered. Check their status (for example agent_observe, rlm.list_subagents, or process inspection) and cancel or unblock any that are hung; then continue working."
-    )
-}
-
 /// Highest recorded gate attempt (across the failure record and per-command
 /// counts): the terminal-gate headline a headless client prints.
 #[must_use]
@@ -551,7 +517,6 @@ mod tests {
             state.continuation_prompt,
             DEFAULT_AUTONOMOUS_CONTINUATION_PROMPT
         );
-        assert_eq!(state.subagent_keep_alive_ms, DEFAULT_SUBAGENT_KEEP_ALIVE_MS);
         // Explicit limits win; invalid (zero) values fall back.
         let custom = AgentAutonomousConfig {
             enabled: Some(true),
@@ -659,13 +624,6 @@ mod tests {
         let text = build_autonomous_gate_failure_continuation(&failure, 3, 0);
         assert!(text.starts_with("[autonomous-continuation: gate-failed]\n\nAutonomous quality gate failed (attempt 2/3): `make check` exited with code 1.\n\nOutput:\nerror here\n"));
         assert!(text.contains("Continue working. Fix the failure, then produce terminal evidence."));
-        // Keep-alive text uses minute pluralization.
-        let mut short = state.clone();
-        short.subagent_keep_alive_ms = 60_000;
-        assert!(create_autonomous_subagent_keep_alive_text(&short)
-            .contains("at least 1 minute without"));
-        assert!(create_autonomous_subagent_keep_alive_text(&state)
-            .contains("at least 25 minutes without"));
     }
 
     #[test]

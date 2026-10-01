@@ -235,7 +235,6 @@ mod tests {
                 additional_skill_paths: Vec::new(),
                 additional_prompt_paths: Vec::new(),
                 extra_builtin_skill_overrides: Vec::new(),
-                rlm_subagent_host: None,
                 rlm_depth: None,
                 model_info: Some(model.clone()),
                 // The settings default (no prewarm); the ACP autorefine

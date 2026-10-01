@@ -87,11 +87,7 @@ pub struct PrimeAgentSessionMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refinement: Option<PrimeAgentRefinementMeta>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_message: Option<PrimeAgentAgentMessageMeta>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub compaction: Option<PrimeAgentCompactionMeta>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub subagents: Option<Vec<PrimeAgentSubagentMeta>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autonomous: Option<PrimeAgentAutonomousMeta>,
 }
@@ -122,17 +118,6 @@ pub struct PrimeAgentRefinementMeta {
     pub error: Option<String>,
 }
 
-/// An agent-to-agent message sent from inside a kernel cell.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PrimeAgentAgentMessageMeta {
-    pub tool_call_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub delivery_status: Option<String>,
-}
-
 /// One compaction that ran during the session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -141,24 +126,6 @@ pub struct PrimeAgentCompactionMeta {
     pub tokens_before: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
-}
-
-/// One RLM subagent roster row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PrimeAgentSubagentMeta {
-    pub id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_name: Option<String>,
-    pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub depth: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token_count: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 /// Autonomous-mode accounting surfaced with a turn's completion.

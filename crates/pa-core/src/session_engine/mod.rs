@@ -7,7 +7,6 @@
 //! pa-agent Agent owns the loop and its steer/follow-up queues; this layer
 //! decides admission and persists what the loop produces.
 
-pub mod agent_messaging;
 pub mod auto_refine_trigger;
 pub mod auto_retry;
 pub mod auxiliary_model;
@@ -33,9 +32,6 @@ pub mod provider_park;
 pub mod provider_retry;
 pub mod refine;
 pub mod request_timing;
-pub mod rlm_host;
-pub mod rlm_notices;
-pub mod rlm_usage;
 pub mod runtime;
 pub mod runtime_wiring;
 pub mod session_commands;

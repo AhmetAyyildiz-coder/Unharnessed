@@ -517,8 +517,6 @@ fn core_layer_documents_the_real_tool_surface() {
 /// skill in, the per-service linear/notion pair out (TS removed theirs
 /// when the generic MCP surface landed).
 const TS_PACKAGED_SKILL_SET: &[&str] = &[
-    "agent-message",
-    "agent-observe",
     "attach-image",
     "compact",
     "edit",

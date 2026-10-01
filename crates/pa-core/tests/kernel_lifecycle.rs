@@ -223,7 +223,7 @@ async fn rlm_bootstrap_injects_the_kernel_surface() {
 
     let result = execute(
         &manager,
-        "callable(rlm.spawn) and callable(rlm.find_models) and hasattr(rlm, 'harness') and callable(bash) and hasattr(rlm, 'get_harness_state')",
+        "hasattr(rlm, 'harness') and callable(bash) and hasattr(rlm, 'get_harness_state')",
     )
     .await;
     assert_eq!(
@@ -268,11 +268,11 @@ async fn host_requests_round_trip_to_registered_handlers() {
     };
     let manager = started_manager(options).await;
 
-    // rlm.find_models runs through the runtime's host_request bridge; the
-    // host reply must reach the awaiting cell.
+    // A request runs through the runtime's host_request bridge; the host
+    // reply must reach the awaiting cell.
     let result = execute(
         &manager,
-        "result = await rlm.find_models('glm', 2)\nresult[0].selector",
+        "import rlm\nresult = await rlm.host_request('rlm.find_models', {'query': 'glm', 'limit': 2})\nresult['models'][0]['selector']",
     )
     .await;
     assert_eq!(result.status, ExecuteStatus::Ok, "cell: {:?}", result.error);

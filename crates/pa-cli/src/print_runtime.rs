@@ -342,7 +342,6 @@ async fn build_headless_engine_with(
                 .map(|path| path.display().to_string())
                 .collect(),
             extra_builtin_skill_overrides: vec![],
-            rlm_subagent_host: None,
             rlm_depth: None,
             model_info: Some(model.clone()),
             // TS print/headless sessions build through the same
@@ -1332,7 +1331,6 @@ async fn build_faux_engine_with(
             additional_skill_paths: vec![],
             additional_prompt_paths: vec![],
             extra_builtin_skill_overrides: vec![],
-            rlm_subagent_host: None,
             rlm_depth: None,
             model_info: Some(model.clone()),
             // The faux engine is a Rust-only verification harness, not a
