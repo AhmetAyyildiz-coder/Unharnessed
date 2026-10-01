@@ -57,11 +57,6 @@ impl Generation {
 /// sidecar is plain serde JSON without `deny_unknown_fields`: keys this
 /// format does not read are ignored on load.
 pub(super) const SNAPSHOT_VERSION: u32 = 7;
-// `retained_whole_file` (added after v7) is `#[serde(default)]` false:
-// older sidecars deserialize it as false and simply skip the
-// full-history fast paths until the next walk rewrites the sidecar —
-// the default is the conservative pre-change behavior, so v7 caches
-// stay servable (a version bump would force a full re-walk instead).
 
 #[derive(Clone, Serialize, Deserialize)]
 // The mirrored TS API shape is deliberate (the booleans are the
@@ -94,12 +89,6 @@ pub(super) struct Snapshot {
     #[serde(default)]
     pub anthropic_warning_shown: bool,
     pub non_bootstrap: bool,
-    /// The open's walk retained every file row (no compaction boundary
-    /// was found): the retained window covers the whole session file, so
-    /// the owning manager's entries hold every persisted row. Older
-    /// sidecars deserialize this as `false` (the conservative default).
-    #[serde(default)]
-    pub retained_whole_file: bool,
 }
 fn cache_path(path: &Path) -> PathBuf {
     path.with_extension("window-cache.json")

@@ -190,28 +190,6 @@ const KERNEL_LOCAL_TOKENS: &[&str] = &[
     "mcp.describe_tool",
 ];
 
-/// The harness-state API of the vendored runtime (`rlm.harness` CRUD and
-/// `rlm.get_harness_state`). Update together with the runtime sidecar.
-const HARNESS_TOKENS: &[&str] = &[
-    "rlm.harness.create_memory",
-    "rlm.harness.update_memory",
-    "rlm.harness.delete_memory",
-    "rlm.harness.create_prompt_note",
-    "rlm.harness.update_prompt_note",
-    "rlm.harness.delete_prompt_note",
-    "rlm.harness.create_skill",
-    "rlm.harness.update_skill",
-    "rlm.harness.delete_skill",
-    "rlm.harness.create_subagent",
-    "rlm.harness.update_subagent",
-    "rlm.harness.delete_subagent",
-    "rlm.harness.record_refinement",
-    "rlm.harness.plan_refinement",
-    "rlm.harness.overview",
-    "rlm.harness.search",
-    "rlm.get_harness_state",
-];
-
 /// A host-request type literal: lowercase dotted name (`rlm.collect`).
 fn is_request_type_literal(literal: &str) -> bool {
     !literal.is_empty()
@@ -405,7 +383,7 @@ fn allowed_surface_tokens() -> BTreeSet<String> {
             allowed.insert(format!("{import}.{function}"));
         }
     }
-    for token in KERNEL_LOCAL_TOKENS.iter().chain(HARNESS_TOKENS) {
+    for token in KERNEL_LOCAL_TOKENS {
         allowed.insert(token.to_string());
     }
     allowed
@@ -430,7 +408,7 @@ fn required_surface_tokens() -> BTreeSet<String> {
             required.insert(format!("{import}.{function}"));
         }
     }
-    for token in KERNEL_LOCAL_TOKENS.iter().chain(HARNESS_TOKENS) {
+    for token in KERNEL_LOCAL_TOKENS {
         required.insert(token.to_string());
     }
     required
@@ -523,7 +501,6 @@ const TS_PACKAGED_SKILL_SET: &[&str] = &[
     "goal",
     "mcp",
     "prime-intellect",
-    "refine",
     "rlm-heartbeat",
     "skill-creator",
     "websearch",

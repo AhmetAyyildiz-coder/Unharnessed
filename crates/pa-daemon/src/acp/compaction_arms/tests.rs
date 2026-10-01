@@ -87,7 +87,6 @@ async fn acp_test_bed(
             allow_recursion: None,
             session_manager: None,
             extra_host_handlers: None,
-            conversation_log_path: None,
             additional_skill_paths: Vec::new(),
             additional_prompt_paths: Vec::new(),
             extra_builtin_skill_overrides: Vec::new(),

@@ -1,5 +1,5 @@
 //! Session slash-command execution: the daemon-side behavior behind
-//! `/compact`, `/refine`, `/goal`, and `/autonomous`. Port of
+//! `/compact`, `/goal`, and `/autonomous`. Port of
 //! agent-session.ts `_executeSelectedSessionCommand` (the durable echo
 //! row) and `_executeQueuedSessionCommand` (the per-command executors and
 //! their result rows).
@@ -28,19 +28,16 @@ use super::goal_driver::GoalDriver;
 use super::messages::{
     SESSION_SLASH_COMMAND_CUSTOM_TYPE, SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
 };
-use super::refine::{RefineOptions, RefinementSource};
-use super::slash_commands::{parse_refine_command_options, SessionSlashCommand};
+use super::slash_commands::SessionSlashCommand;
 
 pub use crate::autonomous::AUTONOMOUS_STATUS_CUSTOM_TYPE;
 
 /// Inputs the host runtime supplies to one execution.
 pub struct SessionCommandParams<'a> {
-    /// The resolved model for summarizer/refiner calls.
+    /// The resolved model for summarizer calls.
     pub model: &'a pa_types::ai::Model,
     /// Resolved API key (None falls back to provider resolution).
     pub api_key: Option<String>,
-    /// The global harness directory (refinement history).
-    pub global_harness_dir: std::path::PathBuf,
     /// The session's autonomous runtime state, held by the host runtime.
     pub autonomous: &'a mut AutonomousRuntimeState,
 }
@@ -81,12 +78,6 @@ pub struct SessionCommandExecution {
     /// The command failed: the TS error message. The failure result row
     /// (`Command failed: ...`) is already appended to `messages`.
     pub error: Option<String>,
-    /// A refinement run's structured outcome (host transports surface it as
-    /// a completion event; the result row in `messages` stays display-only).
-    pub refinement: Option<crate::refinement::RefinementResult>,
-    /// A refinement run failed: the raw run error (option-parse failures
-    /// leave this `None`; they are command failures, not refinement events).
-    pub refinement_failed: Option<String>,
 }
 
 impl SessionCommandExecution {
@@ -190,8 +181,7 @@ pub async fn execute_session_command(
     let mut execution = SessionCommandExecution::default();
     // TS `_appendDurableSessionCommandMessage` records the attempted
     // command BEFORE the queue runs it, so the command's own work (the
-    // compaction branch, the refinement snapshot) sees the echo row in the
-    // session branch.
+    // compaction branch) sees the echo row in the session branch.
     let echo = session_command_echo_row(command);
     execution.push_message(echo.clone());
     if let Err(error) = persist_rows(engine, std::iter::once(&echo)).await {
@@ -205,7 +195,6 @@ pub async fn execute_session_command(
     }
     let result = match command.name {
         "compact" => execute_compact(engine, params, command, &mut execution).await,
-        "refine" => execute_refine(engine, params, command, &mut execution).await,
         "goal" => execute_goal(engine, command, &mut execution).await,
         "autonomous" => execute_autonomous(params, command, &mut execution),
         other => Err(format!("Unknown session command: {other}")),
@@ -234,8 +223,7 @@ pub async fn execute_session_command(
 /// `_appendDurableSessionCommandMessage` pushes each row onto
 /// `agent.state.messages`, so the next admitted turn's request and every
 /// state snapshot carry them). The post-execution rebuild is idempotent
-/// for the compaction path, which rebuilds mid-execution; the refinement
-/// path pushes its rows mid-execution and this rebuild then normalizes
+/// for the compaction path, which rebuilds mid-execution, and normalizes
 /// the command path's live context onto the durable one.
 async fn sync_live_context(engine: &SessionEngine) {
     let session = engine.session.session_handle().clone();
@@ -280,56 +268,6 @@ async fn execute_compact(
             });
         }
     }
-    Ok(())
-}
-
-/// `/refine`: run the refinement and record the applied-edit count.
-async fn execute_refine(
-    engine: &SessionEngine,
-    params: &mut SessionCommandParams<'_>,
-    command: &SessionSlashCommand,
-    execution: &mut SessionCommandExecution,
-) -> Result<(), String> {
-    let options = parse_refine_command_options(&command.args)?;
-    let refine_options = RefineOptions {
-        global: options.global,
-        instructions: options.instructions,
-        rollback_id: options.rollback_id,
-    };
-    let result = match engine
-        .session
-        .refine(
-            &refine_options,
-            RefinementSource::User,
-            params.model,
-            params.api_key.take(),
-            params.global_harness_dir.clone(),
-        )
-        .await
-    {
-        Ok(result) => result,
-        Err(error) => {
-            // The refinement run itself failed: a host transport surfaces
-            // this as a refinement event, distinct from the command failure.
-            execution.refinement_failed = Some(format!("{error:#}"));
-            return Err(format!("{error:#}"));
-        }
-    };
-    execution.refinement = Some(result.clone());
-    let applied = result
-        .applied_edits
-        .iter()
-        .filter(|edit| edit.applied)
-        .count();
-    let content = format!(
-        "Refined continual harness state: {applied} edit{} applied.",
-        if applied == 1 { "" } else { "s" }
-    );
-    // The refinement outcome message renders the details; the result row is
-    // durable but not displayed (TS `displayResult = false`).
-    execution.push_message(slash_command_result(
-        command, content, true, "info", None, false,
-    ));
     Ok(())
 }
 
@@ -538,7 +476,7 @@ mod tests {
         assert_eq!(details["severity"], serde_json::json!("info"));
 
         let failed = slash_command_result(
-            &command("refine", ""),
+            &command("compact", ""),
             "Command failed: boom".to_string(),
             false,
             "error",
@@ -571,7 +509,6 @@ mod tests {
             &mut SessionCommandParams {
                 model: &scripted_model(),
                 api_key: None,
-                global_harness_dir: std::path::PathBuf::from("/tmp"),
                 autonomous: &mut autonomous,
             },
             &command("autonomous", "on --max-turns 5"),

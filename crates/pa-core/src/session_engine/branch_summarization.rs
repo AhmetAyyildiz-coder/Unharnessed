@@ -140,8 +140,8 @@ fn get_message_from_entry(entry: &FileEntry) -> Option<AgentMessage> {
                 tokens_before: payload.tokens_before,
                 retained_message_count: None,
                 custom_instructions: payload.custom_instructions.clone(),
-                harness_digest: payload.harness_digest.clone(),
-                harness_state_fingerprint: payload.harness_state_fingerprint.clone(),
+                harness_digest: None,
+                harness_state_fingerprint: None,
                 timestamp: super::super::session::timestamp_to_millis(entry.timestamp()),
             }))
         }

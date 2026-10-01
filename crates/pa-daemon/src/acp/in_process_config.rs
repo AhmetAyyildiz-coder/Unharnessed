@@ -335,7 +335,7 @@ async fn apply_in_process_model_switch(
     *mode.api_key.lock().await = resolved.api_key.clone();
     // The live model slot follows with the same step, so the switch's
     // live trio (provider target, request key, model) never splits:
-    // `current_model()` — picker validation, `/compact`, `/refine` —
+    // `current_model()` — picker validation, `/compact` —
     // always answers the model the turns stream on, before OR after a
     // later step fails (TS's `setModel` assigns the session model before
     // it persists, so a failed write rejects with the switched session

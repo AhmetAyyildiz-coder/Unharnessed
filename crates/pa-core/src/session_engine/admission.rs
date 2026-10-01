@@ -5,7 +5,7 @@ use super::{
 };
 
 impl AgentSession {
-    /// Submit a prompt. Session commands (compact/refine/goal/autonomous)
+    /// Submit a prompt. Session commands (compact/goal/autonomous)
     /// are recognized before admission and never reach the model.
     ///
     /// # Errors
@@ -46,11 +46,7 @@ impl AgentSession {
                 "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
             );
         }
-        let mut prompt_messages = Vec::new();
-        if let Some(digest_row) = self.pending_digest_prompt_row().await? {
-            prompt_messages.push(digest_row);
-        }
-        prompt_messages.extend(self.take_next_turn_rows().await);
+        let mut prompt_messages = self.take_next_turn_rows().await;
         let custom_row = session_message_to_loop(&SessionAgentMessage::Custom(message.clone()))
             .ok_or_else(|| anyhow::anyhow!("injected custom message conversion failed"))?;
         // The dispatch-time routing decision fires for every dispatched
@@ -161,15 +157,8 @@ impl AgentSession {
             // images to placeholders.
             self.apply_image_model_routing(&images, &options.batch)
                 .await?;
-            // The turn's prompt messages (TS preparedMessages): the deferred
-            // first-turn harness digest rides first when one is due, so the
-            // loop streams its message pair ahead of the user prompt and
-            // carries it on `agent_end` (TS commit-time injection).
-            let mut prompt_messages = Vec::new();
-            if let Some(digest_row) = self.pending_digest_prompt_row().await? {
-                prompt_messages.push(digest_row);
-            }
-            prompt_messages.extend(self.take_next_turn_rows().await);
+            // The turn's prompt messages (TS preparedMessages).
+            let mut prompt_messages = self.take_next_turn_rows().await;
             prompt_messages.push(user_prompt_message(&normalized, &images));
             // The batched co-delivery rows (TS `_startPreparedTurnActions`'s
             // `turns.flatMap(records)`): each batched action contributes its

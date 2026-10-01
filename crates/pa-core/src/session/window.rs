@@ -186,7 +186,6 @@ pub struct WindowedSessionStore {
     settings: SessionContext,
     boundary_model: Option<(String, String)>,
     full: bool,
-    retained_whole_file: bool,
     snapshot: Snapshot,
     reads: WindowReadStats,
     /// The retained typed rows and raw lines were handed to the owning
@@ -594,7 +593,6 @@ impl WindowedSessionStore {
             goal,
             anthropic_warning_shown,
             non_bootstrap,
-            retained_whole_file: !window_done,
         };
         if !generation.valid(&reader.file, path)? {
             return Ok(None);
@@ -620,7 +618,6 @@ impl WindowedSessionStore {
             },
             boundary_model,
             full: false,
-            retained_whole_file: !window_done,
             snapshot,
             reads: reader.reads,
             detached: false,
@@ -697,7 +694,6 @@ impl WindowedSessionStore {
             },
             boundary_model: snapshot.boundary_model.clone(),
             full: false,
-            retained_whole_file: snapshot.retained_whole_file,
             snapshot,
             reads,
             detached: false,
@@ -740,16 +736,6 @@ impl WindowedSessionStore {
     #[must_use]
     pub fn full_history(&self) -> bool {
         self.full
-    }
-
-    /// Whether the open's walk retained every file row (no compaction
-    /// boundary): the owning manager's entries — the retained trees the
-    /// walk handed over plus every append since — cover every persisted
-    /// row, so a historical read over the file would rebuild a subset of
-    /// what the manager already holds.
-    #[must_use]
-    pub fn retained_whole_file(&self) -> bool {
-        self.retained_whole_file
     }
 
     /// The walk-resolved settings (the owning manager's context overlay

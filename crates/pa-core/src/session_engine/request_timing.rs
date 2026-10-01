@@ -34,7 +34,7 @@
 //! concurrent sessions own distinct wirings and cannot collide.
 //!
 //! One-shot completion calls outside the agent loop (compaction,
-//! branch-summary, refinement) call the provider directly and are not
+//! branch-summary) call the provider directly and are not
 //! instrumented, exactly like the TS reference.
 
 use std::path::{Path, PathBuf};

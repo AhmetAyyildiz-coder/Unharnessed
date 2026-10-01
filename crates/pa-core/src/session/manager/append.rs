@@ -195,40 +195,7 @@ impl SessionManager {
         Ok(id)
     }
 
-    /// Append a custom entry with the TS `_appendEntry` retained-write
-    /// contract: a failed disk write keeps the entry in the live index and
-    /// surfaces the error for the caller to log or report after the rest of
-    /// its TS-choreographed writes (the refine audit arm). [`Self::append_custom_entry`]
-    /// stays strict for callers that roll back on failure.
-    pub fn append_custom_entry_retained(
-        &mut self,
-        custom_type: &str,
-        data: Option<serde_json::Value>,
-    ) -> (String, Option<std::io::Error>) {
-        let base = self.next_base();
-        let id = base.id.clone().unwrap_or_default();
-        self.file_entries.push(FileEntry::Custom {
-            payload: pa_types::session::CustomEntry {
-                custom_type: custom_type.to_string(),
-                data,
-                rest: serde_json::Map::default(),
-            },
-            base,
-        });
-        let index = self.file_entries.len() - 1;
-        let write_error = self.persist_entry(index).err();
-        let entry = self.file_entries[index].clone();
-        if let Some(window) = &mut self.window {
-            window.append_entry(entry.clone());
-        }
-        if let Some(id) = entry.id().map(str::to_string) {
-            self.by_id.insert(id.clone(), index);
-            self.leaf_id = Some(id);
-        }
-        (id, write_error)
-    }
-
-    /// Append a custom message entry (compaction/refine notices, prompts).
+    /// Append a custom message entry (compaction notices, prompts).
     ///
     /// # Errors
     ///

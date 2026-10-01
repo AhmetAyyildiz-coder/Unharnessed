@@ -169,7 +169,7 @@ async fn run_prompt_turn(
     let ran_model_turn;
 
     match admission {
-        // Session commands (compact/refine/goal/autonomous) never admit a
+        // Session commands (compact/goal/autonomous) never admit a
         // model turn: the durable echo row replaces the user row. Execute
         // them and publish their namespaced events.
         Ok(PromptOutcome::SessionCommand(command)) => {
@@ -219,9 +219,7 @@ async fn run_prompt_turn(
 
     // The turn-settlement loop: classify each settled turn, run the
     // automatic compaction arms at its boundary (TS `_checkCompaction` at
-    // `agent_end`), consume the requested refinement (TS
-    // `_consumePendingRequestedRefine`), then ask the autonomous driver
-    // what follows. A continuation runs as the next turn of the same
+    // `agent_end`), then ask the autonomous driver what follows. A continuation runs as the next turn of the same
     // prompt, so every boundary in the run hosts its arms.
     loop {
         if session.cancel_requested() || !ran_model_turn {
@@ -239,7 +237,7 @@ async fn run_prompt_turn(
         }
         // An aborted turn never services its boundary requests (TS
         // `_checkCompaction`'s abort arm): drop the pending compaction
-        // and refine requests, reset the overflow machine, and settle.
+        // request, reset the overflow machine, and settle.
         if final_message.stop_reason == pa_types::ai::StopReason::Aborted {
             session.reset_overflow_recovery();
             session.clear_turn_boundary_requests(&mode.engine).await;
@@ -247,14 +245,9 @@ async fn run_prompt_turn(
         }
         // A settled non-error assistant message resets the overflow
         // machine (TS resets `_overflowRecovery` at every non-error
-        // assistant `message_end`) and counts into the auto-refine
-        // review prompt's turn line (TS `_assistantTurnsSinceAutoRefine`'s
-        // message_end increment), then the boundary check runs.
+        // assistant `message_end`), then the boundary check runs.
         if final_message.stop_reason != pa_types::ai::StopReason::Error {
             session.reset_overflow_recovery();
-            mode.engine
-                .session
-                .note_settled_turn_since_auto_refine_review();
         }
         // TS `_checkCompaction` at `agent_end`: the overflow arm (Case 1,
         // with its compact-and-retry), then the requested arm (which
@@ -284,17 +277,6 @@ async fn run_prompt_turn(
             }
             mode.engine.session.agent().wait_for_idle().await;
             continue;
-        }
-        // TS consumes the requested refinement whenever the compaction
-        // check did not report a will-retry (`_consumePendingRequestedRefine`
-        // at `agent_end`), then the serialized checkpoint's compact step
-        // services an armed compact-trigger review (autorefine.rs). The
-        // compact-trigger round defers behind a held goal continuation
-        // (TS `_scheduleAutoRefineAfterCompaction(willContinue)`): the
-        // continuation turn's own boundary services it.
-        session.consume_requested_refine(&mode).await;
-        if threshold_continuation.is_none() {
-            session.consume_compact_auto_refine(&mode).await;
         }
         // A failed turn ends the run with its error once the boundary
         // check could not save it (an overflow recovery that re-issued
@@ -411,7 +393,7 @@ async fn run_prompt_turn(
 }
 
 /// Execute one session command and publish its namespaced events:
-/// compaction and refinement outcomes, plus any goal state change. A goal
+/// compaction outcomes, plus any goal state change. A goal
 /// start/resume schedules its continuation context as the turn's model
 /// segment after the command settles.
 async fn run_session_command_segment(
@@ -422,8 +404,7 @@ async fn run_session_command_segment(
 ) -> anyhow::Result<bool> {
     // The command executor runs on one model/key pair read through the
     // config queue: a concurrent picker switch cannot hand `/compact`
-    // or `/refine` the pre-switch model with the switched provider's
-    // key.
+    // the pre-switch model with the switched provider's key.
     let (model, api_key) = mode.model_and_api_key().await;
     let Some(model) = model else {
         // Unreachable in practice (the engine assembly requires a model);
@@ -439,7 +420,6 @@ async fn run_session_command_segment(
         let mut params = SessionCommandParams {
             model: &model,
             api_key,
-            global_harness_dir: mode.agent_dir.as_path().to_path_buf(),
             autonomous: &mut autonomous,
         };
         execute_session_command(&mode.engine, &mut params, command).await
@@ -465,60 +445,16 @@ async fn run_session_command_segment(
     if let Some(event) = compaction_event {
         publish_engine_event(session, &event).await;
     }
-    // TS `compact()` schedules the compact-trigger auto-refine review
-    // after every successful compaction: a session command never runs a
-    // turn, so the armed trigger waits for the next serialized checkpoint
-    // or the session-close drain (autorefine.rs).
     if command.name == "compact" && execution.compaction.is_some() {
-        mode.engine.session.mark_compact_auto_refine_pending();
         // TS `compact()`'s `didCompact` + active-goal finally arm: a
         // successful manual compact with an active goal mints the owed
         // continuation (the `||= !hasQueuedMessages()` arm — the direct
         // ACP never queues work behind a session command) and the
         // continuation runs as the turn's model segment, the scheduled
-        // continue over the queued follow-up. The compact-trigger review
-        // defers behind it (the continuation turn's boundary services
-        // it, like the goal-start segment below).
+        // continue over the queued follow-up.
         if let Some(message) = goal_continuation::mint_goal_continuation(mode, session).await {
             return run_goal_continuation_segment(mode, session, message, turn_failure).await;
         }
-    }
-
-    // Refinement outcomes publish complete/failed events; option-parse
-    // failures are command failures without a refinement event.
-    if let Some(result) = &execution.refinement {
-        publish_engine_event(
-            session,
-            &events::AcpEngineEvent::RefineComplete {
-                summary: result.summary.clone(),
-                changes: result
-                    .applied_edits
-                    .iter()
-                    .filter(|edit| edit.applied)
-                    .map(|edit| {
-                        let action = serde_json::to_value(edit.action)
-                            .ok()
-                            .and_then(|value| value.as_str().map(str::to_string))
-                            .unwrap_or_default();
-                        let kind = serde_json::to_value(edit.kind)
-                            .ok()
-                            .and_then(|value| value.as_str().map(str::to_string))
-                            .unwrap_or_default();
-                        format!("{action} {kind}:{}", edit.id)
-                    })
-                    .collect(),
-            },
-        )
-        .await;
-    }
-    if let Some(error) = &execution.refinement_failed {
-        publish_engine_event(
-            session,
-            &events::AcpEngineEvent::RefineFailed {
-                error: error.clone(),
-            },
-        )
-        .await;
     }
 
     // Any goal state change (start/status/clear/pause/resume) publishes.

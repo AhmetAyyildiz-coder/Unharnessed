@@ -2,7 +2,7 @@
 //! retries (permanent kinds, Retry-After-aware capped delays).
 //!
 //! Two consumers exist: the session auto-retry loop and one-shot completion
-//! helpers (side questions, compaction, refinement, session summaries). The
+//! helpers (side questions, compaction, session summaries). The
 //! decision logic is pure and clock-free so tests stay deterministic; the
 //! caller owns the actual sleep/attempt cycle.
 //!

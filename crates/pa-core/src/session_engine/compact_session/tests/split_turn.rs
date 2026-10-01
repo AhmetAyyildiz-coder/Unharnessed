@@ -104,7 +104,6 @@ async fn split_turn_compaction_runs_two_summarizer_calls_and_merges_the_turn_con
                 ..Default::default()
             },
             abort: None,
-            harness_digest: None,
             auxiliary: None,
             summary_delta: None,
         },
@@ -277,7 +276,6 @@ async fn injected_custom_turn_cuts_whole_turns_the_double_row_splits() {
             custom_instructions: None,
             settings: settings(2),
             abort: None,
-            harness_digest: None,
             auxiliary: None,
             summary_delta: None,
         },
@@ -334,7 +332,6 @@ async fn injected_custom_turn_cuts_whole_turns_the_double_row_splits() {
             custom_instructions: None,
             settings: settings(2),
             abort: None,
-            harness_digest: None,
             auxiliary: None,
             summary_delta: None,
         },
@@ -452,7 +449,6 @@ async fn split_turn_without_history_makes_only_the_prefix_call() {
                 ..Default::default()
             },
             abort: None,
-            harness_digest: None,
             auxiliary: None,
             summary_delta: None,
         },

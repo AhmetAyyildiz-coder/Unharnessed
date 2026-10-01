@@ -45,10 +45,6 @@ pub struct SessionEngineConfig {
     /// Extra kernel host-request handlers (e.g. the daemon's message/observe
     /// bridges), merged over the built-in goal/heartbeat registrations.
     pub extra_host_handlers: Option<crate::kernel::shared::HostRequestHandlers>,
-    /// Conversation-log path for the system prompt when the caller owns
-    /// persistence outside the session manager (the daemon worker mirrors
-    /// entries into its own session file).
-    pub conversation_log_path: Option<PathBuf>,
     /// Extra skill paths.
     pub additional_skill_paths: Vec<String>,
     /// Extra prompt-template paths.
@@ -57,8 +53,7 @@ pub struct SessionEngineConfig {
     /// integrations); the MCP manager seam.
     pub extra_builtin_skill_overrides: Vec<String>,
     /// The session's depth in the RLM recursion tree (0 for top-level
-    /// sessions). Gates the `refine.*` host requests, like the TS
-    /// `_autoRefineAllowedForSession` depth check.
+    /// sessions).
     pub rlm_depth: Option<u32>,
     /// The full registry model (input modalities for `model.info`); the
     /// engine derives minimal facts from `model` when absent.
@@ -145,7 +140,7 @@ pub struct SessionEngine {
     /// this field (shared handle: the daemon worker and the engine gate
     /// prompts through one store).
     pub mcp_manager: std::sync::Arc<std::sync::Mutex<crate::mcp::McpManager>>,
-    /// The turn-boundary request surface (`compact.*`/`refine.*`/
+    /// The turn-boundary request surface (`compact.*`/
     /// `model.info` host requests and the pending requests the turn loop
     /// consumes after a settled turn).
     pub turn_boundary: std::sync::Arc<super::turn_boundary::TurnBoundaryRequests>,
@@ -218,18 +213,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let session_manager = config
         .session_manager
         .unwrap_or_else(|| SessionManager::in_memory(&cwd));
-    let conversation_log = {
-        let session = &session_manager;
-        session
-            .get_session_file()
-            .map(|path| path.display().to_string())
-            .or_else(|| {
-                config
-                    .conversation_log_path
-                    .as_ref()
-                    .map(|path| path.display().to_string())
-            })
-    };
+    let conversation_log = session_manager
+        .get_session_file()
+        .map(|path| path.display().to_string());
     let wiring = super::runtime_wiring::wire_session_runtime(
         session_manager,
         &config.agent_dir,
@@ -240,11 +226,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let settings = crate::settings::SettingsManager::create(&cwd, &config.agent_dir);
     let service_tier_preference = settings.get_default_service_tier();
     // Captured before `settings` moves into the resource loader: the
-    // compaction scheduling budget (`compact.run` prepare check) and the
-    // auto-refine gates (TS `getAutoRefineSettings`).
+    // compaction scheduling budget (`compact.run` prepare check).
     let compaction_settings = settings.settings().compaction.clone().unwrap_or_default();
-    let auto_refine_gates =
-        super::refine::AutoRefineGates::from_settings(settings.settings().auto_refine.as_ref());
     // Request timing (TS #2462): the settings half of the flag is read once
     // here — `settings` moves into the resource loader below and its merged
     // snapshot is fixed for the session anyway — while the `PI_REQUEST_TIMING`
@@ -336,9 +319,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // serve live views per request.
     crate::mcp::McpManager::register_host_handlers(&mcp_manager, &mut handlers);
     // The turn-boundary surface: `model.info` always; `compact.*` behind
-    // the compaction `agentCallable` setting; `refine.*` behind the TS
-    // `_autoRefineAllowedForSession` gate (depth 0 with a local harness
-    // state dir, i.e. exactly the sessions the refine skill targets).
+    // the compaction `agentCallable` setting.
     let turn_boundary = Arc::new(super::turn_boundary::TurnBoundaryRequests::new());
     turn_boundary.register_model_info_handler(&mut handlers, model_info.clone());
     let keep_recent_tokens = compaction_settings
@@ -347,31 +328,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     if compaction_settings.agent_callable.unwrap_or(true) {
         turn_boundary.register_compact_handlers(&mut handlers, keep_recent_tokens);
     }
-    // The session's artifact dir (TS `getSessionArtifactDir`; the daemon
-    // worker owns persistence outside the session manager, so its
-    // conversation-log path implies the same tree). One resolution feeds
-    // the harness digest below and the kernel snapshot wiring.
-    let session_artifact_dir: Option<PathBuf> = wiring
-        .session
-        .lock()
-        .await
-        .get_session_artifact_dir()
-        .or_else(|| {
-            config
-                .conversation_log_path
-                .as_deref()
-                .and_then(super::harness_digest::session_artifact_dir_for_log)
-        });
-    let local_harness_dir =
-        crate::refinement::get_local_harness_state_dir(session_artifact_dir.as_deref());
-    // The refine surface gate (TS `_autoRefineAllowedForSession`): depth 0
-    // with a local harness state dir — the sessions whose `refine.*` host
-    // requests register, and the only sessions the compact-trigger
-    // auto-refine may run for.
-    let auto_refine_allowed = config.rlm_depth.unwrap_or(0) == 0 && local_harness_dir.is_some();
-    if auto_refine_allowed {
-        turn_boundary.register_refine_handlers(&mut handlers);
-    }
+    // The session's artifact dir (TS `getSessionArtifactDir`), where the
+    // kernel snapshot lives.
+    let session_artifact_dir: Option<PathBuf> =
+        wiring.session.lock().await.get_session_artifact_dir();
     // `kernel bootstrap` telemetry: the provisioner reports every actual
     // boot (duration, cold/revived, outcome) through the session's client.
     let on_bootstrap_result = config.telemetry.as_ref().map(|wiring| {
@@ -530,19 +490,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         },
     );
 
-    // Harness digest inputs: global state from the agent dir, local state
-    // from the session artifacts (or the daemon-owned conversation log), and
-    // the interfaces the digest may reference.
-    let digest_context = super::harness_digest::HarnessDigestContext {
-        global_dir: crate::refinement::get_global_harness_state_dir(&config.agent_dir),
-        local_dir: local_harness_dir,
-        include_ipython: active_tool_names.iter().any(|name| name == "ipython"),
-        include_shell_examples: active_tool_names.iter().any(|name| name == "bash"),
-        include_refine: resources.skills.iter().any(|skill| {
-            !skill.disable_model_invocation
-                && skill.name == crate::prompts::system_prompt::REFINE_SKILL_NAME
-        }),
-    };
     // sdk.ts `createAgentSession` parity: a session manager that already
     // holds messages is a resume — the loop starts from the persisted
     // context. Fresh sessions record the creation prefix (model_change +
@@ -619,7 +566,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         )),
         // The session conversion rules apply at the loop's LLM boundary
         // (TS `convertToLlm`): bookkeeping custom rows drop, everything
-        // else (the harness digest included) becomes a user turn.
+        // else becomes a user turn.
         convert_to_llm: Some(super::request_timing::instrument_convert_to_llm(
             std::sync::Arc::clone(&request_timing_wiring),
             super::messages::engine_convert_to_llm(),
@@ -660,10 +607,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         agent.clone(),
         wiring.session.clone(),
         resources.prompts.clone(),
-        Some(digest_context),
     )
     .await?;
-    session.set_auto_refine(auto_refine_allowed, auto_refine_gates);
     // Every compaction path reads the session's resolved compaction
     // settings (TS `getCompactionSettings`): `/compact` matches the
     // `compact.*` turn-boundary tool's `keepRecentTokens`/`reserveTokens`.
@@ -748,7 +693,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // session's queue.
     session.adopt_next_turn_rows(boot_notice_rows);
 
-    // Bind the turn-boundary runtime the `compact.*`/`refine.*` handlers
+    // Bind the turn-boundary runtime the `compact.*` handlers
     // probe (turn-active state, usage estimate, compaction preparation).
     turn_boundary.bind(super::turn_boundary::TurnBoundaryRuntime {
         agent,

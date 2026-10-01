@@ -23,7 +23,6 @@ const KNOWN_FIELDS: &[&str] = &[
     "followUpMode",
     "theme",
     "compaction",
-    "autoRefine",
     "agentTraces",
     "telemetry",
     "branchSummary",

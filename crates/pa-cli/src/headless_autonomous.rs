@@ -167,17 +167,10 @@ impl HeadlessAutonomous {
         boundary: &mut crate::print_boundary::TurnBoundary,
         model: &Model,
         api_key: Option<String>,
-        global_harness_dir: PathBuf,
     ) -> Result<(), String> {
         while let Some(text) = self.held.lock().await.take() {
             boundary
-                .admit_continuation(
-                    engine,
-                    model,
-                    api_key.clone(),
-                    &text,
-                    global_harness_dir.clone(),
-                )
+                .admit_continuation(engine, model, api_key.clone(), &text)
                 .await?;
         }
         Ok(())

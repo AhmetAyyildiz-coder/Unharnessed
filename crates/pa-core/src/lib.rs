@@ -20,8 +20,8 @@
 // epsilon compare would weaken the assertions, not fix a lint.
 #![cfg_attr(test, allow(clippy::float_cmp))]
 
-//! Session engine: tools, skills, prompts, compaction, refinement, kernel/RLM
-//! manager, subagents, session manager, settings.
+//! Session engine: tools, skills, prompts, compaction, kernel/RLM
+//! manager, session manager, settings.
 //!
 //! Public API (crate facade): the tool-definition contract for the
 //! model-facing surface. All subsystem internals are `pub(crate)`;
@@ -78,7 +78,6 @@ pub mod models;
 pub mod packages;
 pub mod platform;
 pub mod prompts;
-pub mod refinement;
 pub mod resources;
 pub mod session;
 pub mod session_engine;

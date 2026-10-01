@@ -12,15 +12,14 @@ pub const COMPACTION_SUMMARY_PREFIX: &str = "[compaction-summary]\n\nThe convers
 pub const COMPACTION_SUMMARY_SUFFIX: &str = "\n</summary>";
 pub const BRANCH_SUMMARY_PREFIX: &str = "[branch-summary]\n\nThe following is a summary of a branch that this conversation came back from:\n\n<summary>\n";
 pub const BRANCH_SUMMARY_SUFFIX: &str = "\n</summary>";
-pub const HARNESS_DIGEST_PREFIX: &str = "[harness-digest]\n\nThe persistent memories produced across this session so far:\n\n<harness_state>\n";
-pub const HARNESS_DIGEST_SUFFIX: &str = "\n</harness_state>";
 
 pub use pa_types::slash_commands::{
     SESSION_SLASH_COMMAND_CUSTOM_TYPE, SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
 };
 pub const COMPACTION_OUTCOME_CUSTOM_TYPE: &str = "compaction_outcome";
+/// Refinement outcome rows persisted by earlier builds (the removed
+/// `/refine`): still dropped from model context when such a session resumes.
 pub const REFINEMENT_OUTCOME_CUSTOM_TYPE: &str = "refinement_outcome";
-pub const REFINEMENT_NOTICE_CUSTOM_TYPE: &str = "refinement_notice";
 /// The durable single-row disclosure of one provider-retry episode
 /// (SANCTIONED DIVERGENCE from TS, operator ruling 2026-09-23: the TS chat
 /// leaves one error row per failed attempt, which a 429-storm turned into
@@ -377,23 +376,14 @@ pub fn convert_to_llm(messages: &[AgentMessage]) -> Vec<AgentMessage> {
                 timestamp: summary.timestamp,
                 rest: serde_json::Map::default(),
             }),
-            AgentMessage::CompactionSummary(summary) => {
-                let digest_block = summary
-                    .harness_digest
-                    .as_deref()
-                    .map(|digest| {
-                        format!("{HARNESS_DIGEST_PREFIX}{digest}{HARNESS_DIGEST_SUFFIX}\n\n")
-                    })
-                    .unwrap_or_default();
-                AgentMessage::User(UserMessage {
-                    content: UserContent::Blocks(vec![text_block(format!(
-                        "{digest_block}{COMPACTION_SUMMARY_PREFIX}{}{COMPACTION_SUMMARY_SUFFIX}",
-                        summary.summary
-                    ))]),
-                    timestamp: summary.timestamp,
-                    rest: serde_json::Map::default(),
-                })
-            }
+            AgentMessage::CompactionSummary(summary) => AgentMessage::User(UserMessage {
+                content: UserContent::Blocks(vec![text_block(format!(
+                    "{COMPACTION_SUMMARY_PREFIX}{}{COMPACTION_SUMMARY_SUFFIX}",
+                    summary.summary
+                ))]),
+                timestamp: summary.timestamp,
+                rest: serde_json::Map::default(),
+            }),
             AgentMessage::User(_) | AgentMessage::Assistant(_) | AgentMessage::ToolResult(_) => {
                 message.clone()
             }
@@ -411,9 +401,7 @@ pub type LlmToolResultMessage = ToolResultMessage;
 /// seam (TS `convertToLlm` at the agent prompt/request boundary): standard
 /// rows pass through; custom rows cross through the session wire shape so
 /// the session conversion rules apply — bookkeeping custom types and
-/// unknown roles drop, everything else becomes a user turn. This is what
-/// lets the harness-digest row ride the loop (prompt input and agent-end
-/// message list) while still reaching the provider as model context.
+/// unknown roles drop, everything else becomes a user turn.
 #[must_use]
 pub fn loop_convert_to_llm(
     messages: Vec<pa_agent::types::AgentMessage>,
@@ -580,7 +568,7 @@ mod tests {
                 tokens_before: 1,
                 retained_message_count: None,
                 custom_instructions: None,
-                harness_digest: Some("digest".to_string()),
+                harness_digest: None,
                 harness_state_fingerprint: None,
                 timestamp: 0,
             }),
@@ -604,8 +592,6 @@ mod tests {
             AgentMessage::User(user) => user.content.text(),
             _ => panic!("expected user"),
         };
-        assert!(compaction.contains("[harness-digest]"));
-        assert!(compaction.contains("<harness_state>\ndigest\n</harness_state>"));
         assert!(compaction.contains("[compaction-summary]"));
         assert!(compaction.contains("the story"));
     }

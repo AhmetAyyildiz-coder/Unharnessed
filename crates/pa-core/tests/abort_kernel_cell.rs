@@ -204,7 +204,6 @@ async fn abort_during_a_kernel_cell_settles_the_turn_immediately() {
         allow_recursion: None,
         session_manager: Some(session),
         extra_host_handlers: None,
-        conversation_log_path: None,
         additional_skill_paths: Vec::new(),
         additional_prompt_paths: Vec::new(),
         extra_builtin_skill_overrides: Vec::new(),

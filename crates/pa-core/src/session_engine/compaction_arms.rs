@@ -1,6 +1,6 @@
 use super::compact_session::CompactOutcome;
 use super::{
-    compaction, compaction_trace, ipython_state, provider_adapter, rebuilt_loop_messages, refine,
+    compaction, compaction_trace, ipython_state, provider_adapter, rebuilt_loop_messages,
     session_message_to_loop, standard_message, AgentMessage, AgentSession, FileEntry,
     SessionAgentMessage, TrailingAssistantFilter,
 };
@@ -197,17 +197,12 @@ impl AgentSession {
         api_key: Option<String>,
         abort: Option<&pa_agent::abort::AbortSignal>,
     ) -> anyhow::Result<CompactOutcome> {
-        // TS `_performCompaction` captures `this._harnessDigest()` at the
-        // commit: relevance terms from the live (pre-compaction) context,
-        // harness state read fresh from disk when the snapshot renders.
         compaction_trace::trace(
             "compact.enter",
             &serde_json::json!({
                 "customInstructions": custom_instructions.is_some(),
             }),
         );
-        let digest_inputs = self.harness_digest_inputs().await;
-        compaction_trace::trace("compact.digest_captured", &serde_json::Value::Null);
         let mut outcome = {
             let mut session = self.session.lock().await;
             let summary_delta = self
@@ -223,7 +218,6 @@ impl AgentSession {
                     custom_instructions,
                     settings: self.compaction_settings(),
                     abort,
-                    harness_digest: digest_inputs,
                     auxiliary: self.auxiliary_model.as_ref(),
                     summary_delta,
                 },
@@ -348,91 +342,5 @@ impl AgentSession {
             .set_messages(rebuilt_loop_messages(rebuilt))
             .await;
         Ok(())
-    }
-
-    /// Execute `/refine`: plan, re-read, apply, and persist the continual
-    /// harness state for this session. The conversation snapshot comes from
-    /// the session entries (what the model would see on a rebuild).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the conversation history cannot be read, or
-    /// when the refinement plan, apply, or persist fails.
-    pub async fn refine(
-        &self,
-        options: &refine::RefineOptions,
-        source: refine::RefinementSource,
-        model: &pa_types::ai::Model,
-        api_key: Option<String>,
-        global_harness_dir: std::path::PathBuf,
-    ) -> anyhow::Result<crate::refinement::RefinementResult> {
-        self.refine_with_refiner(
-            options,
-            source,
-            model,
-            refine::default_refiner_call(api_key),
-            global_harness_dir,
-        )
-        .await
-    }
-
-    /// [`Self::refine`] with an injected refiner call: the seam the parity
-    /// tests use to drive the refinement without a provider.
-    pub(crate) async fn refine_with_refiner(
-        &self,
-        options: &refine::RefineOptions,
-        source: refine::RefinementSource,
-        model: &pa_types::ai::Model,
-        refine_call: crate::refinement::executor::RefinerFn,
-        global_harness_dir: std::path::PathBuf,
-    ) -> anyhow::Result<crate::refinement::RefinementResult> {
-        // The transcript's consumed artifacts (the message rows plus the
-        // in-session refinement history) are extracted under this first
-        // lock straight from the retained rows: no owned copy of the full
-        // entry set, no second clone of the message rows (#3013).
-        let parts = self.session.lock().await.refine_transcript_parts();
-        let crate::session::manager::RefineTranscriptParts {
-            messages,
-            refinement_history,
-        } = parts.await?;
-        let (result, context_row_ids) = {
-            let mut session = self.session.lock().await;
-            refine::execute_refinement_with_rows(
-                &mut session,
-                refine::RefinementTranscript {
-                    messages: &messages,
-                    refinement_history: &refinement_history,
-                },
-                &global_harness_dir,
-                model,
-                options,
-                source,
-                refine_call,
-            )
-            .await?
-        };
-        // TS `_appendDurableRefineMessage` pushes the outcome row (and the
-        // notice row when any edit applied) onto `agent.state.messages`
-        // after the durable append; TS never rebuilds the whole context
-        // after a refine — the rebuild is the compact/navigate arm, and a
-        // rebuild here would also resurrect a retried turn's dropped
-        // trailing assistant, which TS deliberately keeps out of the live
-        // context. The pushed rows are THIS run's, selected by the ids the
-        // run appended (so interleaved runs can never select each other's
-        // rows), and materialize from the appended durable entries, so they
-        // are byte-identical to a context rebuild's rows for them, while the
-        // live-context update stays O(refine rows) instead of O(session
-        // file) and lands under ONE agent-state lock (TS's synchronous
-        // `agent.state.messages.push`).
-        let rows = {
-            let session = self.session.lock().await;
-            refine::context_rows_by_ids(session.retained_entries(), &context_row_ids)
-        };
-        let loop_rows: Vec<AgentMessage> =
-            rows.iter().filter_map(session_message_to_loop).collect();
-        if !loop_rows.is_empty() {
-            self.agent.append_messages(loop_rows).await;
-        }
-        Ok(result)
     }
 }

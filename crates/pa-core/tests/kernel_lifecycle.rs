@@ -221,20 +221,16 @@ async fn rlm_bootstrap_injects_the_kernel_surface() {
     };
     let manager = started_manager(options).await;
 
-    let result = execute(
-        &manager,
-        "hasattr(rlm, 'harness') and callable(bash) and hasattr(rlm, 'get_harness_state')",
-    )
-    .await;
+    let result = execute(&manager, "callable(bash) and callable(mcp.call_tool)").await;
     assert_eq!(
         result.status,
         ExecuteStatus::Ok,
-        "bootstrap must bind the RLM surface"
+        "bootstrap must bind the kernel surface"
     );
     assert_eq!(
         result.result.as_deref(),
         Some("True"),
-        "rlm/bash/harness must be usable"
+        "bash/mcp must be usable"
     );
 
     manager

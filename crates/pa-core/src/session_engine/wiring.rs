@@ -1,6 +1,6 @@
 use super::{
     auxiliary_model, compaction, compaction_exec, image_model_routing, ipython_state,
-    provider_adapter, refine, telemetry, AgentSession, PromptBatchRow,
+    provider_adapter, telemetry, AgentSession, PromptBatchRow,
 };
 
 impl AgentSession {
@@ -125,16 +125,6 @@ impl AgentSession {
         self.skill_telemetry = Some(telemetry);
     }
 
-    /// Bind the auto-refine surface for this session (the engine wiring
-    /// resolves both once the session is assembled): whether the session
-    /// may auto-refine (TS `_autoRefineAllowedForSession`: depth 0 with a
-    /// local harness state dir) and the resolved gates (TS
-    /// `getAutoRefineSettings`).
-    pub fn set_auto_refine(&mut self, allowed: bool, gates: refine::AutoRefineGates) {
-        self.auto_refine_allowed = allowed;
-        self.auto_refine = gates;
-    }
-
     /// Bind the kernel-state probe behind the post-compaction
     /// `ipython_state` notice (the engine wiring hands over the session's
     /// kernel provisioner, TS `AgentSession._ipythonKernelProvisioner`).
@@ -163,17 +153,6 @@ impl AgentSession {
             .compaction_summary_sink
             .lock()
             .expect("compaction summary sink lock") = Some(sink);
-    }
-
-    /// Whether the session may run auto-refinement (TS
-    /// `_autoRefineAllowedForSession`).
-    pub fn auto_refine_allowed(&self) -> bool {
-        self.auto_refine_allowed
-    }
-
-    /// The resolved auto-refine gates (TS `getAutoRefineSettings`).
-    pub fn auto_refine_gates(&self) -> refine::AutoRefineGates {
-        self.auto_refine
     }
 
     /// Whether automatic compaction is enabled for this session (the TS

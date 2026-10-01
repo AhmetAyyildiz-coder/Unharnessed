@@ -122,11 +122,13 @@ pub struct CompactionSummaryMessage {
     /// User instructions that guided the summary (`/compact <instructions>`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_instructions: Option<String>,
-    /// Harness digest snapshot attached mechanically at compaction.
+    /// Harness digest snapshot written by earlier builds (the removed
+    /// continual harness); carried verbatim so rewriting an older session
+    /// file stays lossless. Never read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness_digest: Option<String>,
-    /// Fingerprint of the harness state behind `harness_digest` at
-    /// compaction time; lets cold boundaries skip re-delivery (TS #2400).
+    /// Fingerprint paired with `harness_digest` by earlier builds; carried
+    /// verbatim like it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness_state_fingerprint: Option<String>,
     /// Unix timestamp in milliseconds.
@@ -202,11 +204,13 @@ pub struct CompactionEntry {
     pub custom_instructions: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
-    /// Harness digest snapshot taken at compaction time.
+    /// Harness digest snapshot written by earlier builds (the removed
+    /// continual harness); carried verbatim so rewriting an older session
+    /// file stays lossless. Never read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness_digest: Option<String>,
-    /// Fingerprint of the harness state behind `harness_digest` at
-    /// compaction time; lets cold boundaries skip re-delivery (TS #2400).
+    /// Fingerprint paired with `harness_digest` by earlier builds; carried
+    /// verbatim like it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness_state_fingerprint: Option<String>,
 }

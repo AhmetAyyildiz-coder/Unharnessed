@@ -11,20 +11,15 @@
 )]
 
 //! Verifier: the turn-boundary host-request contract (`model.info`,
-//! `compact.*`, `refine.*`) over a REAL kernel, driven in-process through
+//! `compact.*`) over a REAL kernel, driven in-process through
 //! `create_session`.
 //!
 //! The scripted faux provider drives one turn whose `ipython` cell calls the
 //! kernel's `rlm.host_request` bridge directly — the exact surface the
-//! installed `refine`/`compact` skill modules use (`rlm.host_request("<type>",
+//! installed `compact` skill module uses (`rlm.host_request("<type>",
 //! {...})`). The cell records the raw handler responses on disk; the test
-//! asserts them against the TS contract, then checks the scheduled refinement
-//! reached the turn-boundary seam the runtime consumes after the turn settles.
+//! asserts them against the TS contract.
 //!
-//! The daemon-level dogfood (a daemon session's boundary consuming a
-//! kernel-scheduled refinement end to end) is the documented follow-up;
-//! this test proves the wire contract with a
-//! real kernel without the daemon turn choreography.
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};
@@ -33,7 +28,6 @@ use pa_agent::scripted::{tool_call_turn_steps, ScriptStep, ScriptedProvider, Scr
 use pa_agent::stream::AssistantMessageEvent;
 use pa_core::session::manager::SessionManager;
 use pa_core::session_engine::engine::{create_session, SessionEngineConfig};
-use pa_core::session_engine::turn_boundary::PendingRefine;
 use pa_core::session_engine::PromptOptions;
 use serde_json::{json, Value};
 
@@ -137,12 +131,11 @@ impl Drop for EnvOverride {
     }
 }
 
-/// The kernel cell: the raw host requests the `refine`/`compact` skill modules
-/// issue, recorded on disk for the verifier (and printed so the tool result
+/// The kernel cell: the raw host requests the `compact` skill module issues, recorded on disk for the verifier (and printed so the tool result
 /// carries the same proof into the session transcript).
 fn harness_cell(receipt_path: &Path) -> String {
     format!(
-        "import json\nfrom rlm import host_request\npayload = {{}}\npayload[\"model_info\"] = await host_request(\"model.info\", {{}})\npayload[\"compact_status\"] = await host_request(\"compact.status\", {{}})\npayload[\"refine_status_before\"] = await host_request(\"refine.status\", {{}})\npayload[\"refine_run\"] = await host_request(\"refine.run\", {{\"instructions\": \"persist the kernel round-trip contract observation\", \"global\": True}})\npayload[\"refine_status_after\"] = await host_request(\"refine.status\", {{}})\npayload[\"compact_run\"] = await host_request(\"compact.run\", {{\"instructions\": \"keep the observation\"}})\nopen({receipt_path:?}, \"w\").write(json.dumps(payload))\nprint(\"HARNESS_CELL_OK\")",
+        "import json\nfrom rlm import host_request\npayload = {{}}\npayload[\"model_info\"] = await host_request(\"model.info\", {{}})\npayload[\"compact_status\"] = await host_request(\"compact.status\", {{}})\npayload[\"compact_run\"] = await host_request(\"compact.run\", {{\"instructions\": \"keep the observation\"}})\nopen({receipt_path:?}, \"w\").write(json.dumps(payload))\nprint(\"HARNESS_CELL_OK\")",
         receipt_path = receipt_path.display().to_string(),
     )
 }
@@ -170,7 +163,7 @@ fn registry_model() -> pa_types::ai::Model {
 
 /// The turn-boundary host requests round-trip through a real kernel: the
 /// registered handlers answer the `rlm.host_request` bridge with the TS
-/// contract shapes, and the scheduled refinement lands on the boundary seam.
+/// contract shapes.
 #[tokio::test]
 async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
     let Some(kernel_python) = kernel_python() else {
@@ -199,8 +192,7 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
         ("PRIME_API_KEY", None),
     ]);
 
-    // A persisted session: the refine handlers register only for depth-0
-    // sessions with a local harness state dir (TS `_autoRefineAllowedForSession`).
+    // A persisted session.
     let mut session = SessionManager::in_memory(&cwd);
     session.materialize_session_file(Some(sessions_dir));
 
@@ -254,7 +246,6 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
         allow_recursion: None,
         session_manager: Some(session),
         extra_host_handlers: None,
-        conversation_log_path: None,
         additional_skill_paths: Vec::new(),
         additional_prompt_paths: Vec::new(),
         extra_builtin_skill_overrides: Vec::new(),
@@ -298,24 +289,6 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
     // The usage anchor (the faux turn's 120 tokens) with nothing trailing it.
     assert_eq!(compact_status["tokens"], 120, "{payload}");
     assert_eq!(compact_status["percent"], 0.06, "{payload}");
-    // refine.status before the run: nothing pending, never in flight.
-    assert_eq!(
-        payload["refine_status_before"],
-        json!({ "pending": false, "in_flight": false }),
-        "{payload}"
-    );
-    // refine.run mid-turn: scheduled with the TS note.
-    assert_eq!(payload["refine_run"]["scheduled"], true, "{payload}");
-    assert_eq!(
-        payload["refine_run"]["note"],
-        "Refinement runs when the current turn ends; applied edits are appended to your context as a refinement notice and you resume automatically. Continue working normally."
-    );
-    // refine.status after the run: pending until the boundary consumes it.
-    assert_eq!(
-        payload["refine_status_after"],
-        json!({ "pending": true, "in_flight": false }),
-        "{payload}"
-    );
     // compact.run on the fresh session: the TS prepare skip reason.
     assert_eq!(payload["compact_run"]["scheduled"], false, "{payload}");
     assert_eq!(
@@ -334,20 +307,6 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
         "no kernel cell output in the session rows"
     );
 
-    // The scheduled refinement reached the turn-boundary seam: the runtime
-    // consumes exactly this request after the settled turn (the daemon
-    // worker's boundary pass; unit-tested at the registry level).
-    assert_eq!(
-        engine.turn_boundary.take_refine().await,
-        Some(PendingRefine {
-            instructions: Some("persist the kernel round-trip contract observation".to_string()),
-            global: true,
-        })
-    );
-    assert!(
-        engine.turn_boundary.take_refine().await.is_none(),
-        "the refinement request must be consumed exactly once"
-    );
     assert!(
         engine.turn_boundary.take_compaction().await.is_none(),
         "the skipped compact.run must not schedule anything"

@@ -10,7 +10,6 @@
 //! notifications interleave exactly in publication order. The process
 //! exits when stdin closes.
 
-mod autorefine;
 mod compaction_arms;
 mod config_options;
 mod events;
@@ -55,11 +54,11 @@ pub struct AcpOptions {
     /// The product version reported in `initialize`.
     pub product_version: String,
     /// The session's resolved model, for session-command executors
-    /// (`/compact`, `/refine`) that run their own provider calls.
+    /// (`/compact`) that run their own provider calls.
     pub model: Option<pa_types::ai::Model>,
     /// Resolved request API key for those executors.
     pub api_key: Option<String>,
-    /// The agent dir: the global harness directory for refinement history.
+    /// The agent dir (auth, settings, model catalog).
     pub agent_dir: PathBuf,
     /// The autonomous runtime configuration from the CLI flags.
     pub autonomous_config: Option<pa_core::autonomous::AgentAutonomousConfig>,
@@ -88,7 +87,7 @@ struct AcpModeState {
     product_version: Arc<String>,
     /// The session's live model (TS `state.model`): the composition's
     /// resolved model at admission, updated by a picker model switch so
-    /// the session-command executors (`/compact`, `/refine`) follow the
+    /// the session-command executors (`/compact`) follow the
     /// switched model, exactly like the TS session's own calls.
     model: Arc<Mutex<Option<pa_types::ai::Model>>>,
     /// The session's live request key: follows a picker model switch's
@@ -98,7 +97,7 @@ struct AcpModeState {
     api_key: Arc<Mutex<Option<String>>>,
     /// The serialized config queue (TS `configTask`): picker switches and
     /// the trigger-consuming arms observe one another through it, so an
-    /// armed refinement never reads the pre-switch model mid-switch.
+    /// arm never reads the pre-switch model mid-switch.
     config_queue: Arc<tokio::sync::Mutex<()>>,
     agent_dir: Arc<PathBuf>,
     provider_target: ProviderTargetSlot,
@@ -248,11 +247,6 @@ async fn teardown(state: &Arc<Mutex<ConnectionState>>, mode: &AcpModeState) {
         subscription.unsubscribe().await;
     }
     let _ = mode.config_queue.lock().await;
-    // The serialized dispose drain (TS `dispose`): a compaction can arm
-    // the compact-trigger review with no further turn to service it —
-    // close runs the round one last time, best-effort, before the
-    // subscription tears down.
-    entry.session.drain_compact_auto_refine_at_close(mode).await;
     entry.session.unsubscribe().await;
     entry.session.close_producer().await;
 }
@@ -570,14 +564,6 @@ async fn handle_session_close(
         subscription.unsubscribe().await;
     }
     let _ = mode.config_queue.lock().await;
-    // The serialized dispose drain (TS `dispose`): a compaction can arm
-    // the compact-trigger review with no further turn to service it —
-    // close runs the round one last time, best-effort, before the
-    // subscription tears down.
-    entry
-        .session
-        .drain_compact_auto_refine_at_close(&mode)
-        .await;
     entry.session.unsubscribe().await;
     // Keep the backing session fenced until a replacement ACP session is
     // admitted.

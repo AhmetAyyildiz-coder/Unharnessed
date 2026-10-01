@@ -24,70 +24,6 @@ The harness often sends messages to the agent. These are user messages starting 
 - `websearch.run(query: str, *, max_output: int = 8192, timeout: int | None, num_results: int | None) -> str`: search the web; the `websearch` module is callable with the same arguments
 - `attach_image(*paths: str) -> str`: loads images directly into context if the agent's model is vision-capable, errors otherwise
 
-## Continual Harness
-
-prime-agent is a continual harness. During a session, persistent memories can be written and read. These stay available even after multiple compactions.
-
-Memories are created by two mechanisms:
-
-- Refinement
-  - Mechanism:
-    - Another model suggests a refinement based on the transcript
-    - The suggested edits are applied to the harness state
-    - The main agent is notified by a structured harness message and the applied edits are saved
-  - Triggered by:
-    - Calling the programmatic tool `refine.run()`
-    - By the user command `/refine`
-  - Effect:
-    - The refinement event is always saved in the harness state's refinement history
-    - A harness message is sent to the agent with the refinement result
-- Active memory management by the agent
-  - `refine.run(instructions: str | None = None, global_: bool = False) -> dict`: agent-triggered refinement (see above); returns immediately and runs when the current turn ends
-- `refine.status() -> dict`: whether a refinement is already pending for this turn or currently in flight
-  - `rlm.harness.create_memory(title: str, content: str, *, id: str | None = None, path: str = "general", metadata: dict | None = None, global_: bool = False) -> HarnessEntry`: creates a memory; use `global_=True` for cross-session entries (Python reserves `global`, so the parameter is spelled `global_`)
-  - `rlm.harness.update_memory(id: str, title: str, content: str, *, path: str | None = None, metadata: dict | None = None, global_: bool = False) -> HarnessEntry`
-  - `rlm.harness.delete_memory(id: str, *, global_: bool = False) -> bool`
-  - `rlm.harness.create_prompt_note(title: str, content: str, *, id: str | None = None, path: str = "policy", metadata: dict | None = None, global_: bool = False) -> HarnessEntry`
-  - `rlm.harness.update_prompt_note(id: str, title: str, content: str, *, path: str | None = None, metadata: dict | None = None, global_: bool = False) -> HarnessEntry`
-  - `rlm.harness.delete_prompt_note(id: str, *, global_: bool = False) -> bool`
-  - `rlm.harness.create_skill(title: str, content: str, *, id: str | None = None, path: str = "general", reference: dict | None = None, arguments: dict | None = None, metadata: dict | None = None, global_: bool = False) -> HarnessEntry`: `reference`/`arguments` describe the Python callable (`reference` requires `{"type": "python"}`, a Python import, and a callable or call pattern)
-  - `rlm.harness.update_skill(id: str, title: str, content: str, *, path: str | None = None, reference: dict | None = None, arguments: dict | None = None, metadata: dict | None = None, global_: bool = False) -> HarnessEntry`
-  - `rlm.harness.delete_skill(id: str, *, global_: bool = False) -> bool`
-  - `rlm.harness.create_subagent(title: str, content: str, *, id: str | None = None, path: str = "general", metadata: dict | None = None, global_: bool = False) -> HarnessEntry`
-  - `rlm.harness.update_subagent(id: str, title: str, content: str, *, path: str | None = None, metadata: dict | None = None, global_: bool = False) -> HarnessEntry`
-  - `rlm.harness.delete_subagent(id: str, *, global_: bool = False) -> bool`
-  - `rlm.harness.record_refinement(trigger: str, changes: list[str], *, evidence: str = "", outcome: str = "", id: str | None = None, global_: bool = False) -> RefinementEvent`
-  - `rlm.harness.plan_refinement(observation: str, *, failing_component: str = "", next_step: str = "") -> list[str]`: a suggested diagnose -> update -> validate plan
-  - `rlm.harness.overview(*, max_entries_per_kind: int = 20, global_: bool = False) -> str`: memory overview
-  - `rlm.harness.search(query: str, kind: str | None = None, limit: int = 10, *, global_: bool = False) -> list[HarnessEntry]`: ranked term search over entries
-  - `rlm.get_harness_state(state_dir: str | Path | None = None, *, global_: bool = False) -> HarnessState`: full memory details for the selected scope. Can read another agent's `HarnessState` by passing the path to it in `state_dir`
-  - `HarnessEntry`
-    - `id: str`
-    - `kind: Literal["prompt", "memory", "skill", "subagent"]`
-    - `title: str`
-    - `content: str`
-    - `path: str`: category path ("general" for memories, "policy" for prompt notes)
-    - `scope: Literal["local", "global"]`
-    - `reference: dict[str, Any]`: for skills
-    - `arguments: dict[str, Any]`: for skills
-    - `metadata: dict`
-    - `source: Literal["agent", "refine"]`
-    - `created_at: str`: ISO timestamp of creation
-    - `updated_at: str`: ISO timestamp of latest update
-    - `version: int`: increments with every update, starting at 1
-  - `HarnessState`
-    - `scope: Literal["global", "local"]`
-    - `file_path: Path`
-    - `entries: dict[kind, dict[id, HarnessEntry]]`
-    - `refinements: list[RefinementEvent]`
-  - `RefinementEvent`
-    - `id: str`
-    - `trigger: str`: what caused the refinement
-    - `changes: list[str]`: applied edits; empty if never edited
-    - `evidence: str`
-    - `outcome: str`
-    - `created_at: str`
-
 ## Compaction
 
 prime-agent compacts automatically when there is only a given number of tokens left in the context window (default: 16384), when the user triggers compaction, or when the agent triggers compaction. REPL state persists across compactions, but compaction removes individual variables whose serialized form exceeds 16 MiB.
@@ -128,4 +64,4 @@ prime-agent has support for programmatic tools that are defined in the MCP forma
 
 prime-agent provides multiple executable skills, described by their SKILL.md and executable code. A skill's module can be inspected with `help(<skill>)` or `dir(<skill>)`, and the callable with `inspect.signature(<skill>.<function>)`, if information is missing. The executable code is always pre-imported in the REPL as a programmatic tool, and a callable skill module can be called directly (`await <skill>(...)`).
 
-All programmatic tools described above except for `bash`, `rlm.*`, and `mcp.*` are implemented as executable skills and will be listed again in the dynamic tail of this prompt. Additional executable and non-executable skills may exist as well; non-executable (markdown) skills are documentation read from disk, and each skill is also available as a shell command by the same name.
+All programmatic tools described above except for `bash` and `mcp.*` are implemented as executable skills and will be listed again in the dynamic tail of this prompt. Additional executable and non-executable skills may exist as well; non-executable (markdown) skills are documentation read from disk, and each skill is also available as a shell command by the same name.

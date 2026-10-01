@@ -1,5 +1,5 @@
 //! The runtime bootstrap code injected into each kernel right after start or
-//! restore: binds the `rlm`, `bash`, and MCP surfaces and pre-imports every
+//! restore: binds the `bash` and MCP surfaces and pre-imports every
 //! Python skill (from `core/tools/ipython.ts`'s `buildRlmBootstrapCode`).
 
 use super::KernelPythonSkill;
@@ -42,29 +42,22 @@ const RLM_BOOTSTRAP_HEADER_CODE: &str =
 const RLM_BOOTSTRAP_RUNTIME_CODE: &str = r#"
 try:
     import rlm as _prime_agent_rlm_module
-    rlm = _prime_agent_rlm_module.rlm
     bash = _prime_agent_rlm_module.bash
     import rlm.mcp as mcp
 except Exception as _prime_agent_rlm_error:
     _PRIME_AGENT_RLM_IMPORT_ERROR = str(_prime_agent_rlm_error)
 
-    class _PrimeAgentMissingRlm:
-        def _raise_missing(self):
-            raise RuntimeError(
-                "prime-agent-runtime is not installed in this kernel. "
-                "Remove ~/.prime/agent/kernel-venv so prime-agent can rebuild it, or set "
-                "PRIME_AGENT_KERNEL_PYTHON to a kernel environment with prime-agent-runtime installed. "
-                f"Import error: {_PRIME_AGENT_RLM_IMPORT_ERROR}"
-            )
-
-    rlm = _PrimeAgentMissingRlm()
-
     def bash(command):
-        rlm._raise_missing()
+        raise RuntimeError(
+            "prime-agent-runtime is not installed in this kernel. "
+            "Remove ~/.prime/agent/kernel-venv so prime-agent can rebuild it, or set "
+            "PRIME_AGENT_KERNEL_PYTHON to a kernel environment with prime-agent-runtime installed. "
+            f"Import error: {_PRIME_AGENT_RLM_IMPORT_ERROR}"
+        )
 "#;
 
 /// The code the session injects right after kernel start/restore: binds the
-/// `rlm`, `bash`, and MCP surfaces, imports every Python skill (wrapping
+/// `bash` and MCP surfaces, imports every Python skill (wrapping
 /// callable ones, replacing broken imports with a stub that raises), and —
 /// when any import failed — ends by printing
 /// [`PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER`] plus the errors as JSON so

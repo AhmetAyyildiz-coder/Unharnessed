@@ -48,7 +48,7 @@ pub use prepare::{compute_cut, prepare_compaction, CompactSkip, CompactionPrepar
 // pattern the summarization bindings above serve for
 // `super::compaction_exec::`).
 #[cfg(test)]
-use super::{compaction, harness_digest, messages, session_message_to_loop};
+use super::{compaction, messages, session_message_to_loop};
 #[cfg(test)]
 mod tests;
 
@@ -68,13 +68,6 @@ pub struct CompactOptions<'a> {
     /// a late abort never lands a committed compaction. `None` for
     /// surfaces without an abort trigger (headless runs).
     pub abort: Option<&'a pa_agent::abort::AbortSignal>,
-    /// Harness digest inputs captured from the live session (TS
-    /// `_harnessDigest`): the snapshot rides the durable row as
-    /// `harnessDigest`. The merged harness-state disk read happens at the
-    /// commit, so state written mid-run is a fresh read. `None` for
-    /// sessions without harness state (verification harnesses building
-    /// the loop directly; the engine always wires one).
-    pub harness_digest: Option<super::harness_digest::HarnessDigestInputs>,
     /// The auxiliary-model routing context (TS #2411): when present, the
     /// summarizer wire calls resolve their model through the
     /// `auxiliaryModel` setting with a context-window fit check, falling
@@ -102,9 +95,6 @@ fn message_from_entry(entry: &FileEntry) -> Option<AgentMessage> {
             _ => Some(message.clone()),
         },
         FileEntry::CustomMessage { payload, .. } => {
-            if payload.custom_type == "harness_digest" {
-                return None;
-            }
             Some(AgentMessage::Custom(pa_types::session::CustomMessage {
                 custom_type: payload.custom_type.clone(),
                 content: payload.content.clone(),
@@ -437,36 +427,9 @@ pub async fn execute_compaction(
         tokens_before,
         usage: summed_usage(&slices),
     };
-    // TS `_performCompaction` passes `this._harnessDigestWithFingerprint()`
-    // into `appendCompaction`: the snapshot plus the fingerprint of the
-    // state behind it are attached mechanically at the commit and never
-    // flow through the summarizer. The harness-state read happens here,
-    // after the summarizer resolved, so harness state written during the
-    // run is a fresh read — one read feeds the digest and its
-    // fingerprint.
-    let (harness_digest, harness_state_fingerprint) = options
-        .harness_digest
-        .as_ref()
-        .map(|inputs| {
-            let render =
-                super::harness_digest::HarnessDigestInputs::render_with_fingerprint(inputs);
-            (Some(render.digest), Some(render.state_fingerprint))
-        })
-        .unwrap_or_default();
-    super::compaction_trace::trace(
-        "compact.digest_rendered",
-        &serde_json::json!({ "digest": harness_digest.is_some() }),
-    );
-    let entry = compaction_entry_for(
-        &result,
-        &details,
-        options.custom_instructions,
-        harness_digest,
-        harness_state_fingerprint,
-    );
+    let entry = compaction_entry_for(&result, &details, options.custom_instructions);
     // TS `appendCompaction` persists the full record: `details`,
-    // `fromHook`, `customInstructions`, `usage`, and the `harnessDigest`
-    // snapshot ride on the durable row alongside the summary, boundary,
+    // `fromHook`, `customInstructions` and `usage` ride on the durable row alongside the summary, boundary,
     // and token count.
     session.append_compaction(entry.clone())?;
     super::compaction_trace::trace(

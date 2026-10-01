@@ -7,7 +7,6 @@
 //! pa-agent Agent owns the loop and its steer/follow-up queues; this layer
 //! decides admission and persists what the loop produces.
 
-pub mod auto_refine_trigger;
 pub mod auto_retry;
 pub mod auxiliary_model;
 pub mod branch_summarization;
@@ -20,7 +19,6 @@ pub mod engine;
 pub mod error_classify;
 pub mod goal_boundary;
 pub mod goal_driver;
-pub mod harness_digest;
 pub mod headless;
 pub mod host_requests;
 pub mod image_model_routing;
@@ -30,7 +28,6 @@ pub mod provider_adapter;
 pub mod provider_failover;
 pub mod provider_park;
 pub mod provider_retry;
-pub mod refine;
 pub mod request_timing;
 pub mod runtime;
 pub mod runtime_wiring;
@@ -75,7 +72,7 @@ pub enum StreamingBehavior {
 pub enum PromptOutcome {
     /// Input admitted to the model loop.
     Prompt,
-    /// Input recognized as a session command (compact/refine/goal/autonomous).
+    /// Input recognized as a session command (compact/goal/autonomous).
     /// Execution is the session engine's job; the caller observes it here.
     SessionCommand(SessionSlashCommand),
 }
@@ -135,12 +132,6 @@ pub struct AgentSession {
     session: Arc<tokio::sync::Mutex<SessionManager>>,
     prompt_templates: Vec<PromptTemplate>,
     slash_commands: SlashCommandRegistry,
-    /// Harness digest inputs; `None` in sessions without harness state
-    /// (verification harnesses building the loop directly).
-    harness_digest: Option<harness_digest::HarnessDigestContext>,
-    /// The first-turn digest rides the turn's admission (fresh sessions defer
-    /// delivery so untouched sessions stay empty, TS `_harnessDigestPending`).
-    digest_pending: std::sync::atomic::AtomicBool,
     /// Compaction settings from the session's settings.json (TS
     /// `_performCompaction` reads `getCompactionSettings()` on every
     /// compaction path, `/compact` included); defaults until the engine
@@ -152,22 +143,6 @@ pub struct AgentSession {
     /// model. `None` keeps every summarizer on the session model
     /// (verification harnesses building the session directly).
     auxiliary_model: Option<auxiliary_model::AuxiliaryModelContext>,
-    /// Whether the session may run auto-refinement at all (TS
-    /// `_autoRefineAllowedForSession`: depth 0 with a local harness state
-    /// dir — the same gate that registers the `refine.*` host requests).
-    /// Defaults off; the engine wiring resolves it once the session is
-    /// assembled.
-    auto_refine_allowed: bool,
-    /// The resolved auto-refine gates (TS `getAutoRefineSettings`); the
-    /// turn-boundary compact trigger reads them.
-    auto_refine: refine::AutoRefineGates,
-    /// The compact-trigger auto-refine machine (TS
-    /// `_compactAutoRefinePending` / `_lastAutoRefineReviewAt` /
-    /// `_assistantTurnsSinceAutoRefine`): the session-side state the
-    /// transport surfaces arm and consume through
-    /// [`AgentSession::mark_compact_auto_refine_pending`] and
-    /// [`AgentSession::consume_compact_auto_refine`].
-    compact_auto_refine: std::sync::Mutex<auto_refine_trigger::CompactAutoRefineState>,
     /// The kernel-state probe behind the post-compaction `ipython_state`
     /// notice (TS `_ipythonKernelProvisioner`): `None` in sessions without
     /// a kernel (verification harnesses) — no notice lands.
@@ -218,7 +193,6 @@ impl AgentSession {
             agent,
             Arc::new(tokio::sync::Mutex::new(session)),
             prompt_templates,
-            None,
         )
         .await
     }
@@ -230,12 +204,10 @@ impl AgentSession {
     ///
     /// Returns an error when subscribing the persistence listener fails or
     /// the initial session context cannot be read.
-    #[allow(clippy::too_many_arguments)]
     pub async fn from_session_arc(
         agent: Arc<Agent>,
         session: Arc<tokio::sync::Mutex<SessionManager>>,
         prompt_templates: Vec<PromptTemplate>,
-        harness_digest: Option<harness_digest::HarnessDigestContext>,
     ) -> anyhow::Result<Self> {
         let persistence = session.clone();
         agent
@@ -252,13 +224,8 @@ impl AgentSession {
             session,
             prompt_templates,
             slash_commands: SlashCommandRegistry::builtin(),
-            harness_digest,
-            digest_pending: std::sync::atomic::AtomicBool::new(false),
             compaction: std::sync::RwLock::new(compaction::CompactionSettings::default()),
             auxiliary_model: None,
-            auto_refine_allowed: false,
-            auto_refine: refine::AutoRefineGates::default(),
-            compact_auto_refine: std::sync::Mutex::default(),
             kernel_state: None,
             pending_next_turn_rows: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             skills: Vec::new(),
@@ -266,7 +233,6 @@ impl AgentSession {
             image_model_router: None,
             compaction_summary_sink: std::sync::Mutex::new(None),
         };
-        this.ensure_harness_digest_context().await?;
         Ok(this)
     }
 

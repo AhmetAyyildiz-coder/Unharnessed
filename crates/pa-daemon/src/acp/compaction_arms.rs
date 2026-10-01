@@ -1,7 +1,7 @@
 //! The automatic compaction arms on the in-process ACP turn path: the TS
 //! `_checkCompaction` boundary (overflow Case 1, the model-requested arm,
-//! and the threshold arm) plus `_runPreTurnCompaction` and
-//! `_consumePendingRequestedRefine`, ported onto the ACP transport.
+//! and the threshold arm) plus `_runPreTurnCompaction`, ported onto the
+//! ACP transport.
 //!
 //! TS ground truth: the arms live inside the `AgentSession` turn loop
 //! (agent-session.ts), so every transport that drives the session —
@@ -61,16 +61,14 @@ pub(super) enum ThresholdGoalQueue {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CompactionCheckRun {
     /// The check finished without a will-retry (no arm fired, or an arm
-    /// consumed the boundary without a retry): the turn loop consumes
-    /// the requested refinement, then applies the turn's own semantics
+    /// consumed the boundary without a retry): the turn loop applies the
+    /// turn's own semantics
     /// (a failed turn ends the run with its error, a settled turn
     /// reaches the autonomous decision).
     Proceed,
     /// The overflow arm compacted and the turn re-issues (TS
     /// `willRetry`: the model turn re-runs on the compacted context
-    /// without a new user message). No refine consumption happens at a
-    /// will-retry boundary (TS skips `_consumePendingRequestedRefine`
-    /// when `compactionWillRetry`).
+    /// without a new user message).
     OverflowRetry,
     /// A requested compaction consumed the boundary and stops the run on
     /// purpose: the model resumes on the next prompt.
@@ -239,44 +237,8 @@ impl AcpSession {
         drop(held);
     }
 
-    /// TS `_consumePendingRequestedRefine`: taken regardless of outcome,
-    /// so a failed run is not silently re-run on the next boundary. The
-    /// outcomes publish like the `/refine` command events.
-    pub(super) async fn consume_requested_refine(&self, mode: &AcpModeState) {
-        // The config queue serializes the round against picker switches
-        // (the review runs on the model the session reports).
-        let _guard = mode.config_queue.lock().await;
-        let Some(model) = mode.current_model().await else {
-            return;
-        };
-        let Some(refinement) = mode
-            .engine
-            .consume_pending_refinement(
-                &model,
-                mode.current_api_key().await,
-                mode.agent_dir.as_path().to_path_buf(),
-            )
-            .await
-        else {
-            return;
-        };
-        match refinement {
-            Ok(result) => {
-                let event = super::autorefine::refine_complete_event(&result);
-                self.publish_engine_event(&event).await;
-            }
-            Err(error) => {
-                self.publish_engine_event(&AcpEngineEvent::RefineFailed {
-                    error: format!("{error:#}"),
-                })
-                .await;
-            }
-        }
-    }
-
-    /// Drop pending turn-boundary requests (an aborted turn never
-    /// services them; TS `_checkCompaction`'s abort arm clears both the
-    /// compaction and the refine request).
+    /// Drop the pending turn-boundary request (an aborted turn never
+    /// services it; TS `_checkCompaction`'s abort arm clears it).
     pub(super) async fn clear_turn_boundary_requests(&self, engine: &SessionEngine) {
         engine.turn_boundary.clear_pending().await;
     }
@@ -384,10 +346,6 @@ impl AcpSession {
                 if let Some(telemetry) = &engine.telemetry {
                     telemetry.note_compaction(Some(run.duration_ms));
                 }
-                // TS `_scheduleAutoRefineAfterCompaction`: the compaction
-                // arms the compact-trigger review; the serialized
-                // checkpoint consumes it (autorefine.rs).
-                engine.session.mark_compact_auto_refine_pending();
                 publish_compaction_end(self, Some(&run.result)).await;
             }
             Ok(CompactOutcome::Skipped(message)) => {
@@ -530,11 +488,6 @@ impl AcpSession {
                 if let Some(telemetry) = &engine.telemetry {
                     telemetry.note_compaction(Some(run.duration_ms));
                 }
-                // TS `_scheduleAutoRefineAfterCompaction`: the compaction
-                // arms the compact-trigger review; the retried turn's
-                // serialized checkpoint consumes it (TS defers behind the
-                // will-retry continuation).
-                engine.session.mark_compact_auto_refine_pending();
                 publish_compaction_end(self, Some(&run.result)).await;
                 // The compaction rebuild re-adds the error turn from the
                 // kept tail: drop it again so the retried request is

@@ -3,7 +3,7 @@
 //! `_retryAfterDelay` / `_finishActiveRetryWithFailure`).
 //!
 //! The one-shot completion helper in [`super::provider_retry`] serves
-//! side questions, compaction, and refinement; this module is the interactive
+//! side questions and compaction; this module is the interactive
 //! counterpart that re-issues the whole failed turn. It owns only the retry
 //! decision and the event surface: the caller drives the actual turn (and
 //! removes the failed assistant message from the loop context before

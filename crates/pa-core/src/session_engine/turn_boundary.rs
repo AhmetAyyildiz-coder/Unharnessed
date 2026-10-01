@@ -1,14 +1,12 @@
-//! The turn-boundary host-request surface: `model.info`, `compact.*`, and
-//! `refine.*` — the kernel-side `refine`/`compact` skill modules reach them
-//! through `rlm.host_request`. Port of the `handleCompactHostRequest` /
-//! `handleRefineHostRequest` / `model.info` handlers of core/agent-session.ts.
+//! The turn-boundary host-request surface: `model.info` and `compact.*` —
+//! the kernel-side `compact` skill module reaches them through
+//! `rlm.host_request`. Port of the `handleCompactHostRequest` / `model.info`
+//! handlers of core/agent-session.ts.
 //!
-//! Like the TS handlers, `compact.run`/`refine.run` only SCHEDULE: a cell runs
-//! inside the active turn, so executing compaction or refinement immediately
-//! would abort the requesting run. The pending request is stored here and
-//! the turn loop consumes it after the turn settles (the TS `_checkCompaction`
-//! / `_consumePendingRequestedRefine` boundary; the daemon's turn loop is the
-//! Rust consumer).
+//! Like the TS handlers, `compact.run` only SCHEDULES: a cell runs inside the
+//! active turn, so compacting immediately would abort the requesting run.
+//! The pending request is stored here and the turn loop consumes it after
+//! the turn settles (the TS `_checkCompaction` boundary).
 
 use std::sync::Arc;
 
@@ -29,13 +27,6 @@ use super::engine::SessionEngine;
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingCompaction {
     pub instructions: Option<String>,
-}
-
-/// A scheduled refinement (kernel `refine.run`).
-#[derive(Debug, Clone, PartialEq)]
-pub struct PendingRefine {
-    pub instructions: Option<String>,
-    pub global: bool,
 }
 
 /// The model facts `model.info` reports (TS answers nulls when the session
@@ -85,7 +76,6 @@ pub struct TurnBoundaryRequests {
     /// every request, so they follow the model the session now runs).
     runtime: std::sync::RwLock<Option<Arc<TurnBoundaryRuntime>>>,
     compaction: Mutex<Option<PendingCompaction>>,
-    refine: Mutex<Option<PendingRefine>>,
 }
 
 impl TurnBoundaryRequests {
@@ -166,30 +156,11 @@ impl TurnBoundaryRequests {
         self.compaction.lock().await.clone()
     }
 
-    /// Take the pending refinement (the turn boundary consumes it once).
-    pub async fn take_refine(&self) -> Option<PendingRefine> {
-        self.refine.lock().await.take()
-    }
-
-    /// Schedule a refinement for the next turn boundary (the `refine.run`
-    /// write path's slot assignment). The caller owns the merge contract
-    /// (an absent field keeps the pending request's value), exactly like
-    /// the host handler does before it stores the merged request.
-    pub async fn schedule_refine(&self, pending: PendingRefine) {
-        *self.refine.lock().await = Some(pending);
-    }
-
-    /// Drop both pending requests (TS `_checkCompaction` abort arm: an
-    /// aborted turn never services them, and a stale request must not leak
+    /// Drop the pending request (TS `_checkCompaction` abort arm: an
+    /// aborted turn never services it, and a stale request must not leak
     /// into the next turn).
     pub async fn clear_pending(&self) {
         *self.compaction.lock().await = None;
-        *self.refine.lock().await = None;
-    }
-
-    /// Whether a refinement is queued (TS `refine.status` `pending`).
-    pub async fn refine_pending(&self) -> bool {
-        self.refine.lock().await.is_some()
     }
 
     /// Register `model.info` (always present, like the TS `_hostHandlers`
@@ -321,96 +292,16 @@ impl TurnBoundaryRequests {
             }),
         );
     }
-
-    /// Register `refine.status`/`refine.run`. Gated by the TS
-    /// `_autoRefineAllowedForSession` equivalent (depth 0 with a local
-    /// harness state dir); `create_session` decides.
-    pub fn register_refine_handlers(self: &Arc<Self>, handlers: &mut HostRequestHandlers) {
-        let requests = Arc::downgrade(self);
-        handlers.register(
-            "refine.status",
-            host_handler(move |_payload| {
-                let requests = requests.clone();
-                Box::pin(async move {
-                    let Some(requests) = requests.upgrade() else {
-                        return Err(anyhow::anyhow!(
-                            "the session ended before the request could be served"
-                        ));
-                    };
-                    let pending = requests.refine_pending().await;
-                    // The Rust turn-boundary consumption runs refinement
-                    // synchronously between turns, so a cell never observes
-                    // it in flight (the TS background-planning path this
-                    // flag covers is not ported).
-                    Ok(json!({ "pending": pending, "in_flight": false }))
-                })
-            }),
-        );
-        let requests = Arc::downgrade(self);
-        handlers.register(
-            "refine.run",
-            host_handler(move |payload| {
-                let requests = requests.clone();
-                Box::pin(async move {
-                    let Some(requests) = requests.upgrade() else {
-                        return Err(anyhow::anyhow!("the session ended before the request could be served"));
-                    };
-                    let instructions = string_field(
-                        &payload.data,
-                        "instructions",
-                        "refine.run instructions must be a string when provided",
-                    )?;
-                    let global = match payload.data.get("global") {
-                        None | Some(Value::Null) => None,
-                        Some(Value::Bool(value)) => Some(*value),
-                        Some(_) => anyhow::bail!(
-                            "refine.run global must be a boolean when provided"
-                        ),
-                    };
-                    let Some(runtime) = requests.bound() else {
-                        return Ok(no_active_turn(
-                            "no active turn; refine can only be requested while a turn is running",
-                        ));
-                    };
-                    let state = runtime.agent.state().await;
-                    if !state.is_streaming {
-                        return Ok(no_active_turn(
-                            "no active turn; refine can only be requested while a turn is running",
-                        ));
-                    }
-                    let mut slot = requests.refine.lock().await;
-                    let merged = match slot.as_ref() {
-                        Some(current) => PendingRefine {
-                            instructions: instructions
-                                .or_else(|| current.instructions.clone()),
-                            global: global.unwrap_or(current.global),
-                        },
-                        None => PendingRefine {
-                            instructions,
-                            global: global.unwrap_or(false),
-                        },
-                    };
-                    *slot = Some(merged);
-                    Ok(json!({
-                        "scheduled": true,
-                        "note": "Refinement runs when the current turn ends; applied edits are appended to your context as a refinement notice and you resume automatically. Continue working normally.",
-                    }))
-                })
-            }),
-        );
-    }
 }
 
-/// One turn-boundary consumption: the outcomes of the pending requests the
+/// One turn-boundary consumption: the outcome of the pending request the
 /// host runtime persists and broadcasts (it owns the wire transport and the
-/// durable session file). `Err` rows are failures surfaced like the TS
-/// failed-compaction / `refine_failed` events.
+/// durable session file). An `Err` is a failure surfaced like the TS
+/// failed-compaction event.
 #[derive(Debug)]
 pub struct TurnBoundaryConsumption {
     /// A consumed compaction request and its `/compact` outcome.
     pub compaction: Option<anyhow::Result<super::compact_session::CompactOutcome>>,
-    /// A consumed refinement request and its run result.
-    pub refinement: Option<anyhow::Result<crate::refinement::RefinementResult>>,
 }
 
 impl SessionEngine {
@@ -438,8 +329,7 @@ impl SessionEngine {
             // An in-flight abort drops the summarizer request (TS cancels
             // the provider stream through the signal); the abort surfaces
             // as the marker error for the consumer to map to its cancelled
-            // outcome. The refinement is not raced — TS `abortCompaction`
-            // never aborts it.
+            // outcome.
             Some(signal) => match pa_agent::abort::race_with_abort(compact, signal).await {
                 Ok(inner) => inner,
                 Err(error) => Err(error),
@@ -448,59 +338,20 @@ impl SessionEngine {
         })
     }
 
-    /// Consume a pending model-requested refinement at a turn boundary (TS
-    /// `_consumePendingRequestedRefine`, which runs after `_checkCompaction`
-    /// returns): taken regardless of outcome, so a failed run is not
-    /// silently re-run on the next boundary.
-    pub async fn consume_pending_refinement(
-        &self,
-        model: &pa_types::ai::Model,
-        api_key: Option<String>,
-        global_harness_dir: std::path::PathBuf,
-    ) -> Option<anyhow::Result<crate::refinement::RefinementResult>> {
-        let pending = self.turn_boundary.take_refine().await?;
-        let options = super::refine::RefineOptions {
-            global: pending.global,
-            instructions: pending.instructions,
-            rollback_id: None,
-        };
-        Some(
-            self.session
-                .refine(
-                    &options,
-                    super::refine::RefinementSource::SelfRefine,
-                    model,
-                    api_key,
-                    global_harness_dir,
-                )
-                .await,
-        )
-    }
-
-    /// Consume pending turn-boundary requests after a settled turn: run the
-    /// requested compaction first, then the refinement. The pieces are also
-    /// exposed separately (`consume_pending_compaction` /
-    /// `consume_pending_refinement`) for hosts that mirror the TS
+    /// Consume pending turn-boundary requests after a settled turn (the
+    /// requested compaction). The piece is also exposed separately
+    /// (`consume_pending_compaction`) for hosts that mirror the TS
     /// `_checkCompaction` sequencing exactly (the overflow arm interleaves
-    /// with the requested arms).
+    /// with the requested arm).
     pub async fn consume_turn_boundary_requests(
         &self,
         model: &pa_types::ai::Model,
         api_key: Option<String>,
-        global_harness_dir: std::path::PathBuf,
         abort: Option<&pa_agent::abort::AbortSignal>,
     ) -> TurnBoundaryConsumption {
-        let mut consumption = TurnBoundaryConsumption {
-            compaction: None,
-            refinement: None,
-        };
-        consumption.compaction = self
-            .consume_pending_compaction(model, api_key.clone(), abort)
-            .await;
-        consumption.refinement = self
-            .consume_pending_refinement(model, api_key, global_harness_dir)
-            .await;
-        consumption
+        TurnBoundaryConsumption {
+            compaction: self.consume_pending_compaction(model, api_key, abort).await,
+        }
     }
 }
 
@@ -515,7 +366,7 @@ fn string_field(data: &Value, key: &str, error: &'static str) -> anyhow::Result<
 }
 
 /// The `{ scheduled: false, reason }` shape the no-active-turn branch
-/// returns (identical for compact.run and refine.run).
+/// returns for compact.run.
 fn no_active_turn(reason: &'static str) -> Value {
     json!({ "scheduled": false, "reason": reason })
 }

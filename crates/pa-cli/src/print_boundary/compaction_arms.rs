@@ -44,7 +44,7 @@ pub(super) enum OverflowOutcome {
     /// context, and the newly settled turn needs the same checks.
     RetryTurn,
     /// The turn is over (a skipped or failed compaction, or the reported
-    /// second overflow): only the requested-refinement consumption follows.
+    /// second overflow).
     Finished,
 }
 
@@ -89,10 +89,6 @@ impl TurnBoundary {
                 if let Some(telemetry) = engine.telemetry.as_ref() {
                     telemetry.note_compaction(Some(run.duration_ms));
                 }
-                // TS `_scheduleAutoRefineAfterCompaction`: every successful
-                // compaction schedules the compact-trigger auto-refine for
-                // the next serialized checkpoint (or the disposal drain).
-                self.compact_auto_refine_pending = true;
                 self.emit_ipython_state_row(&run);
                 self.emit_json(&compaction_end_success_event(
                     CompactionOutcomeReason::Requested.wire(),
@@ -150,11 +146,6 @@ impl TurnBoundary {
                             if let Some(telemetry) = engine.telemetry.as_ref() {
                                 telemetry.note_compaction(Some(run.duration_ms));
                             }
-                            // TS `_scheduleAutoRefineAfterCompaction`: every
-                            // successful compaction schedules the
-                            // compact-trigger auto-refine for the next
-                            // serialized checkpoint (or the disposal drain).
-                            self.compact_auto_refine_pending = true;
                             self.emit_ipython_state_row(&run);
                             self.emit_json(&compaction_end_success_event(
                                 CompactionOutcomeReason::Threshold.wire(),
@@ -292,7 +283,6 @@ impl TurnBoundary {
             .await;
         match outcome {
             Ok(CompactOutcome::Ran(run)) => {
-                self.compact_auto_refine_pending = true;
                 self.emit_ipython_state_row(&run);
                 // Adoption telemetry (TS `compaction_end` handling counts
                 // every completed compaction into the active run).

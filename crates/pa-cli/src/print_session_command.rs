@@ -1,11 +1,10 @@
 //! Print-mode session slash-command execution: the print driver runs
-//! `/compact`, `/refine`, `/goal`, and `/autonomous` prompts through the
+//! `/compact`, `/goal`, and `/autonomous` prompts through the
 //! pa-core session-command executor (the same seam the daemon worker
 //! drives — no parallel implementation) and streams the TS print-json
 //! shapes: the `session_action_update` phase frames around the durable
 //! echo row, the per-command events (`compaction_start`/`compaction_end`,
-//! the refinement rows plus `refine_complete`/`refine_failed`, the
-//! `goal_update` publish, the `autonomous_status` row), the result rows,
+//! the `goal_update` publish, the `autonomous_status` row), the result rows,
 //! and the settled queue frame.
 //!
 //! TS ground truth (probed against the installed binary over the shared
@@ -107,7 +106,6 @@ pub(crate) async fn execute_prompt_session_command(
     goal: &Arc<PrintGoalSurface>,
     model: &Model,
     api_key: Option<String>,
-    global_harness_dir: std::path::PathBuf,
     autonomous: &Arc<tokio::sync::Mutex<AutonomousRuntimeState>>,
     command: &SessionSlashCommand,
 ) -> SessionCommandExecution {
@@ -126,15 +124,11 @@ pub(crate) async fn execute_prompt_session_command(
         }
         goal.emit_stream_event(&event);
     }
-    // The refinement rows the executor's refine run appends (streamed in
-    // TS emission order ahead of the `refine_complete` event).
-    let entries_before = engine.session.entries().await.len();
     let execution = {
         let mut autonomous = autonomous.lock().await;
         let mut params = SessionCommandParams {
             model,
             api_key,
-            global_harness_dir,
             autonomous: &mut autonomous,
         };
         execute_session_command(engine, &mut params, command).await
@@ -166,23 +160,6 @@ pub(crate) async fn execute_prompt_session_command(
             )
         };
         goal.emit_stream_event(&end);
-    }
-    // `/refine`: the durable refinement rows stream as message pairs, then
-    // `refine_complete` (or `refine_failed`), before the result row.
-    if command.name == "refine" {
-        for row in
-            crate::print_boundary::TurnBoundary::refinement_rows_since(engine, entries_before).await
-        {
-            goal.emit_row_pair(&row);
-        }
-        if let Some(error) = &execution.refinement_failed {
-            goal.emit_stream_event(&json!({ "type": "refine_failed", "error": error }));
-        } else if let Some(result) = &execution.refinement {
-            goal.emit_stream_event(&json!({
-                "type": "refine_complete",
-                "result": serde_json::to_value(result).unwrap_or(Value::Null),
-            }));
-        }
     }
     // `/goal`: the state change publishes unconditionally (TS
     // `_emitGoalUpdate` in the goal command arms), before the queue frame
@@ -281,8 +258,6 @@ mod tests {
                         )
                     }
                 }
-                "refine_complete" => "refine_complete".to_string(),
-                "refine_failed" => "refine_failed".to_string(),
                 other => other.to_string(),
             })
             .collect()
@@ -314,7 +289,6 @@ mod tests {
         goal: Arc<PrintGoalSurface>,
         autonomous: Arc<tokio::sync::Mutex<AutonomousRuntimeState>>,
         frames: Frames,
-        harness_dir: std::path::PathBuf,
         /// Keeps the composed hook's autonomous arm alive for the bed's
         /// lifetime (the hook holds it weakly).
         _run: Arc<crate::headless_autonomous::HeadlessAutonomous>,
@@ -368,7 +342,6 @@ mod tests {
                     allow_recursion: None,
                     session_manager: Some(session_manager),
                     extra_host_handlers: None,
-                    conversation_log_path: None,
                     additional_skill_paths: Vec::new(),
                     additional_prompt_paths: Vec::new(),
                     extra_builtin_skill_overrides: Vec::new(),
@@ -407,7 +380,6 @@ mod tests {
             goal,
             autonomous,
             frames,
-            harness_dir: dir.path().join("harness"),
             _run: run,
             _dir: dir,
         }
@@ -425,7 +397,6 @@ mod tests {
             &bed.goal,
             &bed.model,
             None,
-            bed.harness_dir.clone(),
             &bed.autonomous,
             &command(text),
         )
@@ -441,7 +412,6 @@ mod tests {
                     &mut boundary,
                     &bed.model,
                     None,
-                    bed.harness_dir.clone(),
                     &continuation,
                 )
                 .await
@@ -449,13 +419,7 @@ mod tests {
         }
         let mut boundary = TurnBoundary::new(false);
         bed.goal
-            .drive_boundary(
-                &bed.engine,
-                &mut boundary,
-                &bed.model,
-                None,
-                bed.harness_dir.clone(),
-            )
+            .drive_boundary(&bed.engine, &mut boundary, &bed.model, None)
             .await
             .unwrap();
         None

@@ -85,15 +85,6 @@ pub enum AcpEngineEvent {
         token_budget: Option<u64>,
         tokens_used: Option<u64>,
     },
-    /// A continual-harness refinement completed.
-    RefineComplete {
-        summary: String,
-        changes: Vec<String>,
-    },
-    /// A continual-harness refinement failed.
-    RefineFailed {
-        error: String,
-    },
     /// The session's heartbeat/cron schedule changed (connection-scoped).
     /// No in-process producer yet; mapping locked by tests.
     #[allow(dead_code)]
@@ -192,28 +183,6 @@ pub fn acp_updates_for_event(
                     objective: objective.clone(),
                     token_budget: *token_budget,
                     tokens_used: *tokens_used,
-                }),
-                ..Default::default()
-            })]
-        }
-        AcpEngineEvent::RefineComplete { summary, changes } => {
-            vec![session_info_update(&PrimeAgentSessionMeta {
-                refinement: Some(super::meta::PrimeAgentRefinementMeta {
-                    status: "complete".to_string(),
-                    summary: Some(summary.clone()),
-                    changes: Some(changes.clone()),
-                    error: None,
-                }),
-                ..Default::default()
-            })]
-        }
-        AcpEngineEvent::RefineFailed { error } => {
-            vec![session_info_update(&PrimeAgentSessionMeta {
-                refinement: Some(super::meta::PrimeAgentRefinementMeta {
-                    status: "failed".to_string(),
-                    summary: None,
-                    changes: None,
-                    error: Some(error.clone()),
                 }),
                 ..Default::default()
             })]
@@ -565,32 +534,6 @@ mod tests {
         assert_eq!(
             meta["goal"],
             json!({ "status": "active", "objective": "ship it", "tokenBudget": 1000, "tokensUsed": 42 })
-        );
-    }
-
-    #[test]
-    fn refinement_outcomes_map_to_namespaced_meta() {
-        let mut state = MappingState::default();
-        let updates = acp_updates_for_event(
-            &AcpEngineEvent::RefineComplete {
-                summary: "applied 2 edits".into(),
-                changes: vec!["create memory:x".into(), "update skill:y".into()],
-            },
-            &mut state,
-        );
-        assert_eq!(
-            meta_of(&updates[0].to_bare_value())["refinement"],
-            json!({ "status": "complete", "summary": "applied 2 edits", "changes": ["create memory:x", "update skill:y"] })
-        );
-        let updates = acp_updates_for_event(
-            &AcpEngineEvent::RefineFailed {
-                error: "boom".into(),
-            },
-            &mut state,
-        );
-        assert_eq!(
-            meta_of(&updates[0].to_bare_value())["refinement"],
-            json!({ "status": "failed", "error": "boom" })
         );
     }
 

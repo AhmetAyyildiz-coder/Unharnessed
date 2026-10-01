@@ -144,7 +144,7 @@ pub type ProviderTargetSlot = std::sync::Arc<std::sync::RwLock<Option<ProviderTa
 
 /// The assembled headless engine plus the model and request auth it runs
 /// on, so host transports can drive session-command executors
-/// (compact/refine) with the session's own model.
+/// (compact) with the session's own model.
 struct HeadlessEngine {
     engine: pa_core::session_engine::engine::SessionEngine,
     model: Model,
@@ -330,7 +330,6 @@ async fn build_headless_engine_with(
             allow_recursion: None,
             session_manager,
             extra_host_handlers: None,
-            conversation_log_path: None,
             additional_skill_paths: config
                 .skills
                 .iter()
@@ -926,7 +925,7 @@ fn builtin_tools(_cwd: &std::path::Path) -> Vec<Arc<dyn pa_agent::types::AgentTo
 /// Admit prompts, stream json events when requested, and decide the exit code
 /// from the headless terminal result plus the autonomous gate contract.
 /// Shared by the real and faux paths. The turn-boundary compaction checks
-/// (the overflow compact-and-retry arm, the requested compaction/refinement
+/// (the overflow compact-and-retry arm, the requested compaction
 /// consumption, and the threshold arm) run through
 /// [`crate::print_boundary::TurnBoundary`] at every prompt's quiescent
 /// boundaries. The autonomous continuation loop rides the agent's
@@ -994,8 +993,6 @@ async fn run_prompts_and_emit(
         &goal,
         &autonomous,
     );
-    let global_harness_dir =
-        pa_core::refinement::get_global_harness_state_dir(&options.config.agent_dir);
     let mut boundary = crate::print_boundary::TurnBoundary::new(json_mode);
     // The autonomous runtime state the session-command executor mutates —
     // the run's own shared state (the session always carries one, TS
@@ -1023,7 +1020,6 @@ async fn run_prompts_and_emit(
                 &goal,
                 model,
                 api_key.clone(),
-                global_harness_dir.clone(),
                 &autonomous_state,
                 &command,
             )
@@ -1041,21 +1037,14 @@ async fn run_prompts_and_emit(
                     &mut boundary,
                     model,
                     api_key.clone(),
-                    global_harness_dir.clone(),
                     &continuation,
                 )
                 .await?;
             }
             // The same queue drain a settled turn gets: held continuations
             // and armed steers run as this prompt's follow-up turns.
-            goal.drive_boundary(
-                engine,
-                &mut boundary,
-                model,
-                api_key.clone(),
-                global_harness_dir.clone(),
-            )
-            .await?;
+            goal.drive_boundary(engine, &mut boundary, model, api_key.clone())
+                .await?;
             continue;
         }
         // The pre-turn boundary (TS `_runPreTurnCompaction`, the full
@@ -1079,11 +1068,11 @@ async fn run_prompts_and_emit(
         engine.session.agent().wait_for_idle().await;
         // The settled-turn boundary (TS `agent_end`): the overflow
         // compact-and-retry arm, the turn-boundary requests the kernel
-        // scheduled mid-turn (`compact.run` / `refine.run`), and the
+        // scheduled mid-turn (`compact.run`), and the
         // threshold arm. The outcomes persist in the session entries the
         // terminal result reads.
         boundary
-            .run_at_settled_turn(engine, model, api_key.clone(), global_harness_dir.clone())
+            .run_at_settled_turn(engine, model, api_key.clone())
             .await?;
         // The goal boundary's queue drain: the threshold-held continuation
         // (minted ahead of the boundary's compaction) and the budget-limit
@@ -1094,13 +1083,7 @@ async fn run_prompts_and_emit(
         // `_finishGoalForTerminalAssistantMessage` at `agent_end`, after
         // `_checkCompaction`).
         let goal_owns_boundary = goal
-            .drive_boundary(
-                engine,
-                &mut boundary,
-                model,
-                api_key.clone(),
-                global_harness_dir.clone(),
-            )
+            .drive_boundary(engine, &mut boundary, model, api_key.clone())
             .await?;
         // The autonomous arm runs only when the goal does not own the
         // boundary (TS `_getContinuationMessages`: the goal arm takes
@@ -1113,13 +1096,7 @@ async fn run_prompts_and_emit(
             // only through the headless exit contract (TS: no row, no
             // stream frame).
             autonomous
-                .drive_boundary(
-                    engine,
-                    &mut boundary,
-                    model,
-                    api_key.clone(),
-                    global_harness_dir.clone(),
-                )
+                .drive_boundary(engine, &mut boundary, model, api_key.clone())
                 .await
                 .map_err(|error| format!("{error:#}"))?;
         }
@@ -1130,13 +1107,10 @@ async fn run_prompts_and_emit(
         subscription.unsubscribe().await;
     }
     // The rejected prompt wait (TS print-mode's catch): print the raw
-    // command error to stderr and exit 1 — no later prompts ran, the
-    // terminal selection is skipped, and the disposal drain still runs.
+    // command error to stderr and exit 1 — no later prompts ran and the
+    // terminal selection is skipped.
     if let Some(error) = command_failure {
         eprintln!("{error}");
-        boundary
-            .drain_compact_auto_refine_at_disposal(engine, model, api_key, global_harness_dir)
-            .await;
         return Ok(1);
     }
     let state = engine.session.agent().state().await;
@@ -1176,16 +1150,6 @@ async fn run_prompts_and_emit(
         eprintln!("{stderr}");
         exit_code = 1;
     }
-    // The TS disposal order: print mode returns its exit code first, then
-    // the connection teardown disposes the session — which drains a
-    // compact-trigger auto-refine that no later boundary consumed (TS
-    // `dispose`: "a serialized compaction can finish without another model
-    // turn"). The event subscription is already gone at this point, so the
-    // round's surface stays off the stream; the durable rows and the
-    // harness state persist.
-    boundary
-        .drain_compact_auto_refine_at_disposal(engine, model, api_key, global_harness_dir)
-        .await;
     Ok(exit_code)
 }
 
@@ -1327,7 +1291,6 @@ async fn build_faux_engine_with(
             allow_recursion: None,
             session_manager,
             extra_host_handlers: None,
-            conversation_log_path: None,
             additional_skill_paths: vec![],
             additional_prompt_paths: vec![],
             extra_builtin_skill_overrides: vec![],
