@@ -88,7 +88,6 @@ fn print_resume_refuses_a_foreign_lease_holder() {
     // reads as another Rust build, never the TypeScript product and never
     // an unnamed process.
     // The exact actionable refusal: the classified headline, the
-    // continue path with the `--daemon-socket` attach shape, the
     // take-over `kill` of this test process's pid with the holder-image
     // annotation (the pid-reuse guard: the refusal names what the kill
     // would hit, here this test binary), and the session footer (the
@@ -101,15 +100,10 @@ fn print_resume_refuses_a_foreign_lease_holder() {
     let expected = format!(
         concat!(
             "Error: This session is currently open in another Rust build of Prime Agent ",
-            "(active in foreign01ab3c) — another daemon or window of this product holds the file's ",
-            "runtime lease.\n",
+            "(active in foreign01ab3c) — another process of this product holds the file's runtime ",
+            "lease.\n",
             "\n",
-            "• Continue where you left off:\n",
-            "  prime-agent --daemon-socket <socket> --resume 'foreign01ab3c'\n",
-            "  (<socket> is that instance's daemon socket, from the shell where you started ",
-            "it — that daemon owns this session)\n",
-            "\n",
-            "• Take over on this daemon:\n",
+            "• Take over:\n",
             "  kill {} # the holder is {}\n",
             "  Then retry — the file unlocks when the holder exits.\n",
             "\n",

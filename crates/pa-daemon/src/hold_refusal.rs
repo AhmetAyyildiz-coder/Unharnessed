@@ -1,27 +1,22 @@
-//! The session-hold refusal: what a create or open answers when a live
-//! process this daemon does not host holds the session file's runtime lease.
+//! The session-hold refusal: what an open answers when another live
+//! process holds the session file's runtime lease.
 //!
 //! The TS and Rust products share one session store (`~/.prime/agent`,
-//! the sessions dir and its `session-leases` table) but never share a
-//! daemon, so the holder of a refused file is, in the everyday case, the
-//! *other* product: a session open in the TypeScript version refuses to
-//! open in this one (and vice versa). The refusal names the holder's
-//! product by resolving its pid to the process image and classifying the
-//! executable - best-effort by design, the same contract as the liveness
-//! probes: an unresolvable holder stays anonymous rather than a wrong
-//! claim - and it is actionable (operator-directed): the two paths out
-//! carry copy-pasteable commands, never a bare description - continue in
-//! the holder's product (the exact `--resume` command for it), or take the
-//! session over on this daemon (`kill` the holder, then retry). The daemon
-//! logs every refused create (the supervisor's rotating log), so a
-//! silent-looking failure still leaves a clear record.
+//! the sessions dir and its `session-leases` table), so the holder of a
+//! refused file is often the *other* product, or another process of this
+//! one. The refusal names the holder's product by resolving its pid to the
+//! process image and classifying the executable - best-effort by design,
+//! the same contract as the liveness probes: an unresolvable holder stays
+//! anonymous rather than a wrong claim - and it is actionable: the paths
+//! out carry copy-pasteable commands (continue in the TypeScript product
+//! with its exact `--resume` command, or `kill` the holder and retry).
 
 use std::path::Path;
 
 /// The live holder of a refused session file, as the lease record names
 /// it: the process identity (pid) and, when the holder recorded one, its
-/// active session id. Both the daemon's typed lease rejection and the
-/// CLI's read-only lease probe reduce to this shape before rendering.
+/// active session id. The open path's typed lease rejection reduces to this
+/// shape before rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HoldIdentity {
     pub pid: Option<u32>,
@@ -52,7 +47,7 @@ impl HoldIdentity {
 /// executable cannot be resolved or does not match a known shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HolderFlavor {
-    /// This Rust build (another window or daemon of the same binary, an
+    /// This Rust build (another process of the same binary, an
     /// install under the `prime-agent` keyword's share dir or the
     /// pre-takeover `prime-agent-rust` dir, or a cargo dev build).
     ThisBuild,
@@ -258,15 +253,10 @@ fn shell_quote(value: &str) -> String {
 }
 
 /// The take-over option: kill the holder and retry. With a resolved pid
-/// the `kill` is the surgical command; without one the state-root sweep
-/// (`shutdown --force`, which stops every daemon it discovers) is the
-/// honest fallback. The sweep binary is the flavor's own product.
-fn take_over_lines(
-    hold: &HoldIdentity,
-    sweep_binary: &str,
-    holder_exe: Option<&Path>,
-) -> Vec<String> {
-    let mut lines = vec!["• Take over on this daemon:".to_string()];
+/// the `kill` is the surgical command; without one the refusal can only
+/// point at the holding process.
+fn take_over_lines(hold: &HoldIdentity, holder_exe: Option<&Path>) -> Vec<String> {
+    let mut lines = vec!["• Take over:".to_string()];
     if let Some(pid) = hold.pid {
         // The kill line names what would be killed when the resolved
         // image is known: a stale pid could belong to a reused pid by
@@ -290,8 +280,7 @@ fn take_over_lines(
         lines.push(kill);
         lines.push("  Then retry — the file unlocks when the holder exits.".to_string());
     } else {
-        lines.push(format!("  {sweep_binary} shutdown --force"));
-        lines.push("  Then retry — it stops every daemon in the state root.".to_string());
+        lines.push("  Stop the process that holds it, then retry.".to_string());
     }
     lines
 }
@@ -307,15 +296,12 @@ fn session_footer(hold: &HoldIdentity, session_path: Option<&Path>) -> String {
 }
 
 /// The refusal text for a classified holder: what happened (the
-/// classified headline), then the paths out with copy-pasteable commands
-/// (operator-directed): continue in the holder's product, or take the
-/// session over on this daemon. The TypeScript product owns the session
-/// it holds, so its continue option is the TS `--resume` command — the
-/// one product that daemon serves; this-build holders point at the other
-/// daemon's socket (the `--daemon-socket` flag connects to it), and an
-/// anonymous holder claims nothing. Split from [`refusal_message`] so the
-/// exact wording stays testable against a synthetic classification, not a
-/// live foreign process.
+/// classified headline), then the paths out with copy-pasteable commands:
+/// a TypeScript-product holder gets its continue option (the TS
+/// `--resume` command, since that product owns the session it holds),
+/// and every holder gets the take-over option. Split from
+/// [`refusal_message`] so the exact wording stays testable against a
+/// synthetic classification, not a live foreign process.
 pub fn refusal_for_flavor(
     flavor: HolderFlavor,
     hold: &HoldIdentity,
@@ -373,45 +359,24 @@ the same daemon, so this build cannot open the file while that process holds it.
                 }
             }
             lines.push(String::new());
-            lines.extend(take_over_lines(hold, "prime-agent", holder_exe));
+            lines.extend(take_over_lines(hold, holder_exe));
         }
         HolderFlavor::ThisBuild => {
             lines.push(format!(
                 "This session is currently open in another Rust build of Prime Agent \
-(active in {holder_id}) — another daemon or window of this product holds the file's \
-runtime lease."
+(active in {holder_id}) — another process of this product holds the file's runtime \
+lease."
             ));
             lines.push(String::new());
-            lines.push("• Continue where you left off:".to_string());
-            if let Some(id) = id {
-                lines.push(format!(
-                    "  prime-agent --daemon-socket <socket> --resume {}",
-                    shell_quote(&single_line(id))
-                ));
-                lines.push(
-                    "  (<socket> is that instance's daemon socket, from the shell where \
-you started it — that daemon owns this session)"
-                        .to_string(),
-                );
-            } else {
-                lines.push("  prime-agent --resume".to_string());
-                lines.push(
-                    "  (switch to the window or shell where that instance is running — its \
-daemon owns this session)"
-                        .to_string(),
-                );
-            }
-            lines.push(String::new());
-            lines.extend(take_over_lines(hold, "prime-agent", holder_exe));
+            lines.extend(take_over_lines(hold, holder_exe));
         }
         HolderFlavor::AnotherProcess => {
             lines.push(format!(
                 "This session is currently open in another process \
-(active in {holder_id}) — a live process this daemon does not host holds the file's \
-runtime lease."
+(active in {holder_id}) — another live process holds the file's runtime lease."
             ));
             lines.push(String::new());
-            lines.extend(take_over_lines(hold, "prime-agent", holder_exe));
+            lines.extend(take_over_lines(hold, holder_exe));
         }
     }
     lines.push(String::new());
@@ -427,7 +392,7 @@ mod tests {
     /// the classified headline, the two actionable paths (continue with
     /// the EXACT holder binary — the `prime-agent` keyword is the Rust
     /// port's after the takeover, so the TS path names the live process
-    /// image; take over on this daemon with the exact kill), and the
+    /// image; take over with the exact kill), and the
     /// session footer. No third "open a different session" option: the
     /// user is already in the picker (operator-directed, 2026-09-24).
     #[test]
@@ -452,7 +417,7 @@ the same daemon, so this build cannot open the file while that process holds it.
   '/home/k/.local/share/prime-agent-legacy/releases/9.9.9/prime-agent' --resume 'ts01ab'
   (that TypeScript binary holds the lease — its daemon owns this session)
 
-• Take over on this daemon:
+• Take over:
   kill 4242 # the holder is prime-agent
   Then retry — the file unlocks when the holder exits.
 
@@ -550,11 +515,9 @@ Session: ts01ab";
         );
     }
 
-    /// The this-build refusal carries the `--daemon-socket` attach shape
-    /// (the exact flag a client uses to reach another daemon) and the
-    /// rust sweep binary; an anonymous holder gets the take-over path
-    /// only — no product is claimed for a process the classifier cannot
-    /// name.
+    /// The this-build refusal carries the take-over path and the session
+    /// footer; an anonymous holder gets the take-over path only — no
+    /// product is claimed for a process the classifier cannot name.
     #[test]
     fn the_thisbuild_and_anonymous_refusals_stay_actionable() {
         let hold = HoldIdentity {
@@ -562,10 +525,6 @@ Session: ts01ab";
             active_session_id: Some("rs01cd".to_string()),
         };
         let message = refusal_for_flavor(HolderFlavor::ThisBuild, &hold, None, None);
-        assert!(
-            message.contains("prime-agent --daemon-socket <socket> --resume 'rs01cd'"),
-            "the attach command names the flag and the session: {message}"
-        );
         assert!(
             message.contains("  kill 4300"),
             "the take-over names the holder pid: {message}"
@@ -585,8 +544,8 @@ Session: ts01ab";
             "the anonymous holder id renders: {message}"
         );
         assert!(
-            message.contains("prime-agent shutdown --force"),
-            "without a pid the sweep command is the take-over path: {message}"
+            message.contains("Stop the process that holds it, then retry."),
+            "without a pid the take-over points at the holder: {message}"
         );
     }
 
