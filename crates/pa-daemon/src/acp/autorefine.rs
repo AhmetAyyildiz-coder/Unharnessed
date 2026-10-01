@@ -142,7 +142,7 @@ impl AcpSession {
 #[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
-    use crate::agent_engine::FAUX_TEST_LOCK;
+    use crate::FAUX_TEST_LOCK;
 
     /// The faux model's per-request output budget (maxTokens `16_384` under the
     /// `32_000` request cap): threshold fixtures subtract it from the window

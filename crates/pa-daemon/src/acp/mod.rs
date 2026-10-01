@@ -13,7 +13,6 @@
 mod autorefine;
 mod compaction_arms;
 mod config_options;
-pub mod daemon;
 mod events;
 mod goal_continuation;
 mod in_process_config;
@@ -24,8 +23,6 @@ mod producer;
 mod prompt;
 mod session;
 mod types;
-mod wire_config;
-mod wire_events;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

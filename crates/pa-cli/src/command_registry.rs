@@ -107,13 +107,12 @@ const TOP_LEVEL_OPTION_GROUPS: &[OptionGroup] = &[
         options: &[
             ("-p, --print", "Print a response and exit"),
             (
-                "--mode <text|json|rpc|acp|daemon>",
+                "--mode <text|json|acp>",
                 "Select the output mode (default: text)",
             ),
             ("--cwd <dir>", "Use a specific working directory"),
             ("--offline", "Disable startup network operations"),
             ("--verbose", "Force verbose startup"),
-            ("--daemon-socket <path>", "Use a specific daemon socket"),
         ],
     },
     OptionGroup {

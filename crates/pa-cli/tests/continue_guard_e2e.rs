@@ -54,7 +54,6 @@ fn print_resume_refuses_a_foreign_lease_holder() {
     let agent_dir = dir.path().join("agent");
     let sessions = agent_dir.join("sessions");
     std::fs::create_dir_all(&sessions).expect("sessions dir");
-    let socket = dir.path().join("daemon.sock");
     let env = vec![
         ("HOME".to_string(), dir.path().to_string_lossy().to_string()),
         (
@@ -122,8 +121,6 @@ fn print_resume_refuses_a_foreign_lease_holder() {
     let (stdout, stderr, code) = run_print(
         &[
             "-p",
-            "--daemon-socket",
-            &socket.to_string_lossy(),
             "--resume",
             &session_path.to_string_lossy(),
             "resume me",
@@ -142,8 +139,6 @@ fn print_resume_refuses_a_foreign_lease_holder() {
     let (_stdout, stderr, code) = run_print(
         &[
             "-p",
-            "--daemon-socket",
-            &socket.to_string_lossy(),
             "--resume",
             &session_path.to_string_lossy(),
             "resume me now",

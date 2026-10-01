@@ -1042,13 +1042,9 @@ name = "pa-daemon"
 version = "0.9.8"
 dependencies = [
  "anyhow",
- "filetime",
- "futures",
  "pa-agent",
  "pa-ai",
  "pa-core",
- "pa-models",
- "pa-telemetry",
  "pa-types",
  "serde",
  "serde_json",
@@ -1056,8 +1052,6 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
- "tokio-util",
- "url",
  "uuid",
 ]
 

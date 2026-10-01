@@ -206,34 +206,6 @@ pub fn autonomous_meta(
     }
 }
 
-/// Map a finished turn onto an ACP stop reason (TS `acpStopReason` in
-/// acp-stop-reason.ts: autonomous quality gates deliberately never surface
-/// as a stop reason; token exhaustion is the one natively-expressed limit).
-pub fn acp_stop_reason_for_status(
-    cancelled: bool,
-    status: Option<&pa_core::autonomous::AgentAutonomousStatus>,
-) -> super::types::AcpStopReason {
-    use pa_core::autonomous::{autonomous_limit_reason_of_status, AutonomousLimitReason};
-    if cancelled {
-        return super::types::AcpStopReason::Cancelled;
-    }
-    let Some(status) = status else {
-        return super::types::AcpStopReason::EndTurn;
-    };
-    if !status.enabled {
-        return super::types::AcpStopReason::EndTurn;
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or_default();
-    match autonomous_limit_reason_of_status(status, now) {
-        Some(AutonomousLimitReason::MaxTokens) => super::types::AcpStopReason::MaxTokens,
-        Some(_) => super::types::AcpStopReason::MaxTurnRequests,
-        None => super::types::AcpStopReason::EndTurn,
-    }
-}
-
 /// Wrap a prime-agent payload in its reverse-domain `_meta` envelope.
 pub fn prime_agent_meta(payload: &PrimeAgentSessionMeta) -> Value {
     json!({ PRIME_AGENT_META_NAMESPACE: payload })

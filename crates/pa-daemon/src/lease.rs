@@ -46,17 +46,6 @@ pub struct SessionAlreadyActiveError {
 }
 
 impl SessionAlreadyActiveError {
-    /// The typed wire info for the refusal (`session_already_active`, the
-    /// TS `serializeDaemonError` shape): the raw fields a client renders
-    /// or acts on itself, carried beside the user-facing refusal text.
-    #[must_use]
-    pub fn error_info(&self) -> pa_types::daemon::DaemonErrorInfo {
-        pa_types::daemon::DaemonErrorInfo::SessionAlreadyActive {
-            session_path: self.session_path.clone(),
-            active_session_id: self.active_session_id.clone(),
-        }
-    }
-
     fn for_owner(session_path: &str, owner: Option<&LeaseOwner>) -> Self {
         SessionAlreadyActiveError {
             session_path: session_path.to_string(),
@@ -357,11 +346,6 @@ impl SessionLease {
             return;
         }
         let _ = pa_core::session::window::flush_cache(&self.opened_path);
-        // The usage-scan sidecar persists beside the window snapshot, in
-        // the same lease-keyed, best-effort shape: only the lease holder
-        // writes, and a failed write costs the next open its warm resume,
-        // nothing more.
-        crate::session_store::persist_info_sidecar(&self.opened_path);
         let _ = with_lease_guard(&self.directory, GuardWait::Fast, || {
             if let Ok(Some(owner)) = read_owner(&self.directory) {
                 if owner.token == self.token {
@@ -376,41 +360,6 @@ impl SessionLease {
 impl Drop for SessionLease {
     fn drop(&mut self) {
         self.release();
-    }
-}
-
-impl SessionLease {
-    pub(crate) fn acquire_target(&self, path: &Path) -> Result<std::sync::Arc<Self>> {
-        let agent_dir = self
-            .directory
-            .parent()
-            .and_then(Path::parent)
-            .expect("lease directory has agent root");
-        acquire_runtime_session_lease(path, agent_dir).map(std::sync::Arc::new)
-    }
-
-    pub(crate) fn append(&self, path: &Path, bytes: &[u8]) -> Result<()> {
-        anyhow::ensure!(
-            !self.released.load(std::sync::atomic::Ordering::SeqCst)
-                && canonical_session_path(path) == self.session_path,
-            "session lease does not own append target"
-        );
-        with_lease_guard(&self.directory, GuardWait::Fast, || {
-            let owner = read_owner(&self.directory)?;
-            anyhow::ensure!(
-                owner
-                    .as_ref()
-                    .is_some_and(|owner| owner.token == self.token)
-                    && !self.released.load(std::sync::atomic::Ordering::SeqCst),
-                "session lease lost ownership before append"
-            );
-            pa_core::session::window::append_cached(
-                path,
-                bytes,
-                pa_core::session::window::AppendOwnership::SessionLeaseHeld,
-            )?;
-            Ok(())
-        })
     }
 }
 
@@ -594,61 +543,6 @@ mod tests {
     }
 
     #[test]
-    fn final_owner_token_check_allows_exactly_one_racing_writer() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("session.jsonl");
-        std::fs::write(&path, "{}\n").unwrap();
-        let stale = acquire_runtime_session_lease(&path, dir.path()).unwrap();
-        let directory = stale.directory.clone();
-        let replacement = LeaseOwner {
-            version: 1,
-            token: "replacement".to_owned(),
-            pid: std::process::id(),
-            process_start_id: get_process_start_id(std::process::id()),
-            active_session_id: None,
-            session_path: canonical_session_path(&path).to_string_lossy().to_string(),
-            created_at: crate::util::now_iso(),
-        };
-        std::fs::write(
-            directory.join("owner.json"),
-            serde_json::to_string_pretty(&replacement).unwrap() + "\n",
-        )
-        .unwrap();
-        let winner = SessionLease {
-            session_path: canonical_session_path(&path),
-            opened_path: path.clone(),
-            directory,
-            token: replacement.token,
-            released: std::sync::atomic::AtomicBool::new(false),
-        };
-        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
-        let path_a = path.clone();
-        let path_b = path.clone();
-        let barrier_a = barrier.clone();
-        let barrier_b = barrier.clone();
-        let stale = std::sync::Arc::new(stale);
-        let winner = std::sync::Arc::new(winner);
-        let stale_task = {
-            let stale = stale;
-            std::thread::spawn(move || {
-                barrier_a.wait();
-                stale.append(&path_a, b"stale\n")
-            })
-        };
-        let winner_task = {
-            let winner = winner;
-            std::thread::spawn(move || {
-                barrier_b.wait();
-                winner.append(&path_b, b"winner\n")
-            })
-        };
-        barrier.wait();
-        let results = [stale_task.join().unwrap(), winner_task.join().unwrap()];
-        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "{}\nwinner\n");
-    }
-
-    #[test]
     fn lease_conflicts_and_releases() {
         let dir = std::env::temp_dir().join(format!("pa-lease-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -815,34 +709,6 @@ mod tests {
         );
         std::fs::remove_file(&guard).unwrap();
         let _ = fs::remove_dir_all(&directory);
-    }
-
-    /// The append path keeps the fast budget: a fresh foreign guard
-    /// fails the append promptly instead of stalling the turn for the
-    /// whole stale window.
-    #[test]
-    fn append_fails_fast_behind_a_fresh_guard() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("session.jsonl");
-        std::fs::write(&path, "{}\n").unwrap();
-        let lease = acquire_runtime_session_lease(&path, dir.path()).unwrap();
-        let guard = format!("{}.guard", lease.directory.display());
-        std::fs::create_dir(&guard).unwrap();
-        let started = std::time::Instant::now();
-        let error = lease.append(&path, b"blocked\n").unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("Could not coordinate session lease"),
-            "unexpected append error: {error}"
-        );
-        assert!(
-            started.elapsed() < STALE_GUARD_AFTER,
-            "append waited out the stale window: {:?}",
-            started.elapsed()
-        );
-        std::fs::remove_dir(&guard).unwrap();
-        lease.release();
     }
 
     #[test]

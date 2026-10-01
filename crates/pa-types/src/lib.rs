@@ -14,7 +14,6 @@
 //! original parsed JSON.
 
 pub mod ai;
-pub mod daemon;
 pub mod goal;
 pub mod memory_release;
 pub mod platform;

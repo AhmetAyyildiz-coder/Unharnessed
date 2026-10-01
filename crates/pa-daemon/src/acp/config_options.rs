@@ -79,24 +79,6 @@ impl PickerModel {
             reasoning: model.reasoning,
         }
     }
-
-    /// Parse the `get_connection_state` `model` metadata (the daemon
-    /// engine's `{ id, name, provider, reasoning }`).
-    pub fn from_connection_state(value: &Value) -> Option<PickerModel> {
-        Some(PickerModel {
-            id: value.get("id")?.as_str()?.to_string(),
-            name: value
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            provider: value.get("provider")?.as_str()?.to_string(),
-            reasoning: value
-                .get("reasoning")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        })
-    }
 }
 
 /// The opaque model value the picker hands to clients: the serialized
@@ -246,7 +228,6 @@ pub type ProviderTargetSlot =
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn model(provider: &str, id: &str, name: &str, reasoning: bool) -> Model {
         Model {
@@ -376,17 +357,6 @@ mod tests {
         assert_eq!(options[0].options[0].name, "Live Name (faux)");
         // Non-reasoning current model: no effort option.
         assert_eq!(options.len(), 1);
-    }
-
-    #[test]
-    fn connection_state_metadata_parses() {
-        let parsed = PickerModel::from_connection_state(&json!({
-            "id": "faux-1", "name": "Faux Model", "provider": "faux", "reasoning": true
-        }))
-        .expect("metadata parses");
-        assert_eq!(parsed.id, "faux-1");
-        assert!(parsed.reasoning);
-        assert!(PickerModel::from_connection_state(&json!({ "id": "x" })).is_none());
     }
 
     #[test]

@@ -37,7 +37,6 @@ pub(crate) mod client_auth;
 pub(crate) mod codex_subscription_login;
 pub(crate) mod command_registry;
 pub(crate) mod config;
-pub(crate) mod daemon_mode;
 pub(crate) mod file_processor;
 pub(crate) mod fuzzy;
 pub(crate) mod global_flags;
@@ -149,25 +148,8 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         return session_export::run(&parsed, &crate::config::get_agent_dir());
     }
 
-    if matches!(
-        parsed.mode,
-        Some(args::Mode::Rpc | args::Mode::Daemon | args::Mode::Acp)
-    ) && !parsed.file_args.is_empty()
-    {
-        return Err("@file arguments are not supported in RPC, daemon, or ACP mode".to_string());
-    }
-
-    // Daemon worker processes start with the worker role env var set (TS
-    // `isDaemonWorkerProcess`, scoped to daemon-mode argv, checked after the
-    // shared mode validations): route straight into the worker runtime. The
-    // supervisor launches workers as `prime-agent worker`.
-    let is_worker_process =
-        std::env::var(pa_daemon::worker::WORKER_ROLE_ENV).unwrap_or_default() == "1";
-    if is_worker_process
-        && (args.first().map(String::as_str) == Some("worker")
-            || args.windows(2).any(|pair| pair == ["--mode", "daemon"]))
-    {
-        return run_worker_mode();
+    if parsed.mode == Some(args::Mode::Acp) && !parsed.file_args.is_empty() {
+        return Err("@file arguments are not supported in ACP mode".to_string());
     }
 
     if let Some(fork) = &parsed.fork {
@@ -229,9 +211,9 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
 
     let mut cli_messages = parsed.messages.clone();
     // TS main's startup branches read piped stdin for every mode but the
-    // stdio-protocol ones (rpc/acp/daemon keep stdin for the transport),
+    // stdio-protocol one (acp keeps stdin for the transport),
     // with the idle window so an open, silent pipe cannot hang the boot.
-    let stdin_content = if matches!(app_mode, AppMode::Rpc | AppMode::Acp | AppMode::Daemon) {
+    let stdin_content = if app_mode == AppMode::Acp {
         None
     } else {
         piped_stdin::read_piped_stdin(piped_stdin::resolve_stdin_idle_timeout_ms(
@@ -289,7 +271,6 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         initial_message,
         initial_images,
         file_args: parsed.file_args.clone(),
-        daemon_socket: parsed.daemon_socket.clone(),
         list_models: parsed.list_models,
         verbose: parsed.verbose,
         offline: parsed.offline,
@@ -317,19 +298,6 @@ fn run_runtime_bootstrap() -> Result<i32, String> {
             println!("kernel python: {}", python.display());
             Ok(0)
         }
-        Err(error) => Err(format!("{error:#}")),
-    }
-}
-
-/// Run the daemon session-worker runtime (the process the supervisor spawns
-/// for each live session).
-fn run_worker_mode() -> Result<i32, String> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| error.to_string())?;
-    match runtime.block_on(pa_daemon::worker::run_worker()) {
-        Ok(()) => Ok(0),
         Err(error) => Err(format!("{error:#}")),
     }
 }

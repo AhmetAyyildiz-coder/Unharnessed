@@ -40,9 +40,7 @@ pub const INTERNAL_RUNTIME_COMMAND_MARKER: &str = "\0prime-agent-runtime-command
 pub enum Mode {
     Text,
     Json,
-    Rpc,
     Acp,
-    Daemon,
 }
 
 impl Mode {
@@ -50,9 +48,7 @@ impl Mode {
         match value {
             "text" => Some(Mode::Text),
             "json" => Some(Mode::Json),
-            "rpc" => Some(Mode::Rpc),
             "acp" => Some(Mode::Acp),
-            "daemon" => Some(Mode::Daemon),
             _ => None,
         }
     }
@@ -61,9 +57,7 @@ impl Mode {
         match self {
             Mode::Text => "text",
             Mode::Json => "json",
-            Mode::Rpc => "rpc",
             Mode::Acp => "acp",
-            Mode::Daemon => "daemon",
         }
     }
 }
@@ -153,7 +147,6 @@ pub struct Args {
     pub help: bool,
     pub version: bool,
     pub mode: Option<Mode>,
-    pub daemon_socket: Option<String>,
     pub no_session: bool,
     pub fork: Option<String>,
     pub session_dir: Option<String>,
@@ -277,12 +270,9 @@ pub fn parse_args(args: &[String]) -> Args {
                     result.mode = Some(mode);
                 } else {
                     result.diagnostics.push(Diagnostic::error(format!(
-                        "Invalid --mode \"{mode}\". Valid values: text, json, rpc, acp, daemon"
+                        "Invalid --mode \"{mode}\". Valid values: text, json, acp"
                     )));
                 }
-            }
-            "--daemon-socket" => {
-                result.daemon_socket = Some(require_value!(arg));
             }
             "--continue" | "-c" => result.continue_ = true,
             "--resume" | "-r" => match args.get(i + 1) {

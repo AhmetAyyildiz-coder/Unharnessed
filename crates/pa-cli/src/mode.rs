@@ -13,9 +13,7 @@ pub enum AppMode {
     Interactive,
     Print,
     Json,
-    Rpc,
     Acp,
-    Daemon,
 }
 
 impl AppMode {
@@ -24,8 +22,6 @@ impl AppMode {
     #[must_use]
     pub fn resolve(parsed: &Args, stdin_is_tty: bool) -> AppMode {
         match parsed.mode {
-            Some(Mode::Daemon) => AppMode::Daemon,
-            Some(Mode::Rpc) => AppMode::Rpc,
             Some(Mode::Acp) => AppMode::Acp,
             Some(Mode::Json) => AppMode::Json,
             _ => {
@@ -44,9 +40,7 @@ impl AppMode {
             AppMode::Interactive => "interactive",
             AppMode::Print => "print",
             AppMode::Json => "json",
-            AppMode::Rpc => "rpc",
             AppMode::Acp => "acp",
-            AppMode::Daemon => "daemon",
         }
     }
 
@@ -128,7 +122,6 @@ pub struct RunOptions {
     pub session: SessionOptions,
     pub messages: Vec<String>,
     pub file_args: Vec<String>,
-    pub daemon_socket: Option<String>,
     pub list_models: Option<Option<String>>,
     /// The combined first prompt (stdin + @file text + first message).
     pub initial_message: Option<String>,
@@ -275,10 +268,10 @@ pub fn runtime_config_from_args(
         no_themes: parsed.no_themes,
         no_context_files: parsed.no_context_files,
         autonomous: AutonomousConfig::from_args(parsed),
-        execution_mode: (app_mode != AppMode::Daemon).then_some(app_mode),
+        execution_mode: Some(app_mode),
         telemetry_disabled,
-        // Serialized refine is only used by print/json/rpc clients.
-        serialized_refine: !matches!(app_mode, AppMode::Interactive | AppMode::Daemon),
+        // Serialized refine is only used by print/json clients.
+        serialized_refine: app_mode != AppMode::Interactive,
         initial_goal: parsed.goal.as_ref().map(|objective| InitialGoal {
             objective: objective.clone(),
             token_budget: parsed.goal_token_budget,

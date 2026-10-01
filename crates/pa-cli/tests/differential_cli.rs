@@ -92,8 +92,6 @@ const CORPUS: &[&[&str]] = &[
     &["--fork", "x", "--no-session"],
     &["--resume"],
     &["--resume="],
-    &["--mode", "rpc", "@file.txt"],
-    &["--mode", "daemon", "@file.txt"],
     &[
         "--cwd",
         "/nonexistent-differential-test-dir",

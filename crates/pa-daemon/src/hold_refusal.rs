@@ -16,8 +16,6 @@
 //! logs every refused create (the supervisor's rotating log), so a
 //! silent-looking failure still leaves a clear record.
 
-use crate::lease::SessionAlreadyActiveError;
-use crate::protocol::{response_failure, DaemonResponse};
 use std::path::Path;
 
 /// The live holder of a refused session file, as the lease record names
@@ -31,15 +29,6 @@ pub struct HoldIdentity {
 }
 
 impl HoldIdentity {
-    /// From the typed lease rejection (the create/open failure the
-    /// worker raises against a live foreign owner).
-    fn from_error(error: &SessionAlreadyActiveError) -> Self {
-        Self {
-            pid: error.holder_pid,
-            active_session_id: error.active_session_id.clone(),
-        }
-    }
-
     /// The holder identity the refusal names: the holder's active session
     /// id when it recorded one, else the pid, else the anonymous fallback.
     fn holder_id(&self) -> String {
@@ -430,29 +419,9 @@ runtime lease."
     lines.join("\n")
 }
 
-/// The create response for a create the runtime lease refused: the typed
-/// rejection answers with the user-facing refusal and its wire info
-/// (`session_already_active`, the TS `serializeDaemonError` shape); any
-/// other create failure keeps its raw error text.
-pub(crate) fn create_failure_response(error: &anyhow::Error) -> DaemonResponse {
-    match error.downcast_ref::<SessionAlreadyActiveError>() {
-        Some(active) => response_failure(
-            None,
-            "create",
-            &refusal_message(
-                &HoldIdentity::from_error(active),
-                Some(Path::new(&active.session_path)),
-            ),
-            Some(active.error_info()),
-        ),
-        None => response_failure(None, "create", &error.to_string(), None),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pa_types::daemon::DaemonErrorInfo;
 
     /// The full message for a TypeScript-product holder, byte-for-byte:
     /// the classified headline, the two actionable paths (continue with
@@ -822,37 +791,5 @@ Session: ts01ab";
         // The own-exe equality wins even under the prime-agent substring.
         let dev = Path::new("/w/repo/target/debug/prime-agent");
         assert_eq!(classify_from(Some(dev), Some(dev)), HolderFlavor::ThisBuild);
-    }
-
-    /// The typed create response carries the refusal and the wire info;
-    /// untyped failures keep their raw text.
-    #[test]
-    fn the_create_failure_response_splits_typed_and_untyped() {
-        let hold = SessionAlreadyActiveError {
-            session_path: "/tmp/s.jsonl".to_string(),
-            active_session_id: Some("ts01ab".to_string()),
-            owner: "ts01ab".to_string(),
-            holder_pid: Some(4242),
-        };
-        let response = create_failure_response(&hold.into());
-        assert!(!response.success);
-        assert_eq!(response.command, "create");
-        assert_eq!(
-            response.error_info,
-            Some(DaemonErrorInfo::SessionAlreadyActive {
-                session_path: "/tmp/s.jsonl".to_string(),
-                active_session_id: Some("ts01ab".to_string()),
-            })
-        );
-        let message = response.error.expect("refusal text");
-        assert!(
-            message.starts_with("This session is currently open"),
-            "{message}"
-        );
-
-        let raw = anyhow::anyhow!("corrupt session file");
-        let response = create_failure_response(&raw);
-        assert_eq!(response.error.as_deref(), Some("corrupt session file"));
-        assert_eq!(response.error_info, None);
     }
 }
