@@ -312,7 +312,15 @@ async fn print_mode_main(options: &RunOptions) -> Result<i32, String> {
             .await
             .map_err(|error| format!("{error:#}"))?;
     }
-    run_prompts_and_emit(&engine, &headless.model, headless.api_key.clone(), options).await
+    let outcome =
+        run_prompts_and_emit(&engine, &headless.model, headless.api_key.clone(), options).await;
+    // The final namespace snapshot (TS session dispose): the debounced
+    // flush cannot outlive this process, so a persisted session flushes
+    // here for the next `-c`/`-r` run to revive.
+    if !options.session.no_session {
+        engine.dispose_kernel().await;
+    }
+    outcome
 }
 
 /// Assemble the in-process session engine for a headless run: model

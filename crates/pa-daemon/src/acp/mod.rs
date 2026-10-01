@@ -220,6 +220,9 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
     // Exit when the client disconnects: stop the resident work, release the
     // subscription, fence the producer, and let the writer drain.
     teardown(&state, &mode).await;
+    // The final namespace snapshot (TS session dispose): the next process
+    // that resumes this session revives it.
+    mode.engine.dispose_kernel().await;
     drop(tx);
     let _ = writer.await;
     Ok(0)
@@ -583,6 +586,10 @@ async fn handle_session_close(
     // admitted.
     entry.session.close_producer().await;
     mcp::release_session_servers(&mode).await;
+    // Flush the namespace snapshot and release the kernel, revivable: a
+    // replacement session on this connection boots a fresh kernel that
+    // revives it, and so does a later process resuming the session.
+    mode.engine.stop_kernel_snapshot().await;
     let _ = tx.send(jsonrpc::response(&id, &json!({})));
     let mut state = state.lock().await;
     state.session_close_in_flight = false;

@@ -74,6 +74,19 @@ else
     echo "FAIL  kernel variable survives resume (see $OUT/state_get.out)"; FAILED=1
 fi
 
+# 4b. The same through print runs only: `-p` sets it, `-p -c` reads it.
+mkdir -p "$WORK/print-resume"
+run print_set -p --session-dir "$OUT/sessions" --cwd "$WORK/print-resume" --model "$MODEL" \
+    "Run exactly this in your ipython tool: smoke_print_var = 'print-' + str(6*7). Then reply OK."
+run print_get -p -c --session-dir "$OUT/sessions" --cwd "$WORK/print-resume" --model "$MODEL" \
+    "Without redefining it, print the existing Python variable smoke_print_var with your ipython tool and reply with its value."
+rc=$?
+if [ $rc -eq 0 ] && grep -q 'print-42' "$OUT/print_get.out" && ! grep -qi 'not defined\|not persist' "$OUT/print_get.out"; then
+    echo "PASS  kernel variable survives a print resume"
+else
+    echo "FAIL  kernel variable survives a print resume (see $OUT/print_get.out)"; FAILED=1
+fi
+
 # 5. ACP: the initialize handshake answers.
 echo '$ prime-agent --mode acp  <<< initialize' > "$OUT/acp.out"
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}' \
