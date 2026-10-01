@@ -15,12 +15,12 @@ use std::pin::Pin;
 
 use anyhow::{anyhow, Context, Result};
 
+use crate::auth_panel::{PastePromptTone, PasteStyle};
+use crate::client_auth::{AuthFuture, ClientAuthCommands};
 use pa_core::auth::{AuthCredential, AuthStorage};
 use pa_core::mcp::{
     McpLoginUi, McpManager, McpManagerOptions, McpServerConfig, OAuthHttp, ReqwestOAuthHttp,
 };
-use pa_tui::auth_panel::{PastePromptTone, PasteStyle};
-use pa_tui::client_auth::{AuthFuture, ClientAuthCommands};
 
 /// The CLI's live MCP manager: the shared auth store, settings-declared
 /// user servers (`mcpServers`), and local service-catalog sources
@@ -121,7 +121,7 @@ impl TerminalMcpAuth {
     async fn login_inner(
         &self,
         server: &str,
-        panel: pa_tui::auth_panel::AuthPanelHandle,
+        panel: crate::auth_panel::AuthPanelHandle,
     ) -> Result<String> {
         let ui = PanelMcpLoginUi { panel };
         self.login_with(server, &ui, &ReqwestOAuthHttp::new()).await
@@ -134,7 +134,7 @@ impl TerminalMcpAuth {
     async fn paste_inner(
         &self,
         server: &str,
-        panel: pa_tui::auth_panel::AuthPanelHandle,
+        panel: crate::auth_panel::AuthPanelHandle,
     ) -> Result<String> {
         let manager = self.manager();
         let service = manager
@@ -180,7 +180,7 @@ impl TerminalMcpAuth {
     async fn api_key_inner(
         &self,
         credential: &str,
-        panel: pa_tui::auth_panel::AuthPanelHandle,
+        panel: crate::auth_panel::AuthPanelHandle,
     ) -> Result<String> {
         let label = pa_core::mcp::API_KEY_CREDENTIALS
             .iter()
@@ -229,17 +229,17 @@ impl TerminalMcpAuth {
 }
 
 impl ClientAuthCommands for TerminalMcpAuth {
-    fn login(&self, server: &str, panel: pa_tui::auth_panel::AuthPanelHandle) -> AuthFuture {
+    fn login(&self, server: &str, panel: crate::auth_panel::AuthPanelHandle) -> AuthFuture {
         let (auth, server) = (self.clone(), server.to_string());
         Box::pin(async move { auth.login_inner(&server, panel).await })
     }
 
-    fn paste_token(&self, server: &str, panel: pa_tui::auth_panel::AuthPanelHandle) -> AuthFuture {
+    fn paste_token(&self, server: &str, panel: crate::auth_panel::AuthPanelHandle) -> AuthFuture {
         let (auth, server) = (self.clone(), server.to_string());
         Box::pin(async move { auth.paste_inner(&server, panel).await })
     }
 
-    fn api_key(&self, credential: &str, panel: pa_tui::auth_panel::AuthPanelHandle) -> AuthFuture {
+    fn api_key(&self, credential: &str, panel: crate::auth_panel::AuthPanelHandle) -> AuthFuture {
         let (auth, credential) = (self.clone(), credential.to_string());
         Box::pin(async move { auth.api_key_inner(&credential, panel).await })
     }
@@ -256,7 +256,7 @@ impl ClientAuthCommands for TerminalMcpAuth {
 /// fallbacks drive the auth panel through the request channel; the flow
 /// never touches the terminal.
 struct PanelMcpLoginUi {
-    panel: pa_tui::auth_panel::AuthPanelHandle,
+    panel: crate::auth_panel::AuthPanelHandle,
 }
 
 impl McpLoginUi for PanelMcpLoginUi {
@@ -516,7 +516,7 @@ mod tests {
 
         // The flow prompts (masked) for the key, then stores it.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let panel = pa_tui::auth_panel::AuthPanelHandle::new(tx);
+        let panel = crate::auth_panel::AuthPanelHandle::new(tx);
         let flow = tokio::spawn({
             let hook = hook.clone();
             let panel = panel.clone();
@@ -526,8 +526,7 @@ mod tests {
             .await
             .expect("the paste request sends")
             .expect("the channel stays open");
-        let pa_tui::auth_panel::AuthPanelRequest::PastePrompt { prompt, reply, .. } = request
-        else {
+        let crate::auth_panel::AuthPanelRequest::PastePrompt { prompt, reply, .. } = request else {
             panic!("expected the paste request")
         };
         assert_eq!(prompt, "Paste the API key for Serper (web search):");
@@ -557,7 +556,7 @@ mod tests {
 
         // A cancelled prompt answers the cancel (the stored key stays).
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let panel = pa_tui::auth_panel::AuthPanelHandle::new(tx);
+        let panel = crate::auth_panel::AuthPanelHandle::new(tx);
         let flow = tokio::spawn({
             let hook = hook.clone();
             let panel = panel.clone();
@@ -567,7 +566,7 @@ mod tests {
             .await
             .expect("the paste request sends")
             .expect("the channel stays open");
-        let pa_tui::auth_panel::AuthPanelRequest::PastePrompt { reply, .. } = request else {
+        let crate::auth_panel::AuthPanelRequest::PastePrompt { reply, .. } = request else {
             panic!("expected the paste request")
         };
         reply.send(None).expect("the cancel lands");

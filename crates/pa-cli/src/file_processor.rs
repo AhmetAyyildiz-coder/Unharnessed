@@ -55,7 +55,7 @@ pub fn process_file_arguments(
         if metadata.len() == 0 {
             continue;
         }
-        match pa_tui::image_load::load_image_from_path(&absolute_path) {
+        match crate::image_load::load_image_from_path(&absolute_path) {
             // An image: attach the payload (the same sniff the paste path
             // uses), with the auto-resize setting gating the size limit.
             Ok(Some(image)) => {

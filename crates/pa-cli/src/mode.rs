@@ -138,8 +138,6 @@ pub struct RunOptions {
     pub initial_images: Vec<pa_agent::types::ImageContent>,
     pub verbose: bool,
     pub offline: bool,
-    pub agents_view_requested: bool,
-    pub attach_agent: Option<String>,
 }
 
 /// A missing runtime subsystem, reported as a typed error instead of faked

@@ -20,12 +20,12 @@ use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 
+use crate::auth_panel::{AuthPanelHandle, PastePromptTone, PasteStyle};
+use crate::provider_auth::ProviderAuthOutcome;
 use pa_ai::oauth::{
     login_openai_codex, CodexHttp, CodexLoginUi, DEFAULT_ORIGINATOR, LOGIN_CANCELLED,
 };
 use pa_core::auth::{AuthCredential, AuthStorage, OPENAI_CODEX_PROVIDER_ID};
-use pa_tui::auth_panel::{AuthPanelHandle, PastePromptTone, PasteStyle};
-use pa_tui::provider_auth::ProviderAuthOutcome;
 
 /// The inline auth panel as the codex login's surface (TS the login
 /// dialog): the browser URL block (the flow opens the browser; the panel
@@ -404,8 +404,7 @@ mod tests {
         // The url block sends immediately (a plain request, not a
         // future).
         let url_request = rx.recv().await.expect("the url block sends");
-        let pa_tui::auth_panel::AuthPanelRequest::AuthUrl { url, instructions } = url_request
-        else {
+        let crate::auth_panel::AuthPanelRequest::AuthUrl { url, instructions } = url_request else {
             panic!("expected the url block request")
         };
         assert_eq!(url, "https://auth.example/authorize");
@@ -424,7 +423,7 @@ mod tests {
             .await
             .expect("the paste request sends once polled")
             .expect("the channel stays open");
-        let pa_tui::auth_panel::AuthPanelRequest::PastePrompt { prompt, .. } = paste_request else {
+        let crate::auth_panel::AuthPanelRequest::PastePrompt { prompt, .. } = paste_request else {
             panic!("expected the paste request")
         };
         assert_eq!(
@@ -441,8 +440,7 @@ mod tests {
             .await
             .expect("the prompt request sends once polled")
             .expect("the channel stays open");
-        let pa_tui::auth_panel::AuthPanelRequest::PastePrompt { prompt, .. } = prompt_request
-        else {
+        let crate::auth_panel::AuthPanelRequest::PastePrompt { prompt, .. } = prompt_request else {
             panic!("expected the prompt request")
         };
         assert_eq!(

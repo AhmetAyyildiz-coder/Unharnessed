@@ -17,14 +17,14 @@ use std::pin::{pin, Pin};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::auth_panel::{PastePromptTone, PasteStyle, PrimeTeamOption, PrimeTeamPick};
+use crate::provider_auth::ProviderAuthOutcome;
 use pa_core::auth::{
     check_prime_inference_access, fetch_prime_teams, login_prime_inference, AuthStorage,
     PrimeAccessError, PrimeAuthInfo, PrimeHttp, PrimeInferenceAuthConfig,
     PrimeInferenceLoginCallbacks, PrimeInferenceLoginOptions, PrimeInferenceLoginResult,
     PrimeTeamAssignment, PrimeTeamCredential, StoredPrimeTeam, DEFAULT_REQUEST_TIMEOUT_MS,
 };
-use pa_tui::auth_panel::{PastePromptTone, PasteStyle, PrimeTeamOption, PrimeTeamPick};
-use pa_tui::provider_auth::ProviderAuthOutcome;
 
 /// The result of the team selection (TS `PrimeTeamSelectorComponent`'s
 /// `onSelect`/`onCancel`).
@@ -371,11 +371,11 @@ fn default_team_status(auth: &AuthStorage, prime_team_id: Option<&str>) -> Strin
 /// the auth panel through the request channel (the TUI loop answers the
 /// prompts and the picker); the flow never touches the terminal.
 pub(crate) struct PanelPrimeLoginUi {
-    panel: pa_tui::auth_panel::AuthPanelHandle,
+    panel: crate::auth_panel::AuthPanelHandle,
 }
 
 impl PanelPrimeLoginUi {
-    pub(crate) fn new(panel: pa_tui::auth_panel::AuthPanelHandle) -> Self {
+    pub(crate) fn new(panel: crate::auth_panel::AuthPanelHandle) -> Self {
         PanelPrimeLoginUi { panel }
     }
 }

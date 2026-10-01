@@ -18,6 +18,8 @@ use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 
+use crate::auth_panel::{AuthPanelHandle, PastePromptTone, PasteStyle};
+use crate::provider_auth::ProviderAuthOutcome;
 use pa_ai::oauth::{
     login_anthropic, login_github_copilot, login_xai, OAuthLoginUi, OAuthPrompt, ProviderHttp,
     ANTHROPIC_LOGIN_CANCELLED, COPILOT_LOGIN_CANCELLED, XAI_LOGIN_CANCELLED,
@@ -25,8 +27,6 @@ use pa_ai::oauth::{
 use pa_core::auth::{
     AuthCredential, AuthStorage, ANTHROPIC_PROVIDER_ID, GITHUB_COPILOT_PROVIDER_ID, XAI_PROVIDER_ID,
 };
-use pa_tui::auth_panel::{AuthPanelHandle, PastePromptTone, PasteStyle};
-use pa_tui::provider_auth::ProviderAuthOutcome;
 
 /// TS the login dialog's manual-input prompt (the callback-server
 /// providers' paste line).
@@ -671,7 +671,7 @@ mod tests {
         );
         let url_request = rx.recv().await.expect("the url block sends");
         match url_request {
-            pa_tui::auth_panel::AuthPanelRequest::AuthUrl { url, instructions } => {
+            crate::auth_panel::AuthPanelRequest::AuthUrl { url, instructions } => {
                 assert_eq!(url, "https://github.com/login/device");
                 assert_eq!(instructions.as_deref(), Some("Enter code: ABCD-1234"));
             }
@@ -681,7 +681,7 @@ mod tests {
         // method, on every surface — never the `onProgress` chatter arm.
         let waiting = rx.recv().await.expect("the waiting line sends");
         match waiting {
-            pa_tui::auth_panel::AuthPanelRequest::Waiting { message } => {
+            crate::auth_panel::AuthPanelRequest::Waiting { message } => {
                 assert_eq!(message, "Waiting for browser authentication...");
             }
             _ => panic!("expected the waiting line request"),
@@ -705,7 +705,7 @@ mod tests {
         .expect("the prompt request sends once polled");
         match prompt_request {
             // TS `showPrompt` renders the placeholder as an example.
-            pa_tui::auth_panel::AuthPanelRequest::PastePrompt {
+            crate::auth_panel::AuthPanelRequest::PastePrompt {
                 prompt,
                 allow_empty,
                 ..
@@ -732,7 +732,7 @@ mod tests {
         );
         let url_request = rx.recv().await.expect("the url block sends");
         match url_request {
-            pa_tui::auth_panel::AuthPanelRequest::AuthUrl { url, instructions } => {
+            crate::auth_panel::AuthPanelRequest::AuthUrl { url, instructions } => {
                 assert_eq!(url, "https://claude.ai/oauth/authorize");
                 assert_eq!(
                     instructions.as_deref(),
@@ -755,7 +755,7 @@ mod tests {
         .await
         .expect("the paste request sends once polled");
         match paste_request {
-            pa_tui::auth_panel::AuthPanelRequest::PastePrompt { prompt, .. } => {
+            crate::auth_panel::AuthPanelRequest::PastePrompt { prompt, .. } => {
                 assert_eq!(
                     prompt,
                     "Paste redirect URL below, or complete login in browser:"

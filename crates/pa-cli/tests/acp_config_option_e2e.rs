@@ -24,9 +24,8 @@
 //! `-32602` invalid params, and real selections publish the
 //! `config_option_update` notification.
 //!
-//! Both transports are covered: the in-process mode (the faux provider
-//! with a models.json fixture model, so a switch is observable end to
-//! end) and the daemon-attached mode (the worker's own wire commands).
+//! The in-process mode runs the faux provider with a models.json fixture
+//! model, so a switch is observable end to end.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -177,20 +176,6 @@ fn config_updates(notifications: &[Value]) -> Vec<Value> {
 
 fn select_params(session_id: &str, config_id: &str, value: &Value) -> Value {
     json!({ "sessionId": session_id, "configId": config_id, "value": value })
-}
-
-fn shutdown_sandboxed_daemon(socket: &std::path::Path) {
-    use std::io::Write as _;
-    let Ok(mut stream) = pa_types::platform::transport::connect_blocking(socket) else {
-        return;
-    };
-    let frame = format!(
-            "{{\"type\":\"command\",\"id\":\"shutdown-test\",\"protocol\":{{\"name\":\"prime-agent.daemon\",\"version\":{}}},\"command\":{{\"type\":\"shutdown\"}}}}\n",
-            pa_types::daemon::DAEMON_PROTOCOL_VERSION
-        );
-    let _ = stream.write_all(frame.as_bytes());
-    let _ = stream.flush();
-    std::thread::sleep(Duration::from_millis(300));
 }
 
 /// The models.json fixture: a second faux-provider model the pickers can
@@ -607,157 +592,4 @@ fn acp_in_process_failed_settings_persist_keeps_the_session_coherent() {
     let close = client.request("session/close", &json!({ "sessionId": session_id }));
     let (close_response, _) = client.wait_response(close, TIMEOUT);
     assert_eq!(close_response["result"], json!({}));
-}
-
-/// The daemon-attached transport: the pickers ride the worker's own wire
-/// commands — advertised at `session/new`, the effort selection applied
-/// through `set_thinking_level`, invalid values refused, and the turn
-/// after a switch still settles.
-#[test]
-fn acp_daemon_attached_config_option_pickers() {
-    let home = tempfile::TempDir::new().unwrap();
-    let socket = home.path().join("daemon.sock");
-    let script_path = home.path().join("worker-script.json");
-    std::fs::write(
-        &script_path,
-        json!({
-            "engine": "faux",
-            "reasoning": true,
-            "responses": ["The Thames flows through London."],
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let bin = env!("CARGO_BIN_EXE_prime-agent");
-    let mut child = Command::new(bin)
-        .args([
-            "--mode",
-            "acp",
-            "--no-session",
-            "--daemon-socket",
-            socket.to_str().unwrap(),
-        ])
-        .env("HOME", home.path())
-        .env("PRIME_AGENT_CODING_AGENT_DIR", home.path().join("agent"))
-        .env("PRIME_AGENT_AGENT_DIR", home.path().join("agent"))
-        .env("PRIME_AGENT_ACP_DAEMON_SCRIPT", &script_path)
-        .env(
-            pa_daemon::worker::WORKER_SUPERVISOR_LOST_EXIT_MS_ENV,
-            "15000",
-        )
-        .current_dir(home.path())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("binary present");
-    let stdin = child.stdin.take().expect("stdin piped");
-    let stdout = child.stdout.take().expect("stdout piped");
-    let mut client = {
-        let (tx, rx) = channel();
-        std::thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines() {
-                match line {
-                    Ok(line) => {
-                        if tx.send(line).is_err() {
-                            return;
-                        }
-                    }
-                    Err(_) => return,
-                }
-            }
-        });
-        AcpChild {
-            child,
-            stdin,
-            lines: rx,
-            next_id: 0,
-            home,
-        }
-    };
-    let init = client.request("initialize", &initialize_params());
-    let _ = client.wait_response(init, TIMEOUT);
-    let new = client.request("session/new", &json!({ "mcpServers": [] }));
-    let (new_response, _) = client.wait_response(new, TIMEOUT);
-    let result = &new_response["result"];
-    assert!(
-        result["sessionId"].is_string(),
-        "daemon-attached admission succeeds: {new_response}"
-    );
-    let session_id = result["sessionId"].as_str().unwrap().to_string();
-
-    // Both pickers advertised off the worker's connection state.
-    let options = &result["configOptions"];
-    assert_eq!(options.as_array().map(Vec::len), Some(2), "{options}");
-    assert_eq!(options[0]["id"], "model");
-    assert_eq!(options[0]["currentValue"], r#"["faux","faux-1"]"#);
-    assert_eq!(options[1]["id"], "thought_level");
-    assert_eq!(options[1]["currentValue"], "medium");
-
-    // An effort selection applies through the worker's switch and
-    // publishes the change.
-    let select = client.request(
-        "session/set_config_option",
-        &select_params(&session_id, "thought_level", &json!("high")),
-    );
-    let (response, notifications) = client.wait_response(select, TIMEOUT);
-    assert_eq!(
-        response["result"]["configOptions"][1]["currentValue"], "high",
-        "{response}"
-    );
-    let updates = config_updates(&notifications);
-    assert!(
-        updates
-            .iter()
-            .any(|update| update["params"]["update"]["configOptions"][1]["currentValue"] == "high"),
-        "the change publishes config_option_update: {notifications:?}"
-    );
-
-    // Unsupported levels and models are refused with the TS reasons; the
-    // current model re-selects cleanly.
-    for (config_id, value, reason) in [
-        (
-            "thought_level",
-            json!("sideways"),
-            "Unsupported reasoning effort: sideways",
-        ),
-        ("model", json!("missing"), "Unavailable model: missing"),
-        (
-            "unknown",
-            json!("high"),
-            "Invalid configuration option: unknown",
-        ),
-    ] {
-        let select = client.request(
-            "session/set_config_option",
-            &select_params(&session_id, config_id, &value),
-        );
-        let (response, _) = client.wait_response(select, TIMEOUT);
-        assert_eq!(response["error"]["code"], -32602, "{config_id}: {response}");
-        assert_eq!(response["error"]["data"]["reason"], reason);
-    }
-    let select = client.request(
-        "session/set_config_option",
-        &select_params(&session_id, "model", &json!(r#"["faux","faux-1"]"#)),
-    );
-    let (response, _) = client.wait_response(select, TIMEOUT);
-    assert_eq!(
-        response["result"]["configOptions"][0]["currentValue"],
-        r#"["faux","faux-1"]"#
-    );
-
-    // The switched level survives a turn: the prompt still settles.
-    let prompt = client.request(
-        "session/prompt",
-        &json!({ "sessionId": session_id, "prompt": [{ "type": "text", "text": "Name a river." }] }),
-    );
-    let (prompt_response, _) = client.wait_response(prompt, Duration::from_mins(2));
-    assert_eq!(prompt_response["result"]["stopReason"], "end_turn");
-
-    let close = client.request("session/close", &json!({ "sessionId": session_id }));
-    let (close_response, _) = client.wait_response(close, TIMEOUT);
-    assert_eq!(close_response["result"], json!({}));
-    drop(client);
-    shutdown_sandboxed_daemon(&socket);
 }

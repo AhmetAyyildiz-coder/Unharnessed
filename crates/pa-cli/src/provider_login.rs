@@ -10,15 +10,15 @@
 
 use std::path::{Path, PathBuf};
 
-use pa_core::auth::{
-    AuthCredential, AuthSource, AuthStatus, SERPER_CREDENTIAL_ID, SERPER_CREDENTIAL_NAME,
-};
-use pa_core::models::ModelRegistry;
-use pa_tui::provider_auth::{
+use crate::provider_auth::{
     AuthFlow, AuthStatusIndicator, AuthStatusStyle, AuthType, ProviderAuthCommands,
     ProviderAuthFuture, ProviderAuthOutcome, ProviderRow, ProviderRowsFuture,
     ProviderWarningFuture,
 };
+use pa_core::auth::{
+    AuthCredential, AuthSource, AuthStatus, SERPER_CREDENTIAL_ID, SERPER_CREDENTIAL_NAME,
+};
+use pa_core::models::ModelRegistry;
 
 /// The TS OAuth provider rows (`the TS AI library/oauth` registry): the
 /// subscription logins, every flow ported.
@@ -293,7 +293,7 @@ impl ProviderAuthCommands for ProviderAuth {
     fn login_on_panel(
         &self,
         provider: &ProviderRow,
-        panel: pa_tui::auth_panel::AuthPanelHandle,
+        panel: crate::auth_panel::AuthPanelHandle,
     ) -> ProviderAuthFuture {
         let provider_row = provider.clone();
         let cwd = self.cwd.clone();
@@ -545,7 +545,7 @@ fn login_blocking_on_panel(
     provider_row: &ProviderRow,
     cwd: PathBuf,
     agent_dir: PathBuf,
-    panel: pa_tui::auth_panel::AuthPanelHandle,
+    panel: crate::auth_panel::AuthPanelHandle,
 ) -> ProviderAuthOutcome {
     if let Some(server) = provider_row.id.strip_prefix("mcp:") {
         let auth = crate::mcp_login::TerminalMcpAuth::new(cwd, agent_dir);
@@ -555,7 +555,7 @@ fn login_blocking_on_panel(
             .map_or_else(
                 |error: std::io::Error| format!("login failed: {error}"),
                 |runtime| {
-                    runtime.block_on(pa_tui::client_auth::run_mcp_auth_command(
+                    runtime.block_on(crate::client_auth::run_mcp_auth_command(
                         &auth,
                         &format!("login {server}"),
                         panel,

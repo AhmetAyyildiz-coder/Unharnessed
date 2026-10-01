@@ -46,17 +46,15 @@ impl crate::mode::Runtime for PrintRuntime {
                     Ok(1)
                 }
             },
-            // The interactive TUI attaches through the daemon (spawning a
-            // supervisor when none is running); the daemon mode runs the
-            // supervisor in-process. Runtime failures print themselves and
-            // exit non-zero, so the typed channel stays for unwired modes.
-            AppMode::Interactive => match crate::interactive_mode::run_interactive_mode(options) {
-                Ok(code) => Ok(code),
-                Err(error) => {
-                    eprintln!("Error: {error:#}");
-                    Ok(1)
-                }
-            },
+            // This build has no terminal UI: a terminal launch without
+            // `-p`/`--mode` points at the headless modes instead.
+            AppMode::Interactive => {
+                eprintln!(
+                    "Error: this build has no interactive terminal UI; use -p/--print, --mode json, or --mode acp"
+                );
+                Ok(1)
+            }
+            // The daemon mode runs the supervisor in-process.
             AppMode::Daemon => {
                 match crate::daemon_mode::run_daemon_mode(options.daemon_socket.as_deref()) {
                     Ok(code) => Ok(code),
@@ -101,12 +99,6 @@ fn run_acp_mode(options: &RunOptions) -> Result<i32, String> {
 }
 
 async fn acp_mode_main(options: &RunOptions) -> Result<i32, String> {
-    // TS `shouldUseDaemonClient` is true for the ACP mode: the daemon is
-    // the preferred transport, and the in-process engine stays the
-    // fallback when no daemon can be reached or served.
-    if let Some(exit_code) = try_daemon_attached_acp(options).await {
-        return Ok(exit_code);
-    }
     let config = &options.config;
     let engine = build_headless_engine_parts(options, "print").await?;
     let exit_code = pa_daemon::acp::run_acp_mode(pa_daemon::acp::AcpOptions {
@@ -126,84 +118,6 @@ async fn acp_mode_main(options: &RunOptions) -> Result<i32, String> {
     .await
     .map_err(|error| format!("{error:#}"))?;
     Ok(exit_code)
-}
-
-/// Try the daemon-attached ACP transport: ensure a supervisor is
-/// listening (spawning one detached, TS daemon-launch semantics), then
-/// serve the ACP surface over a client-owned daemon session. `None` means
-/// the daemon path is unavailable and the in-process engine serves the
-/// connection instead (the failure is logged to stderr, never stdout).
-async fn try_daemon_attached_acp(options: &RunOptions) -> Option<i32> {
-    if std::env::var_os("PRIME_AGENT_FAUX_SCRIPT").is_some() {
-        return None;
-    }
-    // Flag > env > default: the ACP transport resolves the same
-    // `PRIME_AGENT_DAEMON_SOCKET` contract as every other mode (the
-    // `prime-agent` launcher written by install-rust.sh pins that env,
-    // so the ACP path must honor it or it would target the TypeScript
-    // default socket and treat the schema mismatch as a stale daemon).
-    let socket_path = crate::config::resolve_daemon_socket_path(options.daemon_socket.as_deref());
-    let cwd = options.config.cwd.clone();
-    let result = async {
-        crate::interactive_mode::ensure_daemon_running(&socket_path, &cwd)
-            .await
-            .map_err(|error| format!("{error:#}"))?;
-        let config = &options.config;
-        // The session flags the in-process engine honors, under the TS
-        // `runtimeConfigFromArgs` names. `--api-key` stays off: the
-        // in-process path ignores it too, and the create config is persisted.
-        let mut create_config = serde_json::json!({ "cwd": config.cwd.display().to_string() });
-        if let Some(provider) = &config.provider {
-            create_config["provider"] = serde_json::json!(provider);
-        }
-        if let Some(model) = &config.model {
-            create_config["model"] = serde_json::json!(model);
-        }
-        if let Some(thinking) = config.thinking {
-            create_config["thinking"] = serde_json::json!(thinking.wire_name());
-        }
-        if let Some(system_prompt) = &config.system_prompt {
-            create_config["systemPrompt"] = serde_json::json!(system_prompt);
-        }
-        if !config.append_system_prompt.is_empty() {
-            create_config["appendSystemPrompt"] = serde_json::json!(config.append_system_prompt);
-        }
-        for (key, paths) in [
-            ("skills", &config.skills),
-            ("promptTemplates", &config.prompt_templates),
-        ] {
-            if !paths.is_empty() {
-                create_config[key] = paths
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect::<Vec<_>>()
-                    .into();
-            }
-        }
-        if let Some(autonomous) = &config.autonomous {
-            create_config["autonomous"] = serde_json::json!(autonomous_runtime_config(autonomous));
-        }
-        pa_daemon::acp::daemon::run_daemon_attached_acp_mode(
-            pa_daemon::acp::daemon::DaemonAcpOptions {
-                socket_path,
-                actual_cwd: config.cwd.clone(),
-                product_version: crate::config::version().to_string(),
-                create_config,
-            },
-        )
-        .await
-        .map_err(|error| format!("{error:#}"))
-    }
-    .await;
-    match result {
-        Ok(code) => Some(code),
-        Err(error) => {
-            eprintln!(
-                "prime-agent: daemon-attached ACP unavailable, using in-process mode: {error}"
-            );
-            None
-        }
-    }
 }
 
 /// The RPC headless mode: build the in-process session engine the print
@@ -326,10 +240,7 @@ fn rpc_engine_factory(options: &RunOptions) -> pa_daemon::rpc::session::RpcEngin
                     let lease = if *reuse_lease {
                         None
                     } else {
-                        Some(session_open_guard(
-                            options.daemon_socket.as_deref(),
-                            session_path,
-                        )?)
+                        Some(session_open_guard(session_path)?)
                     };
                     // A failed open's early return drops the lease
                     // (released), so errors never leave an orphaned hold.
@@ -1018,7 +929,7 @@ fn build_session_manager_with_lease(
             .map_err(|error| render_selector_error(&error))?;
         return match resolved {
             ResolvedSession::Path(path) | ResolvedSession::Local(path) => {
-                let lease = session_open_guard(options.daemon_socket.as_deref(), &path)?;
+                let lease = session_open_guard(&path)?;
                 // A failed open's early return drops the lease (released),
                 // never leaving an orphaned hold behind.
                 let manager = open_session_file(&path, &session_dir, &cwd, explicit_cwd_override)?;
@@ -1040,7 +951,7 @@ fn build_session_manager_with_lease(
         let most_recent = find_most_recent_session_for_cwd(&session_dir, &cwd);
         return match most_recent {
             Some(path) => {
-                let lease = session_open_guard(options.daemon_socket.as_deref(), &path)?;
+                let lease = session_open_guard(&path)?;
                 let manager = open_session_file(&path, &session_dir, &cwd, explicit_cwd_override)?;
                 Ok((manager, Some(lease)))
             }
@@ -1101,76 +1012,19 @@ fn lease_fresh_manager(
 /// explicit `--cwd` override wins, else the header's cwd, falling back to the
 /// process cwd for unreadable or new files. Resumed sessions keep the
 /// missing-cwd guard from main.ts.
-/// Guard an in-process open of a persisted session file: probe the
-/// daemon's live roster (`-c`/`-r` refuse a file a live daemon worker
-/// already hosts, `SessionAlreadyActiveError`), then acquire the runtime
-/// lease. Returns the HELD lease — the caller owns its lifetime (the
-/// one-shot print paths forget it for the process lifetime; a
+/// Guard an in-process open of a persisted session file: acquire the
+/// runtime lease. Returns the HELD lease — the caller owns its lifetime
+/// (the one-shot print paths forget it for the process lifetime; a
 /// long-lived connection holds it per session and drops it with the
 /// engine it guards).
 fn session_open_guard(
-    socket_path: Option<&str>,
     session_path: &std::path::Path,
 ) -> Result<pa_daemon::lease::SessionLease, String> {
-    let socket = crate::interactive_mode::resolve_socket_path(socket_path);
-    if let Ok(mut client) = crate::daemon_client::DaemonClient::connect(&socket) {
-        let list = client
-            .request(pa_types::daemon::DaemonCommand::List {
-                id: None,
-                all: None,
-                cwd: None,
-                session_dir: None,
-                include_client_owned: None,
-                rest: serde_json::Map::default(),
-            })
-            .map_err(|error| format!("Could not check active sessions: {error:#}"))?;
-        if list.success {
-            let target = pa_daemon::lease::canonical_session_path(session_path);
-            for row in list
-                .data
-                .and_then(|data| data.get("sessions").cloned())
-                .and_then(|sessions| sessions.as_array().cloned())
-                .unwrap_or_default()
-            {
-                let Some(file) = row.get("sessionFile").and_then(serde_json::Value::as_str) else {
-                    continue;
-                };
-                if pa_daemon::lease::canonical_session_path(std::path::Path::new(file)) != target {
-                    continue;
-                }
-                let active_session_id = row
-                    .get("activeSessionId")
-                    .or_else(|| row.get("id"))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                // The descriptive refusal (operator-directed): the TS-identical
-                // first line, then the holder's identity and the next steps —
-                // attach to the live session instead of reopening its file.
-                let message = match pa_tui::session_open_error::holder_from_roster(
-                    std::slice::from_ref(&row),
-                    &target,
-                ) {
-                    Some(holder) => {
-                        pa_tui::session_open_error::already_active_error(&holder, &target)
-                    }
-                    None => format!(
-                        "Session is already active in {active_session_id}: {}",
-                        target.display()
-                    ),
-                };
-                return Err(message);
-            }
-        }
-    }
-    // The daemon's roster covers only its own sessions; the session store
-    // is shared, so the file may instead be held by a live process no
-    // roster here names - typically the TypeScript product's daemon or one
-    // of its surviving workers, with this Rust daemon running beside it
-    // (each product owns its daemon; the store is the shared part). The
-    // runtime lease table is the one cross-daemon ownership record the
-    // shared agent dir offers, so a live holder refuses the in-process
-    // open with the same refusal the daemon's create path answers - a
-    // print-mode run over a held file would be a second writer on it.
+    // The session store is shared between processes (and with the
+    // TypeScript product): the runtime lease table is the one ownership
+    // record the shared agent dir offers, so a live holder refuses the
+    // in-process open - a print-mode run over a held file would be a
+    // second writer on it.
     let agent_dir = crate::config::get_agent_dir();
     // Acquire, not observe: a probe leaves a window where a daemon worker
     // (or another CLI) acquires the file's runtime lease after the check

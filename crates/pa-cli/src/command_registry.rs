@@ -413,7 +413,6 @@ mod tests {
 
     #[test]
     fn help_command_request() {
-        assert!(is_help_command_request(&["schedule", "bogus"]));
         assert!(!is_help_command_request(&["bogus"]));
         assert!(is_help_command_request(&[]));
         assert!(is_help_command_request(&["daemon"]));

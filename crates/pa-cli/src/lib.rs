@@ -25,29 +25,41 @@
 // Internal ported modules are crate-private: the only public API is the
 // runtime boundary below (see crates/pa-cli/README.md).
 pub(crate) mod args;
-pub(crate) mod client_settings;
-pub(crate) mod client_traces;
+// The `#[allow(dead_code)]` modules below hold the provider/MCP login
+// flows. They have no caller until a frontend (the VS Code extension over
+// ACP) exposes them again, and are kept on purpose (UNHARNESSED_PLAN.md,
+// decision D1).
+#[allow(dead_code)]
+pub(crate) mod auth_panel;
+#[allow(dead_code)]
+pub(crate) mod client_auth;
+#[allow(dead_code)]
 pub(crate) mod codex_subscription_login;
 pub(crate) mod command_registry;
 pub(crate) mod config;
-pub(crate) mod daemon_client;
 pub(crate) mod daemon_mode;
 pub(crate) mod file_processor;
+pub(crate) mod fuzzy;
 pub(crate) mod global_flags;
 pub(crate) mod headless_autonomous;
+pub(crate) mod image_load;
 pub(crate) mod initial_message;
-pub(crate) mod interactive_mode;
 pub(crate) mod list_models;
 pub(crate) mod mcp_command;
+#[allow(dead_code)]
 pub(crate) mod mcp_login;
 pub(crate) mod mode;
+#[allow(dead_code)]
 pub(crate) mod prime_inference_login;
 pub(crate) mod prompt_command;
+#[allow(dead_code)]
+pub(crate) mod provider_auth;
+#[allow(dead_code)]
 pub(crate) mod provider_login;
 pub(crate) mod public_command;
 pub(crate) mod session_export;
+#[allow(dead_code)]
 pub(crate) mod subscription_login;
-pub(crate) mod traces_login;
 
 /// The runtime boundary: everything a mode-runner crate implements to plug
 /// into the `prime-agent` binary, plus the entry point that drives it.
@@ -59,12 +71,6 @@ pub(crate) mod print_goal;
 pub mod print_runtime;
 pub(crate) mod print_session_command;
 pub use print_runtime::PrintRuntime;
-
-/// Daemon wiring shared by the interactive runtime and the integration
-/// tests: spawn/probe the supervisor on a socket, and map `--daemon-socket`.
-pub use interactive_mode::{
-    ensure_daemon_running, ensure_daemon_running_with, resolve_socket_path,
-};
 
 /// Entry point shared by the binary and the integration tests. Returns the
 /// process exit code.
@@ -206,15 +212,6 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         None => std::env::current_dir().map_err(|e| e.to_string())?,
     };
 
-    if crate::config::is_truthy_env_flag(
-        std::env::var(crate::config::ENV_STARTUP_BENCHMARK)
-            .ok()
-            .as_deref(),
-    ) && app_mode != mode::AppMode::Interactive
-    {
-        return Err("PI_STARTUP_BENCHMARK only supports interactive mode".to_string());
-    }
-
     let agent_dir = crate::config::get_agent_dir();
     // Telemetry opt-in resolution (TS main.ts): env override, then settings.
     // The runtime config only carries the disabled case.
@@ -296,8 +293,6 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
         list_models: parsed.list_models,
         verbose: parsed.verbose,
         offline: parsed.offline,
-        agents_view_requested: false,
-        attach_agent: None,
     };
 
     match runtime.run(&options) {

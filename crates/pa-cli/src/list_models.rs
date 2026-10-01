@@ -32,7 +32,7 @@ async fn list(options: &RunOptions) -> Result<i32, String> {
     let mut filtered = match search {
         Some(pattern) => {
             let matched =
-                pa_tui::fuzzy::fuzzy_filter(&models, &pattern, |model: &pa_types::ai::Model| {
+                crate::fuzzy::fuzzy_filter(&models, &pattern, |model: &pa_types::ai::Model| {
                     format!("{} {}", model.provider, model.id)
                 });
             if matched.is_empty() {

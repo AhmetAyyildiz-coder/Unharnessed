@@ -11,13 +11,14 @@ pa-core = { path = "../pa-core" }
 pa-ai = { path = "../pa-ai" }
 pa-agent = { path = "../pa-agent" }
 pa-daemon = { path = "../pa-daemon" }
-pa-tui = { path = "../pa-tui" }
 pa-telemetry = { path = "../pa-telemetry" }
 uuid = { version = "1", features = ["v4", "v7"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# The `@file` image attachments are read as base64 payloads.
+base64 = "0.22"
 
 [[bin]]
 name = "prime-agent"
@@ -25,21 +26,18 @@ path = "src/main.rs"
 
 [dev-dependencies]
 tempfile = "3"
-base64 = "0.22"
 # The release-workflow test parses the CI workflow YAML and builds fixture
 # tarballs/manifests for the promote-job layout gates (the same versions the
 # workspace already resolves for pa-core's update/release seam).
 serde_yaml = "0.9"
 tar = "0.4"
 flate2 = "1"
-# The traces login tests encrypt the challenge result with the flow's own
+# The Prime Inference login tests encrypt the challenge result with the flow's own
 # public key (same versions the workspace resolves for the engine).
 rsa = { version = "0.9", features = ["sha2", "pem"] }
 sha2 = "0.10"
 libc = "0.2"
 futures = { workspace = true }
-crossterm = "0.28"
-nix = { version = "0.29", features = ["term", "signal", "fs"] }
 url = "2"
 
 [lints.clippy]

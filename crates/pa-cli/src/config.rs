@@ -95,9 +95,6 @@ fn packaged_manifest_version() -> Option<String> {
 /// `PRIME_AGENT_OFFLINE`: truthy values enable offline mode.
 pub const ENV_OFFLINE: &str = "PI_OFFLINE";
 
-/// `PRIME_AGENT_STARTUP_BENCHMARK`: truthy values enable startup benchmarking.
-pub const ENV_STARTUP_BENCHMARK: &str = "PI_STARTUP_BENCHMARK";
-
 /// Expand a leading `~`, `~/`, or (Windows) `~\` segment against the home
 /// directory (TS `expandTildePath`, including the win32 backslash arm).
 pub fn expand_tilde_path(path: &str) -> PathBuf {
