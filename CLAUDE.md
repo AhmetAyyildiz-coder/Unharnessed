@@ -1,0 +1,4 @@
+- N'écris jamais de tests unitaires juste pour couvrir du code que tu viens d'écrire.
+- Vérifie avec des tests E2E sur le vrai binaire, et garde une trace rejouable (commande + sortie).
+- Ne modifie jamais un test existant pour le faire passer : corrige le code.
+- Si tu dois tester un morceau isolé, liste d'abord comment il peut échouer, puis code.
