@@ -50,7 +50,7 @@ except Exception as _unharnessed_rlm_error:
     def bash(command):
         raise RuntimeError(
             "unharnessed-runtime is not installed in this kernel. "
-            "Remove ~/.prime/agent/kernel-venv so unharnessed can rebuild it, or set "
+            "Remove ~/.unharnessed/kernel-venv so unharnessed can rebuild it, or set "
             "UNHARNESSED_KERNEL_PYTHON to a kernel environment with unharnessed-runtime installed. "
             f"Import error: {_UNHARNESSED_RLM_IMPORT_ERROR}"
         )

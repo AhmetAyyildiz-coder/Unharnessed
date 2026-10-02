@@ -43,11 +43,11 @@ pub fn home_dir() -> Option<PathBuf> {
 /// wire-internal identifier kept byte-compatible with the TS product).
 pub const ENV_AGENT_DIR: &str = "UNHARNESSED_CODING_AGENT_DIR";
 
-/// The agent state directory name (TS `CONFIG_DIR_NAME`, `.prime/agent`).
-pub const CONFIG_DIR_NAME: &str = ".prime/agent";
+/// The agent state directory name (TS `CONFIG_DIR_NAME`, `.unharnessed`).
+pub const CONFIG_DIR_NAME: &str = ".unharnessed";
 
 /// The agent state directory (TS `getAgentDir`): the env override with a
-/// leading `~`/`~/` expanded against [`home_dir`], else `<home>/.prime/agent`.
+/// leading `~`/`~/` expanded against [`home_dir`], else `<home>/.unharnessed`.
 /// `None` when no override is set and the home directory does not resolve
 /// (each caller owns its fallback).
 #[must_use]
@@ -149,7 +149,7 @@ mod tests {
             || {
                 assert_eq!(
                     agent_dir(),
-                    Some(PathBuf::from("/home/tester/.prime/agent"))
+                    Some(PathBuf::from("/home/tester/.unharnessed"))
                 );
             },
         );

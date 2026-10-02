@@ -140,7 +140,7 @@ Layering rules:
 ## Reliability model
 
 - Sessions run in the `unharnessed` process itself (`-p` or `--mode acp`); there is no daemon.
-  Sessions persist on disk (append-only JSONL under `~/.prime/agent/sessions`), a session lease
+  Sessions persist on disk (append-only JSONL under `~/.unharnessed/sessions`), a session lease
   keeps two processes off the same file, and the kernel namespace is snapshotted so `-c`/`-r`
   revive it.
 - No stubs, no `todo!()`, no swallowed errors (`anyhow` bubbling to UI is fine).

@@ -1074,7 +1074,7 @@ def _agent_dir() -> Path:
     """Resolve the Unharnessed config dir the same way the rest of the runtime does."""
     raw = (
         os.environ.get("UNHARNESSED_CODING_AGENT_DIR")
-        or str(Path.home() / ".prime" / "agent")
+        or str(Path.home() / ".unharnessed")
     )
     # resolve() so a relative env override reads auth.json from the right place,
     # not relative to the kernel's cwd.

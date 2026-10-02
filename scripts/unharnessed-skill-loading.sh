@@ -21,7 +21,7 @@ skill() { # skill <dir> <name>
 }
 
 skill "$AGENT/skills" user-auto-skill                 # user auto-discovery
-skill "$PROJECT/.prime/agent/skills" project-auto-skill # project auto-discovery
+skill "$PROJECT/.unharnessed/skills" project-auto-skill # project auto-discovery
 skill "$PROJECT/.agents/skills" agents-dir-skill      # .agents/skills ancestor scan
 skill "$OUT/extra" settings-array-skill               # settings `skills` array
 skill "$OUT/pkg/skills" package-skill                 # removed `packages` setting

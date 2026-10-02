@@ -22,7 +22,7 @@ What it keeps:
   minutes, `0` = no wait), then kills the commands still running; in ACP the
   agent starts the turn itself and streams it as `session/update`.
 - **Sessions** saved as append-only JSONL, resumable.
-- **Skills** from `~/.prime/agent/skills`, `<project>/.prime/agent/skills`,
+- **Skills** from `~/.unharnessed/skills`, `<project>/.unharnessed/skills`,
   `.agents/skills` in parent directories, and the `skills` setting; `AGENTS.md`
   and `CLAUDE.md` are loaded into the system prompt.
 - **All providers and logins** (Anthropic, OpenAI/Codex, Google/Vertex, Bedrock,
@@ -53,7 +53,7 @@ unharnessed --mode acp                                  # Agent Client Protocol 
 unharnessed prompt [--json]                             # dump the assembled system prompt
 ```
 
-Credentials come from the shared auth store (`~/.prime/agent/auth.json`) or the
+Credentials come from the auth store (`~/.unharnessed/auth.json`) or the
 providers' usual environment variables.
 
 > [!WARNING]

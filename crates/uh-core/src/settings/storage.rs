@@ -11,7 +11,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use anyhow::{anyhow, Result};
 
 /// The TS `CONFIG_DIR_NAME` (pkg.piConfig.configDir fallback).
-pub const CONFIG_DIR_NAME: &str = ".prime/agent";
+pub const CONFIG_DIR_NAME: &str = ".unharnessed";
 
 /// Scope of a settings document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

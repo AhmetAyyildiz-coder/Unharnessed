@@ -13,8 +13,7 @@
 //!
 //! Enable with `UNHARNESSED_REQUEST_TIMING=1` (env, inherited by daemon workers) or
 //! `"requestTiming": true` in settings.json. Entries go to the shared JSONL
-//! diagnostic log (`<agentDir>/logs/agent.jsonl`, TS `~/.prime/agent/logs/
-//! agent.jsonl`) under the component `coding-agent.request-timing`. The TS
+//! diagnostic log (`<agentDir>/logs/agent.jsonl`, the TS file) under the component `coding-agent.request-timing`. The TS
 //! entries reach that file through the process-wide `getLogger` sink; the
 //! Rust engine has no process-wide sink yet, so [`RequestTimingLog`] ports
 //! the sink surface this feature needs (one JSON object per line, `ts`/

@@ -135,7 +135,7 @@ mod tests {
         })
     }
 
-    /// The fetch lane's disk form serves: the `~/.prime/agent/
+    /// The fetch lane's disk form serves: the `~/.unharnessed/
     /// mcp-service-catalog.v2.json` the fetch writes is this snapshot
     /// envelope, NOT the bare catalog document — a reader that expects
     /// the bare shape finds nothing and every installed service pins as

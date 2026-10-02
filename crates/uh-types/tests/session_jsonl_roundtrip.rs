@@ -83,12 +83,7 @@ fn live_captured_sessions_roundtrip_losslessly() {
     let dir = std::env::var_os("UH_TYPES_SESSIONS_DIR")
         .map(PathBuf::from)
         .or_else(|| {
-            std::env::var_os("HOME").map(|h| {
-                PathBuf::from(h)
-                    .join(".prime")
-                    .join("agent")
-                    .join("sessions")
-            })
+            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".unharnessed").join("sessions"))
         })
         .unwrap_or_else(|| panic!("UH_TYPES_LIVE_SESSIONS=1 but no sessions dir configured"));
     assert!(dir.is_dir(), "sessions dir not found: {}", dir.display());

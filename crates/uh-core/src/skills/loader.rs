@@ -24,7 +24,7 @@ pub struct LoadSkillsResult {
 }
 
 /// Agent-side config dir name (TS `CONFIG_DIR_NAME`).
-pub const CONFIG_DIR_NAME: &str = ".prime/agent";
+pub const CONFIG_DIR_NAME: &str = ".unharnessed";
 
 fn normalize_path(input: &str) -> PathBuf {
     let trimmed = input.trim();
@@ -254,11 +254,11 @@ mod tests {
         let agent_dir = tmp.path().join("agent");
         let project = tmp.path().join("project");
         fs::create_dir_all(agent_dir.join("skills")).unwrap();
-        fs::create_dir_all(project.join(".prime").join("skills")).unwrap();
+        fs::create_dir_all(project.join(".unharnessed").join("skills")).unwrap();
         write_skill(&agent_dir.join("skills"), "alpha", "user alpha");
         write_skill(&agent_dir.join("skills"), "beta", "user beta");
         write_skill(
-            &project.join(".prime").join("agent").join("skills"),
+            &project.join(".unharnessed").join("skills"),
             "beta",
             "project beta",
         );
@@ -288,12 +288,12 @@ mod tests {
         let agent_dir = tmp.path().join("agent");
         let project = tmp.path().join("project");
         fs::create_dir_all(agent_dir.join("skills")).unwrap();
-        fs::create_dir_all(project.join(".prime").join("agent").join("skills")).unwrap();
+        fs::create_dir_all(project.join(".unharnessed").join("skills")).unwrap();
         // One skill per source: the cross-source order is the contract
         // (intra-directory order is readdir order on both sides).
         write_skill(&agent_dir.join("skills"), "zeta", "user zeta");
         write_skill(
-            &project.join(".prime").join("agent").join("skills"),
+            &project.join(".unharnessed").join("skills"),
             "alpha",
             "project alpha",
         );

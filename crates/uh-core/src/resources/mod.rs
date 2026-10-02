@@ -330,15 +330,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let agent_dir = tmp.path().join("agent");
         let project = tmp.path().join("proj");
-        fs::create_dir_all(agent_dir.join(".prime").join("agent")).unwrap();
-        fs::create_dir_all(project.join(".prime").join("agent")).unwrap();
+        fs::create_dir_all(agent_dir.join(".unharnessed")).unwrap();
+        fs::create_dir_all(project.join(".unharnessed")).unwrap();
         fs::write(
-            agent_dir.join(".prime").join("agent").join("SYSTEM.md"),
+            agent_dir.join(".unharnessed").join("SYSTEM.md"),
             "global system",
         )
         .unwrap();
         fs::write(
-            project.join(".prime").join("agent").join("SYSTEM.md"),
+            project.join(".unharnessed").join("SYSTEM.md"),
             "project system",
         )
         .unwrap();
@@ -357,7 +357,7 @@ mod tests {
         let agent_dir = tmp.path().join("agent");
         let cwd = tmp.path().join("proj");
         fs::create_dir_all(agent_dir.join("skills").join("alpha")).unwrap();
-        fs::create_dir_all(cwd.join(".prime").join("agent").join("prompts")).unwrap();
+        fs::create_dir_all(cwd.join(".unharnessed").join("prompts")).unwrap();
         fs::create_dir_all(&cwd).unwrap();
         fs::write(
             agent_dir.join("skills").join("alpha").join("SKILL.md"),
@@ -365,19 +365,12 @@ mod tests {
         )
         .unwrap();
         fs::write(
-            cwd.join(".prime")
-                .join("agent")
-                .join("prompts")
-                .join("fix.md"),
+            cwd.join(".unharnessed").join("prompts").join("fix.md"),
             "Fix $1",
         )
         .unwrap();
         fs::write(cwd.join("AGENTS.md"), "Project rules").unwrap();
-        fs::write(
-            cwd.join(".prime").join("agent").join("SYSTEM.md"),
-            "custom system",
-        )
-        .unwrap();
+        fs::write(cwd.join(".unharnessed").join("SYSTEM.md"), "custom system").unwrap();
         let resources = load_resources(ResourceLoaderOptions {
             cwd,
             agent_dir,
@@ -397,13 +390,7 @@ mod tests {
         let agent_dir = tmp.path().join("agent");
         let cwd = tmp.path().join("proj");
         fs::create_dir_all(agent_dir.join("skills").join("alpha")).unwrap();
-        fs::create_dir_all(
-            cwd.join(".prime")
-                .join("agent")
-                .join("skills")
-                .join("alpha"),
-        )
-        .unwrap();
+        fs::create_dir_all(cwd.join(".unharnessed").join("skills").join("alpha")).unwrap();
         fs::create_dir_all(&cwd).unwrap();
         fs::write(
             agent_dir.join("skills").join("alpha").join("SKILL.md"),
@@ -411,8 +398,7 @@ mod tests {
         )
         .unwrap();
         fs::write(
-            cwd.join(".prime")
-                .join("agent")
+            cwd.join(".unharnessed")
                 .join("skills")
                 .join("alpha")
                 .join("SKILL.md"),

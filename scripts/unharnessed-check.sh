@@ -13,9 +13,10 @@
 # throwaway HOME in <gate-dir>, the kernel venv is built there from this
 # checkout's runtime, the package dir points at the repo, any installed
 # prime-agent leaves the PATH, and processes the tests leave behind are
-# killed. The real ~/.prime is only read: the gate fails if its kernel venv
-# changed, and lists anything under it modified during the run (the
-# installed daemon may write there on its own).
+# killed. The real ~/.prime (the installed Prime Agent) and ~/.unharnessed
+# are never written: the gate fails if either kernel venv changed, and lists
+# anything under them modified during the run (an installed daemon may
+# write there on its own).
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
 GATE=${1:-${TMPDIR:-/tmp}/unharnessed-gate}
@@ -24,7 +25,7 @@ GATE=$(cd "$GATE" && pwd -P)
 LOG="$GATE/check.log"
 BASELINE="$ROOT/UNHARNESSED_BASELINE.txt"
 REAL_HOME=$HOME
-REAL_VENV="$REAL_HOME/.prime/agent/kernel-venv"
+REAL_VENVS="$REAL_HOME/.prime/agent/kernel-venv $REAL_HOME/.unharnessed/kernel-venv"
 BIN="$ROOT/target/release/unharnessed"
 VENV="$GATE/kernel-venv"
 RUN_ID="gate-$$-$(date +%s)"
@@ -73,7 +74,7 @@ done
 IFS=$old_ifs
 export PATH="$CLEAN_PATH"
 
-venv_before=$(mtime "$REAL_VENV")
+venvs_before=$(for venv in $REAL_VENVS; do mtime "$venv"; done)
 touch "$GATE/started"
 
 step fmt cargo fmt --all --check
@@ -133,18 +134,19 @@ else
     sed 's/^/      /' "$GATE/failures.sorted"
 fi
 
-venv_after=$(mtime "$REAL_VENV")
-if [ "$venv_before" = "$venv_after" ]; then
-    echo "PASS  $REAL_VENV untouched (mtime $venv_after)"
+venvs_after=$(for venv in $REAL_VENVS; do mtime "$venv"; done)
+if [ "$venvs_before" = "$venvs_after" ]; then
+    echo "PASS  real kernel venvs untouched ($(echo $venvs_after))"
 else
-    echo "FAIL  $REAL_VENV changed (mtime $venv_before -> $venv_after)"
+    echo "FAIL  a real kernel venv changed ($(echo $venvs_before) -> $(echo $venvs_after))"
     FAILED=1
 fi
-if [ -d "$REAL_HOME/.prime" ]; then
-    touched=$(find "$REAL_HOME/.prime" -newer "$GATE/started" 2>/dev/null)
+for dir in "$REAL_HOME/.prime" "$REAL_HOME/.unharnessed"; do
+    [ -d "$dir" ] || continue
+    touched=$(find "$dir" -newer "$GATE/started" 2>/dev/null)
     if [ -n "$touched" ]; then
-        echo "note: modified under ~/.prime during the run (installed daemon?):"
+        echo "note: modified under $dir during the run (installed daemon?):"
         echo "$touched" | sed 's/^/      /'
     fi
-fi
+done
 exit $FAILED

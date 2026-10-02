@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 pub const APP_NAME: &str = "unharnessed";
 
 /// The agent state directory name (`piConfig.configDir` in package.json).
-pub const CONFIG_DIR_NAME: &str = ".prime/agent";
+pub const CONFIG_DIR_NAME: &str = ".unharnessed";
 
 /// `UNHARNESSED_CODING_AGENT_DIR`: overrides the agent state directory.
 pub const ENV_AGENT_DIR: &str = "UNHARNESSED_CODING_AGENT_DIR";

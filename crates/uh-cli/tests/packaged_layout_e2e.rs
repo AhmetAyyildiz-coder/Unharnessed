@@ -61,7 +61,7 @@ fn stage_packaged_layout(dir: &Path, with_runtime: bool) {
     std::fs::write(
         dir.join("package.json"),
         format!(
-            r#"{{"name":"unharnessed","version":"{}","piConfig":{{"name":"unharnessed","configDir":".prime/agent"}}}}"#,
+            r#"{{"name":"unharnessed","version":"{}","piConfig":{{"name":"unharnessed","configDir":".unharnessed"}}}}"#,
             env!("CARGO_PKG_VERSION")
         ),
     )
@@ -133,8 +133,8 @@ fn kernel_python() -> Option<PathBuf> {
         return Some(explicit);
     }
     let candidate = PathBuf::from(std::env::var("HOME").map_or_else(
-        |_| "/home/ubuntu/.prime/agent/kernel-venv/bin/python".to_string(),
-        |home| format!("{home}/.prime/agent/kernel-venv/bin/python"),
+        |_| "/home/ubuntu/.unharnessed/kernel-venv/bin/python".to_string(),
+        |home| format!("{home}/.unharnessed/kernel-venv/bin/python"),
     ));
     if candidate.exists() {
         return Some(candidate);

@@ -65,7 +65,7 @@ impl SettingsManager {
         }
     }
 
-    /// File-backed manager (agentDir + cwd/.prime/agent).
+    /// File-backed manager (agentDir + cwd/.unharnessed).
     pub fn create(
         cwd: impl AsRef<std::path::Path>,
         agent_dir: impl AsRef<std::path::Path>,
