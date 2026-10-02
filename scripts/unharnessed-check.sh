@@ -7,11 +7,14 @@
 # the release build) plus the kernel runtime's Python tests, and compares the
 # failing tests to UNHARNESSED_BASELINE.txt. Exits non-zero when a step fails
 # or a test fails outside that list. The tests run with --no-fail-fast so one
-# baseline failure cannot hide the binaries after it.
+# baseline failure cannot hide the binaries after it, and both suites' exit
+# codes are checked against their logs (scripts/unharnessed-check-failures.py):
+# a suite that fails without naming a test fails the gate.
 #
 # Isolation (UNHARNESSED_PLAN.md, "Incident"): the tests run under a
-# throwaway HOME in <gate-dir>, the kernel venv is built there from this
-# checkout's runtime, the package dir points at the repo, any installed
+# throwaway HOME in <gate-dir>, the agent's variables inherited from the
+# caller (UNHARNESSED_*, PRIME_AGENT_*, PI_*, UH_*, PA_*, XDG_*) are unset,
+# the kernel venv is built there from this checkout's runtime, the package dir points at the repo, any installed
 # prime-agent leaves the PATH, and processes the tests leave behind are
 # killed. The real ~/.prime (the installed Prime Agent) and ~/.unharnessed
 # are never written: the gate fails if either kernel venv changed, and lists
@@ -31,6 +34,14 @@ VENV="$GATE/kernel-venv"
 RUN_ID="gate-$$-$(date +%s)"
 FAILED=0
 : > "$LOG"
+
+# An inherited agent dir, session dir, kernel python or XDG dir would steer
+# the tests to real data or another kernel: the gate sets its own below.
+for name in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' \
+    | grep -E '^(UNHARNESSED|PRIME_AGENT|PI|UH|PA|XDG)_'); do
+    echo "note: inherited $name unset" | tee -a "$LOG"
+    unset "$name"
+done
 
 step() { # step <name> <command...>: run from the repo root, log the output
     name=$1; shift
@@ -83,10 +94,13 @@ step build-release cargo build --release --workspace
 step kernel-venv "$BIN" --unharnessed-bootstrap
 echo "== test: cargo test --workspace --no-fail-fast" | tee -a "$LOG"
 (cd "$ROOT" && env UNHARNESSED_GATE_RUN="$RUN_ID" cargo test --workspace --no-fail-fast) > "$GATE/test.log" 2>&1
+cargo_rc=$?
 cat "$GATE/test.log" >> "$LOG"
 echo "== python: unittest discover (unharnessed-runtime/test)" | tee -a "$LOG"
 (cd "$ROOT/unharnessed-runtime" && env UNHARNESSED_GATE_RUN="$RUN_ID" PYTHONPATH=src \
     "$VENV/bin/python" -m unittest discover -s test) > "$GATE/python.log" 2>&1
+python_rc=$?
+echo "exit codes: cargo test $cargo_rc, unittest $python_rc" | tee -a "$LOG"
 cat "$GATE/python.log" >> "$LOG"
 
 # Leftover processes: anything carrying this run's marker in its
@@ -103,23 +117,11 @@ for pid in $leftovers; do
     kill -9 "$pid" 2>/dev/null
 done
 
-# Failing tests, as "<test binary> :: <test>" like the baseline.
-awk '
-    /^ *Running / {
-        bin = $0
-        sub(/.*\//, "", bin); sub(/\)$/, "", bin); sub(/-[0-9a-f]+$/, "", bin)
-    }
-    /^ *Doc-tests / { bin = "doc-tests " $2 }
-    /^test .* \.\.\. FAILED$/ {
-        name = $0; sub(/^test /, "", name); sub(/ \.\.\. FAILED$/, "", name)
-        print bin " :: " name
-    }
-    /^error: could not compile/ { print "COMPILE :: " $0 }
-    /process didn.t exit successfully: .*\(signal: / { print "CRASH :: " bin }
-' "$GATE/test.log" > "$GATE/failures.txt"
-grep -E '^(FAIL|ERROR): ' "$GATE/python.log" | sed 's/^/py :: /' >> "$GATE/failures.txt"
-if ! grep -q '^test result: ' "$GATE/test.log"; then
-    echo "COMPILE :: cargo test ran no test binary" >> "$GATE/failures.txt"
+# Failing tests, as "<test binary> :: <test>" like the baseline. A parser
+# failure must not read as an empty list.
+if ! python3 "$ROOT/scripts/unharnessed-check-failures.py" "$GATE/test.log" "$cargo_rc" \
+    "$GATE/python.log" "$python_rc" > "$GATE/failures.txt"; then
+    echo "PARSER :: scripts/unharnessed-check-failures.py failed" >> "$GATE/failures.txt"
 fi
 grep -v '^#' "$BASELINE" | sort -u > "$GATE/baseline.txt"
 sort -u "$GATE/failures.txt" > "$GATE/failures.sorted"
