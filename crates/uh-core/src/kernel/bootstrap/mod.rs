@@ -106,7 +106,7 @@ fn format_bootstrap_failure(error: &anyhow::Error) -> anyhow::Error {
         "Failed to set up the Python kernel runtime. {error:#}\n\
          First-time setup needs internet to install uv, Python, unharnessed-runtime, and default Python packages; once set up, unharnessed runs offline. \
          An interrupted runtime upgrade needs network once more, so re-run this while online. \
-         Set PRIME_AGENT_KERNEL_PYTHON to a Python with a current unharnessed-runtime and default Python packages installed to skip auto-bootstrap."
+         Set UNHARNESSED_KERNEL_PYTHON to a Python with a current unharnessed-runtime and default Python packages installed to skip auto-bootstrap."
     );
     // The packaged exe-adjacent sidecar is the kernel runtime source; when it
     // is missing everywhere (packaged layout and source checkout), name it:
@@ -115,7 +115,7 @@ fn format_bootstrap_failure(error: &anyhow::Error) -> anyhow::Error {
     if venv::packaged_runtime_dir().is_none() {
         let package = venv::package_dir();
         let _ = write!(message,
-            "\nThe packaged unharnessed-runtime directory was not found (looked next to the executable at {} and PI_PACKAGE_DIR); reinstall unharnessed so the kernel runtime ships beside the binary.",
+            "\nThe packaged unharnessed-runtime directory was not found (looked next to the executable at {} and UNHARNESSED_PACKAGE_DIR); reinstall unharnessed so the kernel runtime ships beside the binary.",
             package.display()
         );
     }
@@ -130,12 +130,12 @@ type InFlightBootstrap = Option<(
 
 static IN_FLIGHT: Mutex<InFlightBootstrap> = Mutex::new(None);
 
-/// Resolve the Python interpreter for the kernel: the `PRIME_AGENT_KERNEL_PYTHON`
+/// Resolve the Python interpreter for the kernel: the `UNHARNESSED_KERNEL_PYTHON`
 /// override when valid, else the auto-bootstrapped venv python.
 ///
 /// # Errors
 ///
-/// Returns an error when the `PRIME_AGENT_KERNEL_PYTHON` override points to
+/// Returns an error when the `UNHARNESSED_KERNEL_PYTHON` override points to
 /// a Python missing the kernel runtime or default packages, when a writable
 /// venv directory cannot be resolved, or when the kernel venv bootstrap or
 /// its skill sync fails (the failure is formatted with remediation hints,
@@ -148,8 +148,8 @@ static IN_FLIGHT: Mutex<InFlightBootstrap> = Mutex::new(None);
 pub async fn ensure_kernel_python(options: EnsureKernelPythonOptions) -> anyhow::Result<PathBuf> {
     let python_skills = normalize_python_skills(&options.python_skills);
     let key = [
-        std::env::var("PRIME_AGENT_KERNEL_PYTHON").unwrap_or_default(),
-        std::env::var("PRIME_AGENT_KERNEL_VENV").unwrap_or_default(),
+        std::env::var("UNHARNESSED_KERNEL_PYTHON").unwrap_or_default(),
+        std::env::var("UNHARNESSED_KERNEL_VENV").unwrap_or_default(),
         std::env::var("HOME").unwrap_or_default(),
         std::env::var("XDG_DATA_HOME").unwrap_or_default(),
         serde_json::to_string(&python_skills).unwrap_or_default(),
@@ -189,7 +189,7 @@ async fn ensure_kernel_python_uncached(
     options: &EnsureKernelPythonOptions,
     python_skills: &[BootstrapPythonSkill],
 ) -> anyhow::Result<PathBuf> {
-    if let Ok(override_python) = std::env::var("PRIME_AGENT_KERNEL_PYTHON") {
+    if let Ok(override_python) = std::env::var("UNHARNESSED_KERNEL_PYTHON") {
         if !override_python.is_empty() {
             let python = expand_home(&override_python);
             let python_str = python.to_string_lossy().to_string();
@@ -213,7 +213,7 @@ async fn ensure_kernel_python_uncached(
                     missing_python_skill_import_labels(&python_str, &options.python_skills);
                 if !missing_skills.is_empty() {
                     options.report(&format!(
-                        "Warning: Python skills unavailable in PRIME_AGENT_KERNEL_PYTHON and will be disabled: {}",
+                        "Warning: Python skills unavailable in UNHARNESSED_KERNEL_PYTHON and will be disabled: {}",
                         missing_skills.join(", ")
                     ));
                 }
@@ -222,7 +222,7 @@ async fn ensure_kernel_python_uncached(
                 return Ok(python);
             }
             return Err(anyhow!(
-                "PRIME_AGENT_KERNEL_PYTHON points to a Python missing {}: {}",
+                "UNHARNESSED_KERNEL_PYTHON points to a Python missing {}: {}",
                 missing.join(" and "),
                 python.display()
             ));

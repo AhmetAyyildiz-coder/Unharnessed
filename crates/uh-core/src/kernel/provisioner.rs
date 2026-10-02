@@ -40,7 +40,7 @@ fn default_kernel_boot_concurrency() -> usize {
 }
 
 fn resolve_kernel_boot_concurrency() -> usize {
-    let Ok(raw) = std::env::var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS") else {
+    let Ok(raw) = std::env::var("UNHARNESSED_MAX_CONCURRENT_KERNEL_BOOTS") else {
         return default_kernel_boot_concurrency();
     };
     if raw.is_empty() || !raw.chars().all(|c| c.is_ascii_digit()) {
@@ -444,7 +444,7 @@ const DEFAULT_STARTUP_BUDGET_MS: u64 = 90_000;
 const RETRY_BACKOFF_MS: [u64; 4] = [250, 1_000, 2_500, 5_000];
 
 fn resolve_startup_retries() -> u32 {
-    match std::env::var("PRIME_AGENT_KERNEL_STARTUP_RETRIES") {
+    match std::env::var("UNHARNESSED_KERNEL_STARTUP_RETRIES") {
         Ok(raw) => raw
             .trim()
             .parse::<u32>()
@@ -454,7 +454,7 @@ fn resolve_startup_retries() -> u32 {
 }
 
 fn resolve_startup_budget_ms() -> u64 {
-    match std::env::var("PRIME_AGENT_KERNEL_STARTUP_BUDGET_MS") {
+    match std::env::var("UNHARNESSED_KERNEL_STARTUP_BUDGET_MS") {
         Ok(raw) => raw
             .trim()
             .parse::<u64>()
@@ -475,7 +475,7 @@ fn startup_failure_is_retryable(error: &anyhow::Error) -> bool {
         "provisioner disposed",
         "aborted",
         "Failed to set up the Python kernel runtime",
-        "PRIME_AGENT_KERNEL_PYTHON points to a Python",
+        "UNHARNESSED_KERNEL_PYTHON points to a Python",
         "Failed to initialize rlm runtime",
         "Update unharnessed-runtime in the kernel Python",
         "Kernel start superseded",
@@ -623,13 +623,13 @@ async fn start_kernel(
     let mut env = options.env.clone();
     if let Some(shell_path) = &options.shell_path {
         env.insert(
-            "PRIME_AGENT_BASH_SHELL".into(),
+            "UNHARNESSED_BASH_SHELL".into(),
             shell_path.to_string_lossy().to_string(),
         );
     }
     if let Some(command_prefix) = &options.command_prefix {
         env.insert(
-            "PRIME_AGENT_BASH_COMMAND_PREFIX".into(),
+            "UNHARNESSED_BASH_COMMAND_PREFIX".into(),
             command_prefix.clone(),
         );
     }
@@ -856,15 +856,15 @@ mod tests {
     fn boot_concurrency_defaults_and_override() {
         let default = default_kernel_boot_concurrency();
         assert!(default >= 4);
-        std::env::set_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS", "2");
+        std::env::set_var("UNHARNESSED_MAX_CONCURRENT_KERNEL_BOOTS", "2");
         assert_eq!(resolve_kernel_boot_concurrency(), 2);
-        std::env::set_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS", "0");
+        std::env::set_var("UNHARNESSED_MAX_CONCURRENT_KERNEL_BOOTS", "0");
         assert_eq!(resolve_kernel_boot_concurrency(), default);
-        std::env::set_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS", "junk");
+        std::env::set_var("UNHARNESSED_MAX_CONCURRENT_KERNEL_BOOTS", "junk");
         assert_eq!(resolve_kernel_boot_concurrency(), default);
-        std::env::set_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS", "1000");
+        std::env::set_var("UNHARNESSED_MAX_CONCURRENT_KERNEL_BOOTS", "1000");
         assert_eq!(resolve_kernel_boot_concurrency(), 64);
-        std::env::remove_var("PRIME_AGENT_MAX_CONCURRENT_KERNEL_BOOTS");
+        std::env::remove_var("UNHARNESSED_MAX_CONCURRENT_KERNEL_BOOTS");
     }
 
     #[tokio::test]
@@ -905,11 +905,11 @@ mod tests {
             "Python execution aborted"
         )));
         assert!(!startup_failure_is_retryable(&anyhow!(
-            "PRIME_AGENT_KERNEL_PYTHON points to a Python missing a current unharnessed-runtime: /bad"
+            "UNHARNESSED_KERNEL_PYTHON points to a Python missing a current unharnessed-runtime: /bad"
         )));
         assert!(!startup_failure_is_retryable(&anyhow!(
             "Kernel runtime speaks protocol 2, expected 3. \
-             Update unharnessed-runtime in the kernel Python (PRIME_AGENT_KERNEL_PYTHON) to match this unharnessed."
+             Update unharnessed-runtime in the kernel Python (UNHARNESSED_KERNEL_PYTHON) to match this unharnessed."
         )));
     }
 

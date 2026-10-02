@@ -39,14 +39,13 @@ fn run(home: &Path, args: &[&str], script: &Value) -> (String, String, i32) {
     let output = Command::new(bin)
         .args(args)
         .env("HOME", home)
-        .env("PRIME_AGENT_FAUX_SCRIPT", script.to_string())
+        .env("UNHARNESSED_FAUX_SCRIPT", script.to_string())
         // Keep the isolated HOME authoritative: ambient agent/session dir
         // overrides and daemon sockets from the test environment must not
         // leak in (fresh sessions never probe the daemon; keep it that way).
-        .env_remove("PRIME_AGENT_CODING_AGENT_DIR")
-        .env_remove("PRIME_AGENT_SESSION_DIR")
-        .env_remove("PRIME_AGENT_CODING_AGENT_SESSION_DIR")
-        .env_remove("PRIME_AGENT_DAEMON_SOCKET")
+        .env_remove("UNHARNESSED_CODING_AGENT_DIR")
+        .env_remove("UNHARNESSED_SESSION_DIR")
+        .env_remove("UNHARNESSED_CODING_AGENT_SESSION_DIR")
         .env_remove("PRIME_API_KEY")
         .current_dir(home)
         .output()

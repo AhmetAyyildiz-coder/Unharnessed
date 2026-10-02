@@ -228,7 +228,7 @@ async fn retry_failed_turn(
                 cwd: &cwd,
                 agent_dir: &agent_dir,
                 provider_target: &provider_target,
-                failover: std::env::var_os("PRIME_AGENT_FAUX_SCRIPT").is_none(),
+                failover: std::env::var_os("UNHARNESSED_FAUX_SCRIPT").is_none(),
                 max_park: None,
             };
             // ACP has no retry update; the outcome row persists.

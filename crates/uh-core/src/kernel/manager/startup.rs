@@ -175,7 +175,7 @@ impl Inner {
             env.insert(key.clone(), value.clone());
         }
         env.insert(
-            "PRIME_AGENT_KERNEL_OWNER_PID".to_string(),
+            "UNHARNESSED_KERNEL_OWNER_PID".to_string(),
             std::process::id().to_string(),
         );
         let cwd = self.options.cwd.clone();
@@ -261,7 +261,7 @@ impl Inner {
             crate::kernel::bootstrap::invalidate_runtime_probe_cache();
             return Err(anyhow!(
                 "Kernel runtime speaks protocol {protocol}, expected {REPL_PROTOCOL_VERSION}. \
-                 Update unharnessed-runtime in the kernel Python (PRIME_AGENT_KERNEL_PYTHON) to match this unharnessed."
+                 Update unharnessed-runtime in the kernel Python (UNHARNESSED_KERNEL_PYTHON) to match this unharnessed."
             ));
         }
         {

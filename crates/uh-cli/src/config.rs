@@ -9,14 +9,14 @@ pub const APP_NAME: &str = "unharnessed";
 /// The agent state directory name (`piConfig.configDir` in package.json).
 pub const CONFIG_DIR_NAME: &str = ".prime/agent";
 
-/// `PRIME_AGENT_CODING_AGENT_DIR`: overrides the agent state directory.
-pub const ENV_AGENT_DIR: &str = "PRIME_AGENT_CODING_AGENT_DIR";
+/// `UNHARNESSED_CODING_AGENT_DIR`: overrides the agent state directory.
+pub const ENV_AGENT_DIR: &str = "UNHARNESSED_CODING_AGENT_DIR";
 
-/// `PRIME_AGENT_SESSION_DIR`: overrides the session directory.
-pub const ENV_SESSION_DIR: &str = "PRIME_AGENT_SESSION_DIR";
+/// `UNHARNESSED_SESSION_DIR`: overrides the session directory.
+pub const ENV_SESSION_DIR: &str = "UNHARNESSED_SESSION_DIR";
 
-/// `PRIME_AGENT_CODING_AGENT_SESSION_DIR`: legacy session-dir override.
-pub const ENV_LEGACY_SESSION_DIR: &str = "PRIME_AGENT_CODING_AGENT_SESSION_DIR";
+/// `UNHARNESSED_CODING_AGENT_SESSION_DIR`: legacy session-dir override.
+pub const ENV_LEGACY_SESSION_DIR: &str = "UNHARNESSED_CODING_AGENT_SESSION_DIR";
 
 /// The version compiled into this build, used when no packaged manifest
 /// overrides it (dev checkouts, cargo target dirs).
@@ -34,10 +34,10 @@ pub fn version() -> &'static str {
     })
 }
 
-/// The packaged package-dir (`PI_PACKAGE_DIR` wins, else the directory of
+/// The packaged package-dir (`UNHARNESSED_PACKAGE_DIR` wins, else the directory of
 /// the executable — the TS `getPackageDir` bun-binary layout).
 fn package_dir() -> PathBuf {
-    if let Ok(env_dir) = std::env::var("PI_PACKAGE_DIR") {
+    if let Ok(env_dir) = std::env::var("UNHARNESSED_PACKAGE_DIR") {
         if !env_dir.is_empty() {
             return expand_tilde_path(&env_dir);
         }
@@ -55,8 +55,8 @@ fn packaged_manifest_version() -> Option<String> {
     (!version.is_empty()).then(|| version.to_string())
 }
 
-/// `PRIME_AGENT_OFFLINE`: truthy values enable offline mode.
-pub const ENV_OFFLINE: &str = "PI_OFFLINE";
+/// `UNHARNESSED_OFFLINE`: truthy values enable offline mode.
+pub const ENV_OFFLINE: &str = "UNHARNESSED_OFFLINE";
 
 /// Expand a leading `~`, `~/`, or (Windows) `~\` segment against the home
 /// directory (TS `expandTildePath`, including the win32 backslash arm).
@@ -77,7 +77,7 @@ pub fn expand_tilde_path(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-/// The agent state directory, honoring `PRIME_AGENT_CODING_AGENT_DIR`.
+/// The agent state directory, honoring `UNHARNESSED_CODING_AGENT_DIR`.
 pub fn get_agent_dir() -> PathBuf {
     match std::env::var(ENV_AGENT_DIR) {
         Ok(dir) if !dir.is_empty() => expand_tilde_path(&dir),

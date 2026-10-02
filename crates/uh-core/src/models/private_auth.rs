@@ -319,9 +319,9 @@ pub fn write_private_prime_authorization_cache(
     );
 }
 
-/// `PI_OFFLINE=1/true/yes` disables network refreshes.
+/// `UNHARNESSED_OFFLINE=1/true/yes` disables network refreshes.
 pub fn is_offline_mode_enabled() -> bool {
-    match std::env::var("PI_OFFLINE") {
+    match std::env::var("UNHARNESSED_OFFLINE") {
         Ok(value) => {
             value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes")
         }

@@ -16,7 +16,7 @@
 //! fail-open: an unreadable, corrupt, or unwritable memo costs one
 //! re-probe, never a verdict.
 //!
-//! Managed-venv path only: a caller-owned `PRIME_AGENT_KERNEL_PYTHON`
+//! Managed-venv path only: a caller-owned `UNHARNESSED_KERNEL_PYTHON`
 //! override never reads or writes this memo (the d14 ruling — the
 //! override path keeps the direct probe).
 

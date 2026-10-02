@@ -140,7 +140,7 @@ async fn print_mode_main(options: &RunOptions) -> Result<i32, String> {
 
 /// Assemble the in-process session engine for a headless run: model
 /// resolution, session persistence, and the engine facade. The faux-script
-/// seam (`PRIME_AGENT_FAUX_SCRIPT`) drives the same assembly without the
+/// seam (`UNHARNESSED_FAUX_SCRIPT`) drives the same assembly without the
 /// network; verification harness only, never set by the product.
 ///
 /// The switchable provider target the session's stream reads per call
@@ -175,7 +175,7 @@ async fn build_headless_engine_parts_with_lease(
     options: &RunOptions,
 ) -> Result<(HeadlessEngine, Option<uh_daemon::lease::SessionLease>), String> {
     let (session_manager, lease) = select_session_manager_with_lease(options)?;
-    if let Ok(script) = std::env::var("PRIME_AGENT_FAUX_SCRIPT") {
+    if let Ok(script) = std::env::var("UNHARNESSED_FAUX_SCRIPT") {
         let engine = build_faux_engine_with(options, &script, session_manager).await?;
         return Ok((engine, lease));
     }
@@ -1042,7 +1042,7 @@ async fn run_prompts_and_emit(
             cwd: options.config.cwd.clone(),
             agent_dir: options.config.agent_dir.clone(),
             provider_target: std::sync::Arc::clone(provider_target),
-            failover: std::env::var_os("PRIME_AGENT_FAUX_SCRIPT").is_none(),
+            failover: std::env::var_os("UNHARNESSED_FAUX_SCRIPT").is_none(),
             max_park: wake_limit,
         },
     );
@@ -1228,7 +1228,7 @@ async fn build_faux_engine_with(
 ) -> Result<HeadlessEngine, String> {
     let config = &options.config;
     let script: serde_json::Value = serde_json::from_str(script)
-        .map_err(|error| format!("invalid PRIME_AGENT_FAUX_SCRIPT: {error}"))?;
+        .map_err(|error| format!("invalid UNHARNESSED_FAUX_SCRIPT: {error}"))?;
     // Response entries: a plain string answers with fixed text;
     // `{"systemPrompt": true}` answers with the request's system prompt
     // (binary-level verification of session assembly; never used by the
@@ -1285,7 +1285,7 @@ async fn build_faux_engine_with(
                 })
                 .collect::<Result<Vec<_>, String>>()
         })
-        .ok_or_else(|| "PRIME_AGENT_FAUX_SCRIPT requires a responses array".to_string())??;
+        .ok_or_else(|| "UNHARNESSED_FAUX_SCRIPT requires a responses array".to_string())??;
     // The same faux-script model contract as the daemon worker seam: a
     // `reasoning` model makes the harness script thinking-capable turns so
     // thinking-level resolution can be verified without the network.

@@ -2,7 +2,7 @@
 //! behind, so a killed/crashed kernel cannot leak process groups.
 //!
 //! The Python runtime journals every `bash()` process group under the kernel
-//! pid (`kernelPid`) into the file named by `PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL`;
+//! pid (`kernelPid`) into the file named by `UNHARNESSED_INTERNAL_ORPHAN_PROCESS_JOURNAL`;
 //! the host reaps those groups when the kernel dies without running its
 //! shutdown hook.
 //!
@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 
 /// Environment variable naming the journal file.
-pub const ORPHAN_PROCESS_JOURNAL_ENV: &str = "PRIME_AGENT_INTERNAL_ORPHAN_PROCESS_JOURNAL";
+pub const ORPHAN_PROCESS_JOURNAL_ENV: &str = "UNHARNESSED_INTERNAL_ORPHAN_PROCESS_JOURNAL";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveOrphanProcess {

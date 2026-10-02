@@ -1,4 +1,4 @@
-//! Offline mode (`PI_OFFLINE`): no network at all, serve cache/bundled/compiled.
+//! Offline mode (`UNHARNESSED_OFFLINE`): no network at all, serve cache/bundled/compiled.
 //!
 //! Ported from `isCatalogOffline` in `model-catalog-cache.ts`: the value
 //! matches `^(1|true|yes)$` case-insensitively; unset or anything else
@@ -11,7 +11,7 @@ pub fn is_catalog_offline() -> bool {
 }
 
 fn offline_flag() -> Option<String> {
-    std::env::var("PI_OFFLINE")
+    std::env::var("UNHARNESSED_OFFLINE")
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())
 }
@@ -26,9 +26,9 @@ mod tests {
     #[test]
     fn parses_offline_values() {
         let yes = |raw: &str| {
-            std::env::remove_var("PI_OFFLINE");
+            std::env::remove_var("UNHARNESSED_OFFLINE");
             // SAFETY: single-threaded test runtime before tokio starts.
-            std::env::set_var("PI_OFFLINE", raw);
+            std::env::set_var("UNHARNESSED_OFFLINE", raw);
             is_catalog_offline()
         };
         assert!(yes("1"));
@@ -38,7 +38,7 @@ mod tests {
         assert!(!yes("0"));
         assert!(!yes("no"));
         assert!(!yes("maybe"));
-        std::env::remove_var("PI_OFFLINE");
+        std::env::remove_var("UNHARNESSED_OFFLINE");
         assert!(!is_catalog_offline());
     }
 }

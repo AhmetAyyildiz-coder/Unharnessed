@@ -57,11 +57,11 @@ fn print_resume_refuses_a_foreign_lease_holder() {
     let env = vec![
         ("HOME".to_string(), dir.path().to_string_lossy().to_string()),
         (
-            "PRIME_AGENT_CODING_AGENT_DIR".to_string(),
+            "UNHARNESSED_CODING_AGENT_DIR".to_string(),
             agent_dir.to_string_lossy().to_string(),
         ),
         (
-            "PRIME_AGENT_FAUX_SCRIPT".to_string(),
+            "UNHARNESSED_FAUX_SCRIPT".to_string(),
             json!({"responses": [{"text": "first turn"}]}).to_string(),
         ),
     ];

@@ -57,8 +57,8 @@ export UV_CACHE_DIR=${UV_CACHE_DIR:-$REAL_HOME/.cache/uv}
 export UV_PYTHON_INSTALL_DIR=${UV_PYTHON_INSTALL_DIR:-$REAL_HOME/.local/share/uv/python}
 [ -f "$REAL_HOME/.gitconfig" ] && export GIT_CONFIG_GLOBAL="$REAL_HOME/.gitconfig"
 export HOME="$GATE/home"
-export PRIME_AGENT_KERNEL_VENV="$VENV"
-export PI_PACKAGE_DIR="$ROOT"
+export UNHARNESSED_KERNEL_VENV="$VENV"
+export UNHARNESSED_PACKAGE_DIR="$ROOT"
 export UH_CORE_KERNEL_PYTHON="$VENV/bin/python"
 export DO_NOT_TRACK=1 CARGO_TERM_COLOR=never
 CLEAN_PATH=

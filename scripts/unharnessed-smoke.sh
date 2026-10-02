@@ -18,8 +18,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BIN=${UNHARNESSED_BIN:-$ROOT/target/release/unharnessed}
 mkdir -p "$OUT/sessions" "$OUT/work"
 OUT=$(cd "$OUT" && pwd)
-export PRIME_AGENT_KERNEL_VENV="$OUT/kernel-venv"
-export DO_NOT_TRACK=1 PRIME_AGENT_TELEMETRY=0
+export UNHARNESSED_KERNEL_VENV="$OUT/kernel-venv"
+export DO_NOT_TRACK=1
 WORK="$OUT/work"
 CHECK="$ROOT/scripts/unharnessed-smoke-check.py"
 FAILED=0

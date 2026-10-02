@@ -18,7 +18,7 @@
 )]
 
 //! End-to-end print-runtime verification: the real binary, an isolated HOME,
-//! and the scripted faux provider (`PRIME_AGENT_FAUX_SCRIPT`) drive the complete
+//! and the scripted faux provider (`UNHARNESSED_FAUX_SCRIPT`) drive the complete
 //! pipeline — CLI parse, session assembly, agent loop, tool bridge seam, event
 //! emission, headless terminal selection — deterministically.
 
@@ -30,8 +30,8 @@ fn run(args: &[&str], script: &serde_json::Value) -> (String, String, i32) {
     let output = Command::new(bin)
         .args(args)
         .env("HOME", home.path())
-        .env("PRIME_AGENT_AGENT_DIR", home.path().join("agent"))
-        .env("PRIME_AGENT_FAUX_SCRIPT", script.to_string())
+        .env("UNHARNESSED_AGENT_DIR", home.path().join("agent"))
+        .env("UNHARNESSED_FAUX_SCRIPT", script.to_string())
         .env_remove("RLM_DEPTH")
         .current_dir(home.path())
         .output()
@@ -127,12 +127,12 @@ fn run_in_home(
     let output = Command::new(bin)
         .args(args)
         .env("HOME", home)
-        .env("PRIME_AGENT_FAUX_SCRIPT", script.to_string())
+        .env("UNHARNESSED_FAUX_SCRIPT", script.to_string())
         // Keep the isolated HOME authoritative: ambient agent/session dir
         // overrides from the test environment must not leak in.
-        .env_remove("PRIME_AGENT_CODING_AGENT_DIR")
-        .env_remove("PRIME_AGENT_SESSION_DIR")
-        .env_remove("PRIME_AGENT_CODING_AGENT_SESSION_DIR")
+        .env_remove("UNHARNESSED_CODING_AGENT_DIR")
+        .env_remove("UNHARNESSED_SESSION_DIR")
+        .env_remove("UNHARNESSED_CODING_AGENT_SESSION_DIR")
         .env_remove("RLM_DEPTH")
         .current_dir(home)
         .output()
@@ -815,10 +815,10 @@ fn run_in_home_cwd(
     let output = Command::new(bin)
         .args(args)
         .env("HOME", home)
-        .env("PRIME_AGENT_FAUX_SCRIPT", script.to_string())
-        .env_remove("PRIME_AGENT_CODING_AGENT_DIR")
-        .env_remove("PRIME_AGENT_SESSION_DIR")
-        .env_remove("PRIME_AGENT_CODING_AGENT_SESSION_DIR")
+        .env("UNHARNESSED_FAUX_SCRIPT", script.to_string())
+        .env_remove("UNHARNESSED_CODING_AGENT_DIR")
+        .env_remove("UNHARNESSED_SESSION_DIR")
+        .env_remove("UNHARNESSED_CODING_AGENT_SESSION_DIR")
         .env_remove("RLM_DEPTH")
         .current_dir(cwd)
         .output()

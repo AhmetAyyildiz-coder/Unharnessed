@@ -65,12 +65,12 @@ impl AcpChild {
         command
             .args(args)
             .env("HOME", home.path())
-            // The CLI's agent dir (`PRIME_AGENT_CODING_AGENT_DIR`) is where
+            // The CLI's agent dir (`UNHARNESSED_CODING_AGENT_DIR`) is where
             // the registry reads models.json from; the runtime env name
             // rides along for the kernel-side paths.
-            .env("PRIME_AGENT_CODING_AGENT_DIR", &agent_dir)
-            .env("PRIME_AGENT_AGENT_DIR", &agent_dir)
-            .env("PRIME_AGENT_FAUX_SCRIPT", script.to_string());
+            .env("UNHARNESSED_CODING_AGENT_DIR", &agent_dir)
+            .env("UNHARNESSED_AGENT_DIR", &agent_dir)
+            .env("UNHARNESSED_FAUX_SCRIPT", script.to_string());
         for (key, value) in extra_env {
             command.env(key, value);
         }

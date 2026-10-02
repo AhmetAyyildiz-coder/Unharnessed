@@ -18,7 +18,7 @@
 )]
 
 //! Kernel-packaging e2e: the packaged (exe-adjacent) layout boots a
-//! session with NO `PI_PACKAGE_DIR`.
+//! session with NO `UNHARNESSED_PACKAGE_DIR`.
 //!
 //! The staged layout is the binary plus `package.json` (the version
 //! manifest), the `unharnessed-runtime/` sidecar, and `skills/` beside it,
@@ -167,8 +167,8 @@ fn sandbox() -> Sandbox {
 
 impl Sandbox {
     /// The packaged binary with a hermetic environment: sandboxed HOME and
-    /// agent dir, no ambient `PI_PACKAGE_DIR`, no ambient kernel-override
-    /// env (`PRIME_AGENT_KERNEL_PYTHON` / `PRIME_AGENT_KERNEL_VENV` — the
+    /// agent dir, no ambient `UNHARNESSED_PACKAGE_DIR`, no ambient kernel-override
+    /// env (`UNHARNESSED_KERNEL_PYTHON` / `UNHARNESSED_KERNEL_VENV` — the
     /// gate kernel-env recipe exports them for the live-kernel suites, and
     /// they must not steer the packaged layout's own resolution), no
     /// ambient API keys. A test that wants an override sets it after this
@@ -177,12 +177,12 @@ impl Sandbox {
         let mut command = Command::new(staged.join("unharnessed"));
         command
             .env("HOME", self.home.path())
-            .env("PRIME_AGENT_CODING_AGENT_DIR", &self.agent_dir)
-            .env_remove("PI_PACKAGE_DIR")
-            .env_remove("PRIME_AGENT_KERNEL_PYTHON")
-            .env_remove("PRIME_AGENT_KERNEL_VENV")
-            .env_remove("PRIME_AGENT_SESSION_DIR")
-            .env_remove("PRIME_AGENT_CODING_AGENT_SESSION_DIR")
+            .env("UNHARNESSED_CODING_AGENT_DIR", &self.agent_dir)
+            .env_remove("UNHARNESSED_PACKAGE_DIR")
+            .env_remove("UNHARNESSED_KERNEL_PYTHON")
+            .env_remove("UNHARNESSED_KERNEL_VENV")
+            .env_remove("UNHARNESSED_SESSION_DIR")
+            .env_remove("UNHARNESSED_CODING_AGENT_SESSION_DIR")
             .env_remove("PRIME_API_KEY")
             .current_dir(&self.cwd);
         command
@@ -219,7 +219,7 @@ fn run_json_turn(
         .arg("json")
         .arg("-p")
         .arg("use the kernel")
-        .env("PRIME_AGENT_FAUX_SCRIPT", script.to_string())
+        .env("UNHARNESSED_FAUX_SCRIPT", script.to_string())
         .output()
         .expect("run packaged binary");
     (
@@ -230,7 +230,7 @@ fn run_json_turn(
 }
 
 /// A packaged session boots the kernel with the exe-adjacent layout and no
-/// `PI_PACKAGE_DIR`: the ipython cell runs through the staged binary, the
+/// `UNHARNESSED_PACKAGE_DIR`: the ipython cell runs through the staged binary, the
 /// bundled skills resolve from the staged `skills/` directory, and the
 /// staged version manifest reports the pinned version.
 #[test]
@@ -257,7 +257,7 @@ fn packaged_session_boots_kernel_without_pi_package_dir() {
     let script = kernel_boot_script(&receipt);
 
     let mut command = box_.command(staged);
-    command.env("PRIME_AGENT_KERNEL_PYTHON", &kernel_python);
+    command.env("UNHARNESSED_KERNEL_PYTHON", &kernel_python);
     let (stdout, stderr, code) = run_json_turn(&mut command, &script);
     assert_eq!(code, Some(0), "stdout: {stdout}\nstderr: {stderr}");
     // The ipython tool result carried the cell output.
@@ -355,7 +355,7 @@ fn missing_sidecar_reports_actionable_bootstrap_error() {
     );
 }
 
-/// A `PRIME_AGENT_KERNEL_PYTHON` that lacks the runtime reports the
+/// A `UNHARNESSED_KERNEL_PYTHON` that lacks the runtime reports the
 /// TS-matching override error (the existing UX path, asserted end to end
 /// through the packaged binary).
 #[test]
@@ -369,20 +369,20 @@ fn invalid_kernel_python_override_reports_ts_error() {
     let output = box_
         .command(staged)
         .arg("--unharnessed-bootstrap")
-        .env("PRIME_AGENT_KERNEL_PYTHON", &bogus)
+        .env("UNHARNESSED_KERNEL_PYTHON", &bogus)
         .output()
         .expect("run packaged binary");
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("PRIME_AGENT_KERNEL_PYTHON points to a Python missing"),
+        stderr.contains("UNHARNESSED_KERNEL_PYTHON points to a Python missing"),
         "TS override error missing: {stderr}"
     );
 }
 
 /// The staged manifest version the hostile-env regression pins (the parent
 /// writes it; the child asserts `--version` reports it, so the decoy
-/// `PI_PACKAGE_DIR` manifest can never win).
+/// `UNHARNESSED_PACKAGE_DIR` manifest can never win).
 const HOSTILE_STAGED_VERSION: &str = "9.8.7-hostile";
 
 /// Re-exec marker: the child mode of the hostile-host-env regression test
@@ -392,15 +392,15 @@ const HOSTILE_STAGED_VERSION: &str = "9.8.7-hostile";
 const HOSTILE_CHILD_STAGE: &str = "UH_PACKAGED_E2E_HOSTILE_STAGE";
 
 /// The child half of the hostile-host-env regression: the whole test
-/// process carries the hostile env — a `PRIME_AGENT_KERNEL_PYTHON` that
-/// would satisfy the bootstrap if it leaked, a `PI_PACKAGE_DIR` package
-/// dir with its own manifest, a decoy `PRIME_AGENT_KERNEL_VENV` — and the
+/// process carries the hostile env — a `UNHARNESSED_KERNEL_PYTHON` that
+/// would satisfy the bootstrap if it leaked, a `UNHARNESSED_PACKAGE_DIR` package
+/// dir with its own manifest, a decoy `UNHARNESSED_KERNEL_VENV` — and the
 /// packaged layout must still behave exactly as on a clean host.
 fn hostile_child_assertions(staged: &Path) {
     let _guard = serial_lock();
     let box_ = sandbox();
 
-    // The staged version manifest wins over the hostile PI_PACKAGE_DIR
+    // The staged version manifest wins over the hostile UNHARNESSED_PACKAGE_DIR
     // decoy: --version reads the exe-adjacent package.json.
     let output = box_
         .command(staged)
@@ -411,7 +411,7 @@ fn hostile_child_assertions(staged: &Path) {
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
         HOSTILE_STAGED_VERSION,
-        "the hostile PI_PACKAGE_DIR must not win: {}",
+        "the hostile UNHARNESSED_PACKAGE_DIR must not win: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -439,20 +439,20 @@ fn hostile_child_assertions(staged: &Path) {
         "the hint must name the staged dir: {stderr}"
     );
     assert!(
-        !stderr.contains("PRIME_AGENT_KERNEL_PYTHON points to"),
+        !stderr.contains("UNHARNESSED_KERNEL_PYTHON points to"),
         "the hostile kernel-python override leaked into the packaged layout: {stderr}"
     );
-    if let Some(package_decoy) = std::env::var_os("PI_PACKAGE_DIR") {
+    if let Some(package_decoy) = std::env::var_os("UNHARNESSED_PACKAGE_DIR") {
         assert!(
             !stderr.contains(Path::new(&package_decoy).to_string_lossy().as_ref()),
-            "the hostile PI_PACKAGE_DIR leaked into the packaged layout: {stderr}"
+            "the hostile UNHARNESSED_PACKAGE_DIR leaked into the packaged layout: {stderr}"
         );
     }
 }
 
 /// Regression for the recurring battery finding: a gate/battery host that
-/// exports the kernel-env recipe (`PRIME_AGENT_KERNEL_PYTHON` for the
-/// live-kernel suites, `PI_PACKAGE_DIR` for the sidecar) leaks it into the
+/// exports the kernel-env recipe (`UNHARNESSED_KERNEL_PYTHON` for the
+/// live-kernel suites, `UNHARNESSED_PACKAGE_DIR` for the sidecar) leaks it into the
 /// packaged layout's test env, and `missing_sidecar_reports_actionable_bootstrap_error`
 /// flips (the bootstrap honors the override and exits 0 instead of 1).
 /// The leak vector is env inheritance into the test process itself, so
@@ -490,7 +490,7 @@ fn packaged_layout_stays_hermetic_under_hostile_host_env() {
     std::fs::write(venv_decoy.join("bin").join("python"), "#!/bin/sh\nexit 0\n")
         .expect("decoy python");
 
-    // The most hostile PRIME_AGENT_KERNEL_PYTHON is a python that would
+    // The most hostile UNHARNESSED_KERNEL_PYTHON is a python that would
     // satisfy the bootstrap (exit 0) if it leaked: the live kernel venv on
     // this machine when present, else a plausible bogus path (which would
     // flip the failure to the override error instead).
@@ -501,9 +501,9 @@ fn packaged_layout_stays_hermetic_under_hostile_host_env() {
         .arg("--exact")
         .arg("packaged_layout_stays_hermetic_under_hostile_host_env")
         .env(HOSTILE_CHILD_STAGE, staged)
-        .env("PRIME_AGENT_KERNEL_PYTHON", &hostile_python)
-        .env("PI_PACKAGE_DIR", &package_decoy)
-        .env("PRIME_AGENT_KERNEL_VENV", &venv_decoy)
+        .env("UNHARNESSED_KERNEL_PYTHON", &hostile_python)
+        .env("UNHARNESSED_PACKAGE_DIR", &package_decoy)
+        .env("UNHARNESSED_KERNEL_VENV", &venv_decoy)
         .output()
         .expect("re-exec the test binary with the hostile host env");
     assert!(
@@ -515,7 +515,7 @@ fn packaged_layout_stays_hermetic_under_hostile_host_env() {
 }
 
 /// Heavy (network + uv): the packaged sidecar bootstraps a fresh kernel venv
-/// with no `PRIME_AGENT_KERNEL_PYTHON` and no `PI_PACKAGE_DIR` (both scrubbed
+/// with no `UNHARNESSED_KERNEL_PYTHON` and no `UNHARNESSED_PACKAGE_DIR` (both scrubbed
 /// by the hermetic sandbox command, so a gate host exporting them cannot
 /// steer this run), then boots a session on it. Run explicitly:
 /// `cargo test -p uh-cli --test packaged_layout_e2e -- --ignored`
@@ -533,7 +533,7 @@ fn bootstrap_kernel_venv_from_packaged_sidecar() {
     let output = box_
         .command(staged)
         .arg("--unharnessed-bootstrap")
-        .env("PRIME_AGENT_KERNEL_VENV", &venv)
+        .env("UNHARNESSED_KERNEL_VENV", &venv)
         .output()
         .expect("run packaged binary");
     assert_eq!(
@@ -555,7 +555,7 @@ fn bootstrap_kernel_venv_from_packaged_sidecar() {
     let receipt = box_.home.path().join("kernel-receipt.json");
     let script = kernel_boot_script(&receipt);
     let mut command = box_.command(staged);
-    command.env("PRIME_AGENT_KERNEL_VENV", &venv);
+    command.env("UNHARNESSED_KERNEL_VENV", &venv);
     let (stdout, stderr, code) = run_json_turn(&mut command, &script);
     assert_eq!(code, Some(0), "stdout: {stdout}\nstderr: {stderr}");
     assert!(

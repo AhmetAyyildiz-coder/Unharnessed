@@ -204,7 +204,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     let compaction_settings = settings.settings().compaction.clone().unwrap_or_default();
     // Request timing (TS #2462): the settings half of the flag is read once
     // here — `settings` moves into the resource loader below and its merged
-    // snapshot is fixed for the session anyway — while the `PI_REQUEST_TIMING`
+    // snapshot is fixed for the session anyway — while the `UNHARNESSED_REQUEST_TIMING`
     // env half stays live inside the wrappers' per-request check.
     let request_timing_settings = settings.get_request_timing();
     let (mcp_skill_overrides, mcp_generic_servers, built_manager) =

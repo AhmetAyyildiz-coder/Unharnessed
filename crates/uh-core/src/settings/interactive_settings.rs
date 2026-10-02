@@ -22,8 +22,8 @@ impl SettingsManager {
         self.save_global_scope()
     }
 
-    /// `terminal.clearOnShrink` (TS default: the `PI_CLEAR_ON_SHRINK`
-    /// environment value; this port has no such override).
+    /// `terminal.clearOnShrink` (TS default: an environment value; this
+    /// port has no such override).
     #[must_use]
     pub fn get_clear_on_shrink(&self) -> bool {
         self.settings()
@@ -161,8 +161,8 @@ impl SettingsManager {
         self.save_global_scope()
     }
 
-    /// `showHardwareCursor` (TS default false; the `PI_HARDWARE_CURSOR`
-    /// override is not part of this port).
+    /// `showHardwareCursor` (TS default false; the TS environment override
+    /// is not part of this port).
     #[must_use]
     pub fn get_show_hardware_cursor(&self) -> bool {
         self.settings().show_hardware_cursor.unwrap_or(false)

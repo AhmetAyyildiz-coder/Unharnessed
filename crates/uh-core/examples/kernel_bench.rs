@@ -24,7 +24,7 @@
 //! Environment:
 //!   `UH_BENCH_SKILLS_DIR`   — skills directory (repo `skills/`); defaults to
 //!                           `../skills` relative to the crate
-//!   `PRIME_AGENT_KERNEL_VENV` / `PRIME_AGENT_KERNEL_PYTHON` / HOME as for the
+//!   `UNHARNESSED_KERNEL_VENV` / `UNHARNESSED_KERNEL_PYTHON` / HOME as for the
 //!                           product paths themselves.
 //!
 //! Run cold with a fresh HOME + venv dir, then warm with the same dirs to

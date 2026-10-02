@@ -13,8 +13,8 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-/// `PI_OAUTH_CALLBACK_HOST` (TS `CALLBACK_HOST`, default `127.0.0.1`).
-pub(crate) const CALLBACK_HOST_ENV: &str = "PI_OAUTH_CALLBACK_HOST";
+/// `UNHARNESSED_OAUTH_CALLBACK_HOST` (TS `CALLBACK_HOST`, default `127.0.0.1`).
+pub(crate) const CALLBACK_HOST_ENV: &str = "UNHARNESSED_OAUTH_CALLBACK_HOST";
 
 /// The app registration's redirect: `http://localhost:1455/auth/callback`
 /// (TS `REDIRECT_URI`; the port is the registration's, not a scan range).

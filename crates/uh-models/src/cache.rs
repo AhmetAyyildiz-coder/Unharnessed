@@ -10,7 +10,7 @@
 //!   source, hourly gating skips fetches attempted less than an hour ago,
 //!   every failure keeps the last-good snapshot, and 401/403 clears only
 //!   the requesting (non-public) scope;
-//! - `PI_OFFLINE` skips the network entirely.
+//! - `UNHARNESSED_OFFLINE` skips the network entirely.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

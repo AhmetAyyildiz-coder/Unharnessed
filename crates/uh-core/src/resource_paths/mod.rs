@@ -20,11 +20,11 @@ use std::path::PathBuf;
 /// The TS `CONFIG_DIR_NAME` (project-local settings root).
 pub use crate::settings::CONFIG_DIR_NAME;
 
-/// The package directory: `PI_PACKAGE_DIR` wins (matching the TS
+/// The package directory: `UNHARNESSED_PACKAGE_DIR` wins (matching the TS
 /// `getPackageDir` override), then the directory of the executable (the
 /// packaged bun-binary layout).
 pub(crate) fn package_dir() -> PathBuf {
-    if let Ok(env_dir) = std::env::var("PI_PACKAGE_DIR") {
+    if let Ok(env_dir) = std::env::var("UNHARNESSED_PACKAGE_DIR") {
         if !env_dir.is_empty() {
             return expand_tilde(&env_dir);
         }
@@ -90,7 +90,7 @@ pub(crate) fn get_bundled_skills_dir() -> PathBuf {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    /// Process-wide env reads and writes (HOME, `PI_OFFLINE`) serialize
+    /// Process-wide env reads and writes (HOME, `UNHARNESSED_OFFLINE`) serialize
     /// through one lock across the resolution test modules: parallel test
     /// threads in the same binary otherwise race the process env.
     pub(crate) static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());

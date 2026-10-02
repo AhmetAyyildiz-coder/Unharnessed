@@ -11,7 +11,7 @@ use crate::resource_paths::source::SourceScope;
 use crate::resource_paths::{ResourceResolver, ResourceResolverOptions};
 use crate::settings::SettingsManager;
 
-/// Environment mutations (HOME, `PI_OFFLINE`) are process-wide: tests that
+/// Environment mutations (HOME, `UNHARNESSED_OFFLINE`) are process-wide: tests that
 /// touch them, and tests that read the env-sensitive update flows,
 /// serialize through the shared packages lock.
 use crate::resource_paths::test_support::ENV_MUTEX;

@@ -74,7 +74,7 @@ pub fn kernel_python_skills(skills: &[Skill]) -> Vec<KernelPythonSkill> {
 /// goal bridge plus the pre-imported Python skills.
 ///
 /// The session's agent dir is propagated explicitly into the kernel env
-/// (`PRIME_AGENT_CODING_AGENT_DIR`): ambient inheritance is correct for the
+/// (`UNHARNESSED_CODING_AGENT_DIR`): ambient inheritance is correct for the
 /// product paths, but an embedding host whose ambient env differs from the
 /// session's agent dir must not leak its own paths into the kernel. Same
 /// discipline as the daemon worker env (#109).
@@ -99,7 +99,7 @@ pub fn kernel_provisioner(
 ) -> Arc<KernelProvisioner> {
     let mut env = HashMap::with_capacity(1);
     env.insert(
-        "PRIME_AGENT_CODING_AGENT_DIR".to_string(),
+        "UNHARNESSED_CODING_AGENT_DIR".to_string(),
         agent_dir.to_string_lossy().to_string(),
     );
     Arc::new(KernelProvisioner::new(

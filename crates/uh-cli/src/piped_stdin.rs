@@ -15,8 +15,8 @@ use std::time::Duration;
 
 /// Env override for the no-input window of a non-interactive stdin read,
 /// in milliseconds. `0` skips the read entirely; values above the cap are
-/// clamped (TS `PI_STDIN_TIMEOUT_MS`).
-pub const STDIN_IDLE_TIMEOUT_MS_ENV: &str = "PI_STDIN_TIMEOUT_MS";
+/// clamped (TS `UNHARNESSED_STDIN_TIMEOUT_MS`).
+pub const STDIN_IDLE_TIMEOUT_MS_ENV: &str = "UNHARNESSED_STDIN_TIMEOUT_MS";
 
 const DEFAULT_STDIN_IDLE_TIMEOUT_MS: u64 = 250;
 const MAX_STDIN_IDLE_TIMEOUT_MS: u64 = 30_000;

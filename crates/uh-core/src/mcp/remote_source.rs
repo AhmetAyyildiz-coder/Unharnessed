@@ -93,7 +93,7 @@ fn cache_plugins_snapshot(agent_dir: &Path) -> Option<PluginsCatalog> {
     None
 }
 
-/// The packaged bundled snapshot (`PI_PACKAGE_DIR` override included): the
+/// The packaged bundled snapshot (`UNHARNESSED_PACKAGE_DIR` override included): the
 /// build-time asset the packer ships beside the executable, read through
 /// the fetch lane's asset reader (same package-dir resolution).
 pub fn bundled_plugins_snapshot() -> Option<PluginsCatalog> {

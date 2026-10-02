@@ -24,7 +24,7 @@ BIN = os.environ.get("UNHARNESSED_BIN", str(ROOT / "target/release/unharnessed")
 OUT = Path(sys.argv[1]).resolve()
 WORK = OUT / "work"
 WORK.mkdir(parents=True, exist_ok=True)
-ENV = dict(os.environ, PRIME_AGENT_KERNEL_VENV=str(OUT / "kernel-venv"), DO_NOT_TRACK="1")
+ENV = dict(os.environ, UNHARNESSED_KERNEL_VENV=str(OUT / "kernel-venv"), DO_NOT_TRACK="1")
 FAILED = []
 
 
@@ -42,11 +42,11 @@ def run_print(name, responses, args):
     """Run `-p` on a faux script; return (exit code, seconds, json events)."""
     script = json.dumps({"responses": responses})
     with open(OUT / f"{name}.out", "w") as out:
-        out.write(f"$ PRIME_AGENT_FAUX_SCRIPT='{script}' unharnessed {' '.join(args)}\n")
+        out.write(f"$ UNHARNESSED_FAUX_SCRIPT='{script}' unharnessed {' '.join(args)}\n")
         out.flush()
         start = time.time()
         code = subprocess.run([BIN, *args], cwd=WORK, stdout=out, stderr=subprocess.DEVNULL,
-                              env=dict(ENV, PRIME_AGENT_FAUX_SCRIPT=script), timeout=300).returncode
+                              env=dict(ENV, UNHARNESSED_FAUX_SCRIPT=script), timeout=300).returncode
     seconds = time.time() - start
     lines = (OUT / f"{name}.out").read_text().splitlines()[1:]
     return code, seconds, [json.loads(line) for line in lines if line.startswith("{")]
@@ -70,11 +70,11 @@ def run_acp(name, responses, steps):
     child = subprocess.Popen([BIN, "--mode", "acp", "--session-dir", str(WORK / "sessions")],
                              cwd=WORK, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, text=True,
-                             env=dict(ENV, PRIME_AGENT_FAUX_SCRIPT=script))
+                             env=dict(ENV, UNHARNESSED_FAUX_SCRIPT=script))
     start = time.time()
     frames, inbox, answers = [], queue.Queue(), {}
     out = open(OUT / f"{name}.out", "w")
-    out.write(f"$ PRIME_AGENT_FAUX_SCRIPT='{script}' unharnessed --mode acp  <<< {json.dumps(steps)}\n")
+    out.write(f"$ UNHARNESSED_FAUX_SCRIPT='{script}' unharnessed --mode acp  <<< {json.dumps(steps)}\n")
 
     def read():
         for line in child.stdout:

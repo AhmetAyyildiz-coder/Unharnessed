@@ -6,9 +6,9 @@ use super::{expand_home, Digest, Path, PathBuf, RUNTIME_REQUIREMENT};
 
 /// Directory of the installed `unharnessed-runtime` sources. The Rust binary
 /// ships the same sidecar layout the compiled TS executable uses; an explicit
-/// `PI_PACKAGE_DIR` override wins (matching the TS `getPackageDir`).
+/// `UNHARNESSED_PACKAGE_DIR` override wins (matching the TS `getPackageDir`).
 pub(in crate::kernel::bootstrap) fn package_dir() -> PathBuf {
-    if let Ok(env_dir) = std::env::var("PI_PACKAGE_DIR") {
+    if let Ok(env_dir) = std::env::var("UNHARNESSED_PACKAGE_DIR") {
         if !env_dir.is_empty() {
             return expand_home(&env_dir);
         }
@@ -21,7 +21,7 @@ pub(in crate::kernel::bootstrap) fn package_dir() -> PathBuf {
 }
 
 /// The packaged sidecar directory (the exe-adjacent layout): the TS
-/// `runtimeCandidateDirs` bun-binary candidates, `PI_PACKAGE_DIR` included
+/// `runtimeCandidateDirs` bun-binary candidates, `UNHARNESSED_PACKAGE_DIR` included
 /// through [`package_dir`].
 pub(in crate::kernel::bootstrap) fn packaged_runtime_dir() -> Option<PathBuf> {
     let package = package_dir();

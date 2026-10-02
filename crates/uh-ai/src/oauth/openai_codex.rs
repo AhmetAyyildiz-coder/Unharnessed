@@ -717,7 +717,7 @@ mod tests {
 
     /// Stage the app registration's redirect port busy for a
     /// dead-callback flow, on the same host the flow itself binds (the
-    /// `PI_OAUTH_CALLBACK_HOST` override, default `127.0.0.1`).
+    /// `UNHARNESSED_OAUTH_CALLBACK_HOST` override, default `127.0.0.1`).
     /// `Some(listener)` means the caller actively holds the port, so
     /// the flow's own bind cannot succeed against it (an active
     /// listener blocks the same-address bind — both sockets set

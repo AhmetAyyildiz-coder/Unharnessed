@@ -39,9 +39,9 @@ pub fn home_dir() -> Option<PathBuf> {
     None
 }
 
-/// `PRIME_AGENT_CODING_AGENT_DIR`: the agent state directory override (a
+/// `UNHARNESSED_CODING_AGENT_DIR`: the agent state directory override (a
 /// wire-internal identifier kept byte-compatible with the TS product).
-pub const ENV_AGENT_DIR: &str = "PRIME_AGENT_CODING_AGENT_DIR";
+pub const ENV_AGENT_DIR: &str = "UNHARNESSED_CODING_AGENT_DIR";
 
 /// The agent state directory name (TS `CONFIG_DIR_NAME`, `.prime/agent`).
 pub const CONFIG_DIR_NAME: &str = ".prime/agent";
@@ -116,7 +116,7 @@ mod tests {
         with_env(
             &[
                 ("HOME", Some("/home/tester")),
-                ("PRIME_AGENT_CODING_AGENT_DIR", Some("~/state")),
+                ("UNHARNESSED_CODING_AGENT_DIR", Some("~/state")),
             ],
             || {
                 assert_eq!(agent_dir(), Some(PathBuf::from("/home/tester/state")));
@@ -130,7 +130,7 @@ mod tests {
         with_env(
             &[
                 ("HOME", None),
-                ("PRIME_AGENT_CODING_AGENT_DIR", Some("/opt/state")),
+                ("UNHARNESSED_CODING_AGENT_DIR", Some("/opt/state")),
             ],
             || {
                 assert_eq!(agent_dir(), Some(PathBuf::from("/opt/state")));
@@ -144,7 +144,7 @@ mod tests {
         with_env(
             &[
                 ("HOME", Some("/home/tester")),
-                ("PRIME_AGENT_CODING_AGENT_DIR", None),
+                ("UNHARNESSED_CODING_AGENT_DIR", None),
             ],
             || {
                 assert_eq!(
@@ -159,7 +159,7 @@ mod tests {
     #[cfg(unix)]
     fn agent_dir_without_home_is_none() {
         with_env(
-            &[("HOME", None), ("PRIME_AGENT_CODING_AGENT_DIR", None)],
+            &[("HOME", None), ("UNHARNESSED_CODING_AGENT_DIR", None)],
             || {
                 assert_eq!(agent_dir(), None);
             },
@@ -194,7 +194,7 @@ mod tests {
     #[cfg(windows)]
     fn agent_dir_env_override_expands_the_win32_backslash_tilde() {
         // The TS `expandTildePath` win32 arm: a `~\`-prefixed
-        // `PRIME_AGENT_CODING_AGENT_DIR` expands against the home dir
+        // `UNHARNESSED_CODING_AGENT_DIR` expands against the home dir
         // exactly like the `~/` form (the daemon, uh-core, and pa-tui all
         // resolve through this path - a CLI-only expansion would split
         // the state dir between the two processes).
@@ -202,7 +202,7 @@ mod tests {
             &[
                 ("HOME", None),
                 ("USERPROFILE", Some(r"C:\Users\tester")),
-                ("PRIME_AGENT_CODING_AGENT_DIR", Some(r"~\state")),
+                ("UNHARNESSED_CODING_AGENT_DIR", Some(r"~\state")),
             ],
             || {
                 assert_eq!(agent_dir(), Some(PathBuf::from(r"C:\Users\tester\state")));

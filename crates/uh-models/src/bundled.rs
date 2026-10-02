@@ -29,10 +29,10 @@ pub struct BundledAssets {
 }
 
 impl BundledAssets {
-    /// The package directory: `PI_PACKAGE_DIR` when set (the wire-internal
+    /// The package directory: `UNHARNESSED_PACKAGE_DIR` when set (the wire-internal
     /// identifier, kept for TS parity), else the executable's directory.
     pub fn package_dir() -> PathBuf {
-        std::env::var_os("PI_PACKAGE_DIR")
+        std::env::var_os("UNHARNESSED_PACKAGE_DIR")
             .filter(|value| !value.is_empty())
             .map_or_else(
                 || {

@@ -59,14 +59,14 @@ fn kernel_python() -> Option<PathBuf> {
 }
 
 /// The installed release directory (ships `unharnessed-runtime/` and the
-/// bundled skill packages): `PI_PACKAGE_DIR` wins, else the newest release
+/// bundled skill packages): `UNHARNESSED_PACKAGE_DIR` wins, else the newest release
 /// under ~/.local/share/unharnessed/releases. Skipped when absent.
 fn release_dir() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("PI_PACKAGE_DIR") {
+    if let Some(explicit) = std::env::var_os("UNHARNESSED_PACKAGE_DIR") {
         let explicit = PathBuf::from(explicit);
         assert!(
             explicit.join("unharnessed-runtime").exists(),
-            "PI_PACKAGE_DIR {} has no unharnessed-runtime",
+            "UNHARNESSED_PACKAGE_DIR {} has no unharnessed-runtime",
             explicit.display()
         );
         return Some(explicit);
@@ -180,15 +180,18 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
     std::fs::create_dir_all(&cwd).expect("project dir");
     let receipt_path = dir.path().join("harness-receipt.json");
 
-    // Hermeticity: the kernel runs on the installed runtime (PI_PACKAGE_DIR +
+    // Hermeticity: the kernel runs on the installed runtime (UNHARNESSED_PACKAGE_DIR +
     // the ambient kernel venv), and no ambient agent state leaks in.
     let _env = EnvOverride::apply(&[
         (
-            "PRIME_AGENT_KERNEL_PYTHON",
+            "UNHARNESSED_KERNEL_PYTHON",
             Some(kernel_python.display().to_string()),
         ),
-        ("PI_PACKAGE_DIR", Some(release.display().to_string())),
-        ("PRIME_AGENT_CODING_AGENT_DIR", None),
+        (
+            "UNHARNESSED_PACKAGE_DIR",
+            Some(release.display().to_string()),
+        ),
+        ("UNHARNESSED_CODING_AGENT_DIR", None),
         ("PRIME_API_KEY", None),
     ]);
 

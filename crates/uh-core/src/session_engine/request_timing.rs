@@ -11,7 +11,7 @@
 //! stream-done summary carries the final usage so a cache miss shows as
 //! cacheRead ~ 0 with cacheWrite ~ the full prompt.
 //!
-//! Enable with `PI_REQUEST_TIMING=1` (env, inherited by daemon workers) or
+//! Enable with `UNHARNESSED_REQUEST_TIMING=1` (env, inherited by daemon workers) or
 //! `"requestTiming": true` in settings.json. Entries go to the shared JSONL
 //! diagnostic log (`<agentDir>/logs/agent.jsonl`, TS `~/.prime/agent/logs/
 //! agent.jsonl`) under the component `coding-agent.request-timing`. The TS
@@ -77,7 +77,7 @@ use clock::{Outcome, RequestTiming};
 pub(crate) use payload::RequestPayloadCapture;
 
 /// TS `REQUEST_TIMING_ENV`: the env override (inherited by daemon workers).
-const REQUEST_TIMING_ENV: &str = "PI_REQUEST_TIMING";
+const REQUEST_TIMING_ENV: &str = "UNHARNESSED_REQUEST_TIMING";
 
 /// TS log component: `getLogger("coding-agent.request-timing")`.
 const LOG_COMPONENT: &str = "coding-agent.request-timing";
@@ -95,7 +95,7 @@ const AGENT_LOG_MAX_BYTES: u64 = 20 * 1024 * 1024;
 /// is captured when the session wires its seams; the env half stays live.
 pub type RequestTimingEnabled = Arc<dyn Fn() -> bool + Send + Sync>;
 
-/// Truthy follows the `PI_OFFLINE`/`PI_TIMING` convention: 1/true/yes (TS
+/// Truthy follows the `UNHARNESSED_OFFLINE` convention: 1/true/yes (TS
 /// `truthyEnvFlag`).
 fn truthy_env_flag(value: Option<&str>) -> bool {
     let Some(value) = value else {

@@ -1473,7 +1473,7 @@ def _read_requests(stdin_fd: int, queue: asyncio.Queue[dict[str, Any]]) -> None:
 
 
 def _resolve_owner_pid() -> int:
-    raw = os.environ.get("PRIME_AGENT_KERNEL_OWNER_PID", "")
+    raw = os.environ.get("UNHARNESSED_KERNEL_OWNER_PID", "")
     try:
         owner = int(raw)
     except ValueError:

@@ -46,18 +46,18 @@ impl PrimeInferenceAuthConfig {
 }
 
 /// TS `resolvePrimeInferenceAuthConfig`: the env overrides over the
-/// production URLs (`PRIME_AGENT_INFERENCE_API_BASE_URL`,
-/// `PRIME_AGENT_INFERENCE_FRONTEND_URL`).
+/// production URLs (`UNHARNESSED_INFERENCE_API_BASE_URL`,
+/// `UNHARNESSED_INFERENCE_FRONTEND_URL`).
 #[must_use]
 pub fn resolve_prime_inference_auth_config() -> PrimeInferenceAuthConfig {
     PrimeInferenceAuthConfig {
         base_url: normalize_base_url(
-            std::env::var("PRIME_AGENT_INFERENCE_API_BASE_URL")
+            std::env::var("UNHARNESSED_INFERENCE_API_BASE_URL")
                 .ok()
                 .as_deref(),
         ),
         frontend_url: normalize_url(
-            std::env::var("PRIME_AGENT_INFERENCE_FRONTEND_URL")
+            std::env::var("UNHARNESSED_INFERENCE_FRONTEND_URL")
                 .ok()
                 .as_deref(),
             DEFAULT_PRIME_FRONTEND_URL,

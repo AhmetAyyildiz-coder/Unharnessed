@@ -9,7 +9,7 @@ use super::KernelPythonSkill;
 /// the bootstrap cell's stdout for this marker so unavailable skills reach
 /// the model instead of failing only on first call.
 pub const PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER: &str =
-    "__PRIME_AGENT_PYTHON_SKILL_IMPORT_ERRORS__";
+    "__UNHARNESSED_PYTHON_SKILL_IMPORT_ERRORS__";
 
 /// Failed skill imports reported by a bootstrap cell: `(import name, import
 /// error)` pairs in import order (TS `UnavailablePythonSkills =
@@ -45,14 +45,14 @@ try:
     bash = _unharnessed_rlm_module.bash
     import rlm.mcp as mcp
 except Exception as _unharnessed_rlm_error:
-    _PRIME_AGENT_RLM_IMPORT_ERROR = str(_unharnessed_rlm_error)
+    _UNHARNESSED_RLM_IMPORT_ERROR = str(_unharnessed_rlm_error)
 
     def bash(command):
         raise RuntimeError(
             "unharnessed-runtime is not installed in this kernel. "
             "Remove ~/.prime/agent/kernel-venv so unharnessed can rebuild it, or set "
-            "PRIME_AGENT_KERNEL_PYTHON to a kernel environment with unharnessed-runtime installed. "
-            f"Import error: {_PRIME_AGENT_RLM_IMPORT_ERROR}"
+            "UNHARNESSED_KERNEL_PYTHON to a kernel environment with unharnessed-runtime installed. "
+            f"Import error: {_UNHARNESSED_RLM_IMPORT_ERROR}"
         )
 "#;
 
@@ -131,7 +131,7 @@ def _unharnessed_wrap_skill_module(module):
     _unharnessed_sys.modules[module.__name__] = wrapped
     return wrapped
 
-_PRIME_AGENT_SKILL_IMPORT_ERRORS = {{}}
+_UNHARNESSED_SKILL_IMPORT_ERRORS = {{}}
 
 for _unharnessed_skill_name in {imports_json}:
     try:
@@ -144,17 +144,17 @@ for _unharnessed_skill_name in {imports_json}:
         _unharnessed_skill_error_text = (
             str(_unharnessed_skill_error) or type(_unharnessed_skill_error).__name__
         )
-        _PRIME_AGENT_SKILL_IMPORT_ERRORS[_unharnessed_skill_name] = _unharnessed_skill_error_text
+        _UNHARNESSED_SKILL_IMPORT_ERRORS[_unharnessed_skill_name] = _unharnessed_skill_error_text
         globals()[_unharnessed_skill_name] = _UnharnessedUnavailableSkill(
             _unharnessed_skill_name,
             _unharnessed_skill_error_text,
         )
 
-if _PRIME_AGENT_SKILL_IMPORT_ERRORS:
+if _UNHARNESSED_SKILL_IMPORT_ERRORS:
     import json as _unharnessed_json
     print(
         "{PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER}"
-        + _unharnessed_json.dumps(_PRIME_AGENT_SKILL_IMPORT_ERRORS)
+        + _unharnessed_json.dumps(_UNHARNESSED_SKILL_IMPORT_ERRORS)
     )
 "#
     )

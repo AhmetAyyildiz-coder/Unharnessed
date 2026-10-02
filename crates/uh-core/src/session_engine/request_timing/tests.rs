@@ -10,7 +10,7 @@ use uh_agent::types::{
     AgentMessage, AssistantContent, Message, TextContent, UsageCost, UserContent, UserMessage,
 };
 
-/// Tests that touch the `PI_REQUEST_TIMING` env serialize on this lock:
+/// Tests that touch the `UNHARNESSED_REQUEST_TIMING` env serialize on this lock:
 /// the process env is global across parallel test threads.
 static REQUEST_TIMING_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -726,7 +726,7 @@ async fn engine_sessions_emit_the_timeline_only_when_the_flag_is_on() {
 
     // The engine reads the env half of the flag at session build, so the
     // ambient/parallel-test env is pinned for the duration (TS deletes
-    // `PI_REQUEST_TIMING` in `beforeEach` for the same isolation).
+    // `UNHARNESSED_REQUEST_TIMING` in `beforeEach` for the same isolation).
     let _env = REQUEST_TIMING_ENV_LOCK.lock().await;
     let previous_env = std::env::var(REQUEST_TIMING_ENV).ok();
     std::env::remove_var(REQUEST_TIMING_ENV);

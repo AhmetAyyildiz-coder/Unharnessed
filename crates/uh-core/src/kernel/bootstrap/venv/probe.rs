@@ -178,7 +178,7 @@ pub(super) fn runtime_probe_key(
 /// identity from [`installed_runtime_identity`]. The key is recomputed
 /// fresh on every call — the content walk inside the identity is the
 /// damage detector — so a hit skips only the two interpreter probes.
-/// Managed-venv path only: a caller-owned `PRIME_AGENT_KERNEL_PYTHON`
+/// Managed-venv path only: a caller-owned `UNHARNESSED_KERNEL_PYTHON`
 /// override never reaches this (it uses the direct probe, the d14
 /// ruling), and no memo file is read or written for it.
 pub(super) fn has_unharnessed_runtime_memoized(

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// The namespace key of every unharnessed `_meta` payload.
-pub const PRIME_AGENT_META_NAMESPACE: &str = "unharnessed";
+pub const UNHARNESSED_META_NAMESPACE: &str = "unharnessed";
 
 /// A client-requested cwd that differs from the agent's actual startup cwd.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -156,7 +156,7 @@ pub fn autonomous_meta(
 
 /// Wrap an unharnessed payload in its namespaced `_meta` envelope.
 pub fn unharnessed_meta(payload: &UnharnessedSessionMeta) -> Value {
-    json!({ PRIME_AGENT_META_NAMESPACE: payload })
+    json!({ UNHARNESSED_META_NAMESPACE: payload })
 }
 
 #[cfg(test)]
@@ -192,7 +192,7 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            wrapped[PRIME_AGENT_META_NAMESPACE]["quiescence"],
+            wrapped[UNHARNESSED_META_NAMESPACE]["quiescence"],
             json!({ "remainingAutonomousContinuations": 0 })
         );
     }

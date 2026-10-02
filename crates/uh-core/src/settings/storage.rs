@@ -552,7 +552,7 @@ mod tests {
         assert_eq!(storage.read(SettingsScope::Project).unwrap(), None);
     }
 
-    /// A relative agent dir (a relative `PRIME_AGENT_CODING_AGENT_DIR`)
+    /// A relative agent dir (a relative `UNHARNESSED_CODING_AGENT_DIR`)
     /// locks and loads: the lock probe's `utimensat` resolves relative lock
     /// paths against `AT_FDCWD`, and the settings document under it is
     /// read back under the same lock.

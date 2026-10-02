@@ -7,7 +7,7 @@
 //! The chain reuses the models-catalog machinery (uh-models'
 //! [`CatalogCache`]: scope-keyed last-good snapshots, hourly gating,
 //! in-flight coalescing, `ETag`, atomic 0600 writes, failure keeps the
-//! last-good snapshot, `PI_OFFLINE` skips the network) over the plugins
+//! last-good snapshot, `UNHARNESSED_OFFLINE` skips the network) over the plugins
 //! catalog URL, with the plugins parser injected as the parse closure
 //! (uh-core depends on uh-models — never the other way).
 //!
@@ -86,7 +86,7 @@ fn plugins_catalog_cache_for(agent_dir: &Path) -> Arc<PluginsCatalogCache> {
 
 /// One fire-and-forget refresh of the plugins service catalog: the
 /// cache's contract keeps the last-good snapshot on every failure path
-/// (including `PI_OFFLINE`, where the cache serves without the network),
+/// (including `UNHARNESSED_OFFLINE`, where the cache serves without the network),
 /// and the settle log is one debug line, mirroring the models chain.
 async fn refresh_plugins_catalog(cache: &PluginsCatalogCache, force: bool) {
     let fresh = cache

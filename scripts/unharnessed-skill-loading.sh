@@ -29,7 +29,7 @@ mkdir -p "$PROJECT/.git"
 printf '{"skills": ["../extra/settings-array-skill"], "packages": ["../pkg"]}\n' > "$AGENT/settings.json"
 
 echo "\$ unharnessed prompt --json --cwd $PROJECT" > "$OUT/prompt.out"
-PRIME_AGENT_CODING_AGENT_DIR="$AGENT" "$BIN" prompt --json --cwd "$PROJECT" >> "$OUT/prompt.out" 2> "$OUT/prompt.err"
+UNHARNESSED_CODING_AGENT_DIR="$AGENT" "$BIN" prompt --json --cwd "$PROJECT" >> "$OUT/prompt.out" 2> "$OUT/prompt.err"
 code=$?
 
 check() { # check <name> <expect: present|absent>
