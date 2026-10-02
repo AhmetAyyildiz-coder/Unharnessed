@@ -10,3 +10,9 @@ fmt-*.log
 tests-*.log
 test-compile-*.log
 
+
+# VS Code extension (vscode/)
+/vscode/node_modules/
+/vscode/dist/
+/vscode/.vscode-test/
+*.vsix

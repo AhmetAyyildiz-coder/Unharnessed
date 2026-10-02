@@ -1,0 +1,55 @@
+{
+  "name": "unharnessed",
+  "displayName": "Unharnessed",
+  "description": "Chat with the Unharnessed agent from VS Code.",
+  "version": "0.0.1",
+  "publisher": "paseru",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Paseru/Unharnessed.git"
+  },
+  "engines": {
+    "vscode": "^1.110.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "unharnessed",
+          "title": "Unharnessed",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "unharnessed": [
+        {
+          "type": "webview",
+          "id": "unharnessed.chat",
+          "name": "Chat"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "npm run build && node test/e2e/run.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "~1.110.0",
+    "@vscode/test-electron": "^3.1.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}
