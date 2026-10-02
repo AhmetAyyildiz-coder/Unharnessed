@@ -1,0 +1,347 @@
+/* Tokens and rules from DESIGN.md. */
+
+@font-face {
+  font-family: "Overused Grotesk";
+  src: url("../media/fonts/OverusedGrotesk-VF.woff2") format("woff2");
+  font-weight: 300 900;
+  font-display: block;
+}
+
+/* On body, not :root: the derived tokens (muted, lines) then follow the
+   theme classes VS Code puts on body. */
+body {
+  /* Near-black grey with the faintest blue. Text and controls are white;
+     the cyan is kept for what must stand out (logo, live state, focus). */
+  --uh-bg: #0d0e10;
+  --uh-raised: #15171a;
+  --uh-ink-rgb: 255 255 255;
+  --uh-text: #f2f4f7;
+  --uh-muted: rgb(var(--uh-ink-rgb) / 0.5);
+  --uh-line: rgb(var(--uh-ink-rgb) / 0.08);
+  --uh-line-strong: rgb(var(--uh-ink-rgb) / 0.18);
+  --uh-accent: #5fd0ff;
+  --uh-accent-rgb: 95 208 255;
+  --uh-danger: #ff9e9e;
+  --uh-font: "Overused Grotesk", system-ui, sans-serif;
+  --uh-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --uh-ease: cubic-bezier(0.2, 0.7, 0.1, 1);
+  color-scheme: dark;
+}
+
+/* Light themes: near-black ink on pale grey, a deeper cyan. */
+body.vscode-light,
+body.vscode-high-contrast-light {
+  --uh-bg: #f2f3f5;
+  --uh-raised: #ffffff;
+  --uh-ink-rgb: 14 16 20;
+  --uh-text: #0e1014;
+  --uh-accent: #0a7fc2;
+  --uh-accent-rgb: 10 127 194;
+  --uh-danger: #b3261e;
+  color-scheme: light;
+}
+
+body.vscode-high-contrast:not(.vscode-high-contrast-light) {
+  --uh-line: rgb(var(--uh-ink-rgb) / 0.45);
+  --uh-line-strong: rgb(var(--uh-ink-rgb) / 0.7);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--uh-bg);
+  color: var(--uh-text);
+  font: 400 13px/1.45 var(--uh-font);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+}
+
+@keyframes uh-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Wordmark: the logo stands in for the U, sized and set like the font's U. */
+
+.wordmark {
+  font-weight: 460;
+  letter-spacing: -0.025em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.wordmark-u {
+  display: inline-block;
+  width: 0.4842em;
+  height: 0.6585em;
+  margin: 0 0.0205em 0 0.046em;
+  vertical-align: -0.008em;
+  overflow: visible;
+  color: var(--uh-accent);
+}
+
+.wordmark-rest {
+  display: inline-block;
+}
+
+.wordmark.is-animated .wordmark-u path {
+  stroke-dasharray: 1 2;
+  stroke-dashoffset: 1;
+  opacity: 0;
+  animation: uh-draw 900ms var(--uh-ease) 150ms forwards;
+}
+
+.wordmark.is-animated .wordmark-u path:last-child {
+  animation-duration: 300ms;
+  animation-delay: 850ms;
+}
+
+.wordmark.is-animated .wordmark-rest {
+  clip-path: inset(-0.2em 100% -0.2em 0);
+  filter: blur(10px);
+  opacity: 0.4;
+  animation: uh-reveal 1000ms var(--uh-ease) 500ms forwards;
+}
+
+@keyframes uh-draw {
+  0% {
+    stroke-dashoffset: 1;
+    opacity: 0;
+  }
+  5% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+@keyframes uh-reveal {
+  to {
+    clip-path: inset(-0.2em -0.2em -0.2em 0);
+    filter: blur(0);
+    opacity: 1;
+  }
+}
+
+/* Splash */
+
+.splash {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  transition:
+    opacity 450ms var(--uh-ease),
+    filter 450ms var(--uh-ease);
+}
+
+.splash.is-leaving {
+  opacity: 0;
+  filter: blur(4px);
+}
+
+.field {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.splash-center {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 0 16px;
+}
+
+.splash .wordmark {
+  font-size: min(14vw, 72px);
+}
+
+/* Status screen */
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  animation: uh-fade-in 300ms var(--uh-ease);
+}
+
+.topbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--uh-line);
+}
+
+.topbar .wordmark {
+  font-size: 16px;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 16px;
+  overflow-y: auto;
+}
+
+.agent-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 500;
+}
+
+.agent-mark {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.agent-line.is-ready .agent-mark {
+  margin: 0 3px;
+  background: var(--uh-accent);
+  outline: 3px solid rgb(var(--uh-accent-rgb) / 0.14);
+}
+
+.agent-line.is-starting .agent-mark {
+  width: 10px;
+  height: 10px;
+  margin: 0 1.5px;
+  border: 1.25px solid var(--uh-accent);
+  border-right-color: transparent;
+  animation: uh-spin 800ms linear infinite;
+}
+
+.agent-line.is-failed {
+  color: var(--uh-danger);
+}
+
+.agent-line.is-failed .agent-mark {
+  width: 13px;
+  height: 13px;
+  border-radius: 0;
+}
+
+@keyframes uh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.error {
+  margin: 0;
+  font: 11.5px/1.5 var(--uh-mono);
+  color: var(--uh-danger);
+  overflow-wrap: anywhere;
+}
+
+.log {
+  max-height: 40vh;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  font: 11px/1.55 var(--uh-mono);
+  color: var(--uh-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--uh-raised);
+  border: 1px solid var(--uh-line);
+  border-radius: 6px;
+}
+
+/* Controls */
+
+.button {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 14px 0 12px;
+  font-size: 12.5px;
+  color: var(--uh-text);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--uh-line-strong);
+  border-radius: 6px;
+  transition:
+    border-color 150ms var(--uh-ease),
+    background-color 150ms var(--uh-ease);
+}
+
+.button:hover {
+  background: rgb(var(--uh-ink-rgb) / 0.06);
+  border-color: rgb(var(--uh-ink-rgb) / 0.4);
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--uh-muted);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  transition:
+    color 150ms var(--uh-ease),
+    background-color 150ms var(--uh-ease);
+}
+
+.icon-button:hover:not(:disabled) {
+  color: var(--uh-text);
+  background: rgb(var(--uh-ink-rgb) / 0.08);
+}
+
+.icon-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.button:focus-visible,
+.icon-button:focus-visible {
+  outline: 1px solid var(--uh-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}

@@ -5,7 +5,11 @@
       "name": "Unharnessed extension",
       "type": "extensionHost",
       "request": "launch",
+      // F5 runs like Run Without Debugging: the debugger never attached here
+      // (VSCODE_PLAN.md, dev loop) and the extension host waited for it.
+      "noDebug": true,
       "args": ["--extensionDevelopmentPath=${workspaceFolder}/vscode", "--disable-extensions"],
+      "env": { "UNHARNESSED_BIN": "${workspaceFolder}/target/debug/unharnessed" },
       "outFiles": ["${workspaceFolder}/vscode/dist/**/*.js"],
       "preLaunchTask": "vscode: watch"
     }
