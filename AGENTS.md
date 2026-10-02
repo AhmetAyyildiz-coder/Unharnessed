@@ -5,15 +5,6 @@ rules below still apply unless a section says otherwise; `UNHARNESSED_PLAN.md` r
 was removed and why. Every contributor (human or agent) must read this before working on
 this repo.
 
-## Repository
-
-- The repo is PrimeIntellect-ai/prime-agent; the Rust implementation lives on the `main` branch.
-- PRs go to the org repo with base `main`:
-  `gh pr create --repo PrimeIntellect-ai/prime-agent --base main`.
-- CI runs on the org's billing: `.github/workflows/continuous.yml` on `main` pushes and
-  `release.yml` on version tags.
-- Parity ground truth is unchanged: the TS checkout at ~/prime-agent (read-only).
-
 ## Style and structure
 
 - Workspace crates are prefixed `pa-`. The hard ownership rules: one owned area per crate,
@@ -77,9 +68,9 @@ this repo.
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo test --workspace` must pass before every merge. Run `make check` — the local mirror of
-  the same gates; CI runs on the org's billing (`.github/workflows/continuous.yml` on `main`
-  pushes; `release.yml` on version tags). The PR-only codebase-health check reports growth
-  past 2,000 lines as review guidance; it never blocks a merge.
+  the same gates; `.github/workflows/ci.yml` runs them (plus `make deny`) on pushes to `main`
+  and on PRs. `scripts/unharnessed-check.sh` runs them isolated from an installed Prime Agent
+  and compares the failures to `UNHARNESSED_BASELINE.txt`.
 - TS parity is no longer a merge gate: Unharnessed diverges from the TS product on purpose
   (no TUI, no daemon, a minimal system prompt). Keep wire formats readable both ways where they
   still exist (session files, settings, ACP).
