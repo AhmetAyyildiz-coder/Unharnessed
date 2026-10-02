@@ -27,10 +27,12 @@
     clippy::struct_field_names
 )]
 pub mod acp;
+pub mod auth_panel;
 pub mod hold_refusal;
 pub mod lease;
 pub(crate) mod overflow_compaction;
 pub(crate) mod paths;
+pub mod provider_auth;
 pub(crate) mod util;
 
 /// The faux provider registry is process-global: every unit test that

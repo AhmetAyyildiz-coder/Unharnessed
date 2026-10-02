@@ -36,8 +36,8 @@ const MANUAL_INPUT_PROMPT: &str = "Paste redirect URL below, or complete login i
 const COPILOT_WAITING: &str = "Waiting for browser authentication...";
 
 /// The inline auth panel as the subscription logins' surface (TS the
-/// login dialog): the browser URL block (the flow opens the browser;
-/// the panel renders), the prompts, the progress lines, and the manual
+/// login dialog): the browser URL block (the host opens the browser),
+/// the prompts, the progress lines, and the manual
 /// paste racing the browser callback ride the panel channel. The
 /// Copilot provider adds its waiting line (TS the dialog's
 /// provider-specific `showWaiting`).
@@ -58,7 +58,6 @@ impl PanelSubscriptionLoginUi {
 impl OAuthLoginUi for PanelSubscriptionLoginUi {
     fn on_auth(&self, url: &str, instructions: Option<&str>) {
         self.panel.auth_url(url, instructions);
-        uh_core::platform::browser::open_in_browser(url);
         if self.provider_id == GITHUB_COPILOT_PROVIDER_ID {
             // TS `showWaiting` (the dialog's own method, no onboarding
             // guard — never the `onProgress` chatter arm the onboarding

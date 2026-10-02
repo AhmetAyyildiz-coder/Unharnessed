@@ -1,6 +1,8 @@
 //! The login flows' request channel to whatever surface hosts them (moved
 //! from the removed pa-tui crate's inline auth panel; its rendering went
-//! with the TUI). A flow runs in the background and drives the host
+//! with the TUI). The host is now the ACP mode (`acp::providers`), which
+//! relays each request to the client as a `_unharnessed/providers/login_update`
+//! notification. A flow runs in the background and drives the host
 //! through [`AuthPanelHandle`] — progress lines, the browser URL block, a
 //! paste prompt, or the Prime team picker. Every prompt carries its own
 //! oneshot reply, and a flow completion is a request too (the `Settled`
@@ -83,8 +85,9 @@ pub enum AuthPanelRequest {
     /// dialog's own method carries no onboarding guard, unlike the
     /// `onProgress` chatter arm.
     Waiting { message: String },
-    /// TS `dialog.showAuth`: the browser URL block (the flow launches
-    /// the browser itself; the panel only renders).
+    /// TS `dialog.showAuth`: the browser URL block. The flow does not open
+    /// the browser: the host does when the user asks (the ACP
+    /// `_unharnessed/providers/login_open`).
     AuthUrl {
         url: String,
         /// The provider instructions; `None` renders TS's default
@@ -186,7 +189,7 @@ impl FlowCancel {
 
 /// The flow-side handle to the inline auth panel: one login run's
 /// request channel. The composition root drives its flow against this
-/// handle; the TUI run loop owns the receiving side and services every
+/// handle; the host (the ACP mode) owns the receiving side and services every
 /// request. Cheap to clone; a clone shares the run's channel and the
 /// run's cancel signal.
 #[derive(Clone)]

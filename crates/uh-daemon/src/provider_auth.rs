@@ -1,8 +1,10 @@
 //! Provider auth management (`/login`, `/logout`) as a command contract a
 //! frontend drives (TS `ProviderAuthFlows`: `getLoginProviderOptions` /
 //! `getLogoutProviderOptions` / the login flows / `runLogout`). Moved from
-//! the removed pa-tui crate, whose provider selector rendered these rows;
-//! the implementation lives in [`crate::provider_login`].
+//! the removed pa-tui crate, whose provider selector rendered these rows.
+//! The ACP `_unharnessed/providers/*` methods drive it (`acp::providers`);
+//! the implementation lives in uh-cli (`provider_login`), the composition
+//! root, which hands it to the ACP mode through `AcpOptions`.
 
 use std::pin::Pin;
 

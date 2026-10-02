@@ -10,13 +10,91 @@ export type AgentState =
   | { kind: "ready" }
   | { kind: "failed"; error: string; stderr: string[] };
 
+/** One provider row, as the agent's `_unharnessed/providers/list` gives it. */
+export type Provider = {
+  id: string;
+  name: string;
+  /** What the credential is. Anthropic and xAI have a row of each. */
+  method: "subscription" | "apiKey";
+  /** `browser`: the agent runs the sign-in. `apiKey`: the panel asks for the key. */
+  login: "browser" | "apiKey";
+  connected: boolean;
+  /** The credential is in the agent's auth.json, so it can be removed. */
+  removable: boolean;
+  /** Where an outside key comes from, or why the row is not connected. */
+  note?: string;
+  /** The Anthropic subscription warning, on the row that uses it. */
+  warning?: string;
+};
+
+/** One step of a running sign-in (`_unharnessed/providers/login_update`). */
+export type LoginUpdate =
+  | { kind: "progress"; message: string }
+  | { kind: "waiting"; message: string }
+  | { kind: "url"; url: string; instructions: string | null }
+  | {
+      kind: "prompt";
+      promptId: number;
+      message: string;
+      secret: boolean;
+      allowEmpty: boolean;
+      /** An alternative to the browser sign-in running beside it. */
+      optional: boolean;
+    }
+  | { kind: "team"; promptId: number; teams: Team[]; current: string | null };
+
+export type Team = { id: string; name: string; role: string | null };
+
+/** What a prompt gets back. */
+export type LoginAnswer =
+  | { kind: "text"; value: string }
+  /** `null`: the personal account. */
+  | { kind: "team"; teamId: string | null }
+  /** On a team picker: keep the stored team. */
+  | { kind: "dismiss" };
+
+/** The browser sign-in in progress, as the panel shows it. */
+export type LoginState = {
+  providerId: string;
+  name: string;
+  url?: { url: string; instructions: string | null };
+  /** The latest progress line; `waiting` while the provider waits on the browser. */
+  status?: { message: string; waiting: boolean };
+  prompt?: Extract<LoginUpdate, { kind: "prompt" }>;
+  team?: Extract<LoginUpdate, { kind: "team" }>;
+  /** Set when the sign-in failed; the screen stays until the user leaves it. */
+  error?: string;
+};
+
 export type HostMessage =
   /** Answer to `ready`; `splash` is true once per window. */
-  | { type: "init"; splash: boolean; agent: AgentState }
-  | { type: "agent"; agent: AgentState };
+  | {
+      type: "init";
+      splash: boolean;
+      agent: AgentState;
+      providers: Provider[] | null;
+      login: LoginState | null;
+    }
+  | { type: "agent"; agent: AgentState }
+  /** `providers` is `null` until the agent has listed them. */
+  | { type: "providers"; providers: Provider[] | null; login: LoginState | null }
+  /** How a saved key or a disconnect went; `error` is shown on the row. */
+  | { type: "providerResult"; action: "apiKey" | "logout"; providerId: string; error?: string };
 
 export type WebviewMessage =
   | { type: "ready" }
   /** The screen now on display, for the log. */
-  | { type: "screen"; screen: "splash" | "status" }
-  | { type: "restartAgent" };
+  | { type: "screen"; screen: Screen }
+  | { type: "restartAgent" }
+  | { type: "setApiKey"; providerId: string; apiKey: string }
+  | { type: "logout"; providerId: string }
+  | { type: "login"; providerId: string }
+  | { type: "loginAnswer"; promptId: number; answer: LoginAnswer }
+  | { type: "loginCancel" }
+  /** Leave a failed sign-in's screen. */
+  | { type: "loginClose" }
+  /** Open the running sign-in's page in the browser. */
+  | { type: "loginOpen" }
+  | { type: "copy"; text: string };
+
+export type Screen = "splash" | "status" | "providers" | "login";

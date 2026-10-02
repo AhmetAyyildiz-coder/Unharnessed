@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
 import type { Agent } from "./agent";
 import type { HostMessage, WebviewMessage } from "./protocol";
+import type { Providers } from "./providers";
 
 /** The panel in the right side bar: hosts the React app from dist/webview. */
 export class ChatViewProvider implements vscode.WebviewViewProvider {
@@ -13,9 +14,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly agent: Agent,
+    private readonly providers: Providers,
     private readonly log: vscode.LogOutputChannel,
   ) {
     agent.onChange((state) => this.post({ type: "agent", agent: state }));
+    providers.onChange(() =>
+      this.post({ type: "providers", providers: providers.providers, login: providers.signIn }),
+    );
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -33,7 +38,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     switch (message.type) {
       case "ready":
         this.log.info("webview ready");
-        this.post({ type: "init", splash: !this.splashPlayed, agent: this.agent.current });
+        this.post({
+          type: "init",
+          splash: !this.splashPlayed,
+          agent: this.agent.current,
+          providers: this.providers.providers,
+          login: this.providers.signIn,
+        });
         this.splashPlayed = true;
         break;
       case "screen":
@@ -42,6 +53,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "restartAgent":
         this.log.info("agent restart requested from the panel");
         void this.agent.restart();
+        break;
+      case "setApiKey": {
+        const { providerId } = message;
+        void this.providers.setApiKey(providerId, message.apiKey).then((error) => {
+          this.post({ type: "providerResult", action: "apiKey", providerId, error });
+        });
+        break;
+      }
+      case "logout": {
+        const { providerId } = message;
+        void this.providers.logout(providerId).then((error) => {
+          this.post({ type: "providerResult", action: "logout", providerId, error });
+        });
+        break;
+      }
+      case "login":
+        void this.providers.startLogin(message.providerId);
+        break;
+      case "loginAnswer":
+        void this.providers.answer(message.promptId, message.answer);
+        break;
+      case "loginOpen":
+        void this.providers.openPage();
+        break;
+      case "loginCancel":
+        this.providers.cancelLogin();
+        break;
+      case "loginClose":
+        this.providers.closeLogin();
+        break;
+      case "copy":
+        void vscode.env.clipboard.writeText(message.text);
         break;
     }
   }

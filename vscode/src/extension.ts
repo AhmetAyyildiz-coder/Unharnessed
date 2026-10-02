@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import * as vscode from "vscode";
 import { Agent } from "./agent";
+import { Providers } from "./providers";
 import { ChatViewProvider } from "./view";
 
 let agent: Agent | undefined;
@@ -12,12 +13,14 @@ export function activate(context: vscode.ExtensionContext): void {
   const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? homedir();
   const version = String(context.extension.packageJSON.version);
   agent = new Agent(binary, cwd, version, log);
+  // Before `start`: it listens to the agent's sign-in notifications.
+  const providers = new Providers(agent, log);
 
   context.subscriptions.push(
     log,
     vscode.window.registerWebviewViewProvider(
       ChatViewProvider.viewId,
-      new ChatViewProvider(context.extensionUri, agent, log),
+      new ChatViewProvider(context.extensionUri, agent, providers, log),
     ),
   );
   agent.start();

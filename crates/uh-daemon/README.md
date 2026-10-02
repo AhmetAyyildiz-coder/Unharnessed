@@ -23,7 +23,13 @@ its name so the ACP code stays where it was.
   `bash()` finishes, a goal backoff passes or a quota resets while no prompt
   runs, the agent starts the turn itself (`acp/prompt.rs`, `start_wake_turn`):
   it streams like a prompt turn but answers no request, and a client prompt
-  waits for it to settle.
+  waits for it to settle. The `_unharnessed/providers/*` extension methods
+  (`acp/providers.rs`) list the providers, save or remove an API key, and run
+  a browser sign-in, relaying its steps (sign-in URL, paste prompts, Prime team
+  picker) as `_unharnessed/providers/login_update` notifications.
+- `provider_auth`, `auth_panel` — the provider-login contract the ACP methods
+  drive: the `ProviderAuthCommands` trait (implemented by uh-cli, the
+  composition root) and the flow's request channel (`AuthPanelHandle`).
 - `lease` — the per-session-file runtime lease
   (`<agent-dir>/session-leases/<sha256(path)>.lock`, atomic acquisition, stale
   owner reclaim), so two processes never drive the same session file.
@@ -39,7 +45,8 @@ Background sessions, reattach, multi-session routing, scheduling, sub-agents.
 
 ## Public API
 
-`acp::run_acp_mode` with `acp::AcpOptions`; `lease`
+`acp::run_acp_mode` with `acp::AcpOptions`; `provider_auth` and `auth_panel`
+(the login contract uh-cli implements); `lease`
 (`acquire_runtime_session_lease`, `SessionLease`, `SessionAlreadyActiveError`);
 `hold_refusal` (`refusal_message`, `HoldIdentity`). The other modules are
 crate-internal.

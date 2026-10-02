@@ -204,6 +204,11 @@ button {
   font-size: 16px;
 }
 
+.topbar-actions {
+  display: flex;
+  gap: 2px;
+}
+
 .content {
   display: flex;
   flex-direction: column;
@@ -257,6 +262,208 @@ button {
   }
 }
 
+/* Titled screens (providers, sign-in) */
+
+.topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 500;
+}
+
+.topbar-title > .icon-button {
+  flex: none;
+  margin-left: -8px;
+}
+
+.topbar-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intro h1 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.intro p {
+  margin: 6px 0 0;
+  color: var(--uh-muted);
+}
+
+.section,
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.section-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--uh-muted);
+}
+
+.step-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--uh-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Rows: providers, teams */
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--uh-line);
+}
+
+.row {
+  border-bottom: 1px solid var(--uh-line);
+}
+
+.row-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.row-body {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 7px 6px;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.row-body.is-button {
+  cursor: pointer;
+  transition: background-color 150ms var(--uh-ease);
+}
+
+.row-body.is-button:hover {
+  background: rgb(var(--uh-ink-rgb) / 0.05);
+}
+
+.row-body.is-button:focus-visible {
+  outline: 1px solid var(--uh-accent);
+  outline-offset: -1px;
+}
+
+.row-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-meta {
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--uh-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-end {
+  flex: none;
+  color: var(--uh-muted);
+  transition: transform 150ms var(--uh-ease);
+}
+
+.row-body.is-open .row-end {
+  transform: rotate(90deg);
+}
+
+.row-warning {
+  margin: 0 6px 10px;
+  padding-left: 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--uh-muted);
+  border-left: 1px solid var(--uh-line-strong);
+}
+
+.row-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 6px 14px;
+  animation: uh-fade-in 150ms var(--uh-ease);
+}
+
+/* The connected mark, on the providers screen only: the agent-line dot. */
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 0 3px;
+  background: var(--uh-accent);
+  border-radius: 50%;
+  outline: 3px solid rgb(var(--uh-accent-rgb) / 0.14);
+}
+
+/* Sign-in */
+
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--uh-muted);
+}
+
+.spinner {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin: 0 1.5px;
+  border: 1.25px solid var(--uh-accent);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: uh-spin 800ms linear infinite;
+}
+
+.code-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.code {
+  font: 500 20px/1.2 var(--uh-mono);
+  letter-spacing: 0.08em;
+  user-select: all;
+}
+
 .error {
   margin: 0;
   font: 11.5px/1.5 var(--uh-mono);
@@ -298,9 +505,109 @@ button {
     background-color 150ms var(--uh-ease);
 }
 
-.button:hover {
+.button:hover:not(:disabled) {
   background: rgb(var(--uh-ink-rgb) / 0.06);
   border-color: rgb(var(--uh-ink-rgb) / 0.4);
+}
+
+.button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.button.is-quiet {
+  color: var(--uh-muted);
+  border-color: transparent;
+}
+
+.button.is-quiet:hover:not(:disabled) {
+  color: var(--uh-text);
+  border-color: transparent;
+}
+
+.button.is-danger {
+  color: var(--uh-danger);
+}
+
+/* A quiet text action, for what most people never need. */
+.link {
+  align-self: flex-start;
+  padding: 0;
+  font-size: 12px;
+  color: var(--uh-muted);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  text-decoration: underline;
+  text-decoration-color: var(--uh-line-strong);
+  text-underline-offset: 3px;
+  transition: color 150ms var(--uh-ease);
+}
+
+.link:hover {
+  color: var(--uh-text);
+}
+
+.link:focus-visible {
+  outline: 1px solid var(--uh-accent);
+  outline-offset: 2px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--uh-text);
+  background: var(--uh-raised);
+  border: 1px solid var(--uh-line-strong);
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 150ms var(--uh-ease);
+}
+
+.input::placeholder {
+  color: var(--uh-muted);
+}
+
+.input:focus {
+  border-color: var(--uh-accent);
+}
+
+.input:disabled {
+  opacity: 0.6;
+}
+
+.input.is-secret {
+  font-family: var(--uh-mono);
+}
+
+.search {
+  position: relative;
+  display: block;
+}
+
+.search svg {
+  position: absolute;
+  top: 8px;
+  left: 9px;
+  color: var(--uh-muted);
+  pointer-events: none;
+}
+
+.search .input {
+  padding-left: 31px;
+}
+
+.search .input::-webkit-search-cancel-button {
+  display: none;
 }
 
 .icon-button {

@@ -28,9 +28,9 @@ use uh_ai::oauth::{
 use uh_core::auth::{AuthCredential, AuthStorage, OPENAI_CODEX_PROVIDER_ID};
 
 /// The inline auth panel as the codex login's surface (TS the login
-/// dialog): the browser URL block (the flow opens the browser; the panel
-/// renders), the manual paste racing the browser callback, and the
-/// fallback prompt ride the panel channel.
+/// dialog): the browser URL block (the host opens the browser), the
+/// manual paste racing the browser callback, and the fallback prompt ride
+/// the panel channel.
 pub(crate) struct PanelCodexLoginUi {
     panel: AuthPanelHandle,
 }
@@ -44,7 +44,6 @@ impl PanelCodexLoginUi {
 impl CodexLoginUi for PanelCodexLoginUi {
     fn on_auth(&self, url: &str, instructions: &str) {
         self.panel.auth_url(url, Some(instructions));
-        uh_core::platform::browser::open_in_browser(url);
     }
 
     fn on_manual_code_input(&self) -> Option<Pin<Box<dyn Future<Output = Option<String>> + Send>>> {

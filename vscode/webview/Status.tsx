@@ -1,5 +1,5 @@
 import type { AgentState } from "../src/protocol";
-import { IconCross, IconRestart } from "./icons";
+import { IconCross, IconPlug, IconRestart } from "./icons";
 import { post } from "./vscode";
 import { Wordmark } from "./Wordmark";
 
@@ -13,21 +13,34 @@ const LABELS: Record<AgentState["kind"], string> = {
 
 const restart = () => post({ type: "restartAgent" });
 
-export function Status({ agent }: { agent: AgentState }) {
+/** Home, where the chat will be: the agent's state for now. */
+export function Status({ agent, onProviders }: { agent: AgentState; onProviders: () => void }) {
   return (
     <div className="screen">
       <header className="topbar">
         <Wordmark />
-        <button
-          className="icon-button"
-          type="button"
-          title="Restart agent"
-          aria-label="Restart agent"
-          disabled={agent.kind === "starting"}
-          onClick={restart}
-        >
-          <IconRestart />
-        </button>
+        <div className="topbar-actions">
+          <button
+            className="icon-button"
+            type="button"
+            title="Providers"
+            aria-label="Providers"
+            disabled={agent.kind !== "ready"}
+            onClick={onProviders}
+          >
+            <IconPlug />
+          </button>
+          <button
+            className="icon-button"
+            type="button"
+            title="Restart agent"
+            aria-label="Restart agent"
+            disabled={agent.kind === "starting"}
+            onClick={restart}
+          >
+            <IconRestart />
+          </button>
+        </div>
       </header>
       <main className="content">
         <div className={`agent-line is-${agent.kind}`}>

@@ -5,10 +5,11 @@
 //! advertises the model and reasoning-effort pickers, `session/prompt`
 //! drives one engine turn with follow-up queueing semantics,
 //! `session/set_config_option` applies a picker selection, and
-//! `session/cancel` / `session/close` stop work. Every frame leaves
-//! through one ordered write queue, so responses and `session/update`
-//! notifications interleave exactly in publication order. The process
-//! exits when stdin closes.
+//! `session/cancel` / `session/close` stop work. The
+//! `_unharnessed/providers/*` extension methods list the providers and run
+//! their logins (`providers.rs`). Every frame leaves through one ordered
+//! write queue, so responses and `session/update` notifications interleave
+//! exactly in publication order. The process exits when stdin closes.
 
 mod compaction_arms;
 mod config_options;
@@ -20,6 +21,7 @@ mod mcp;
 mod meta;
 mod producer;
 mod prompt;
+mod providers;
 mod session;
 mod types;
 
@@ -67,6 +69,9 @@ pub struct AcpOptions {
     /// it so the next turn streams on the selected model (TS `setModel`'s
     /// stream re-registration).
     pub provider_target: ProviderTargetSlot,
+    /// The provider logins (the composition root's flows over the agent
+    /// dir), served as `_unharnessed/providers/*`.
+    pub provider_auth: Arc<dyn crate::provider_auth::ProviderAuthCommands>,
 }
 
 /// The hosted-session slot plus the in-flight admission bookkeeping.
@@ -198,6 +203,7 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
     // its own when a detached `bash()` finishes, a goal backoff passes or
     // a quota park resets while no prompt runs.
     let wake_watcher = tokio::spawn(watch_wakes(state.clone(), mode.clone(), tx.clone()));
+    let providers = providers::Providers::new(options.provider_auth.clone());
     let mut stdin = BufReader::new(tokio::io::stdin());
     let mut line = String::new();
     loop {
@@ -216,12 +222,20 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
                 continue;
             }
         };
-        let handler = spawn_handler(request, state.clone(), mode.clone(), tx.clone());
+        let handler = spawn_handler(
+            request,
+            state.clone(),
+            mode.clone(),
+            providers.clone(),
+            tx.clone(),
+        );
         handler.await.ok();
     }
 
-    // Exit when the client disconnects: stop the resident work, release the
-    // subscription, fence the producer, and let the writer drain.
+    // Exit when the client disconnects: stop a running login (it writes no
+    // credential), stop the resident work, release the subscription, fence
+    // the producer, and let the writer drain.
+    providers.cancel_login();
     wake_watcher.abort();
     teardown(&state, &mode).await;
     // The final namespace snapshot (TS session dispose): the next process
@@ -283,15 +297,22 @@ fn spawn_handler(
     request: Incoming,
     state: Arc<Mutex<ConnectionState>>,
     mode: AcpModeState,
+    providers: providers::Providers,
     tx: producer::FrameSink,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         match request {
             Incoming::Request { id, method, params } => {
-                handle_request(id, method, params, state, mode, tx).await;
+                if !providers.handle_request(&id, &method, &params, &tx).await {
+                    handle_request(id, method, params, state, mode, tx).await;
+                }
             }
             Incoming::Notification { method, params } => {
-                handle_notification(method, params, state).await;
+                if method == providers::LOGIN_CANCEL {
+                    providers.cancel_login();
+                } else {
+                    handle_notification(method, params, state).await;
+                }
             }
         }
     })

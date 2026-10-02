@@ -25,15 +25,15 @@
 // Internal ported modules are crate-private: the only public API is the
 // runtime boundary below (see crates/uh-cli/README.md).
 pub(crate) mod args;
-// The `#[allow(dead_code)]` modules below hold the provider/MCP login
-// flows. They have no caller until a frontend (the VS Code extension over
-// ACP) exposes them again, and are kept on purpose (UNHARNESSED_PLAN.md,
-// decision D1).
-#[allow(dead_code)]
-pub(crate) mod auth_panel;
+// The provider logins serve the ACP `_unharnessed/providers/*` methods
+// (the VS Code extension's login screens); their contract (the flow's
+// request channel and the command trait) lives in uh-daemon next to the
+// ACP handlers. The `#[allow(dead_code)]` modules below hold the MCP
+// login flows, which no frontend exposes yet; they are kept on purpose
+// (UNHARNESSED_PLAN.md, decision D1).
+pub(crate) use uh_daemon::{auth_panel, provider_auth};
 #[allow(dead_code)]
 pub(crate) mod client_auth;
-#[allow(dead_code)]
 pub(crate) mod codex_subscription_login;
 pub(crate) mod command_registry;
 pub(crate) mod config;
@@ -48,16 +48,11 @@ pub(crate) mod mcp_command;
 #[allow(dead_code)]
 pub(crate) mod mcp_login;
 pub(crate) mod mode;
-#[allow(dead_code)]
 pub(crate) mod prime_inference_login;
 pub(crate) mod prompt_command;
-#[allow(dead_code)]
-pub(crate) mod provider_auth;
-#[allow(dead_code)]
 pub(crate) mod provider_login;
 pub(crate) mod public_command;
 pub(crate) mod session_export;
-#[allow(dead_code)]
 pub(crate) mod subscription_login;
 
 /// The runtime boundary: everything a mode-runner crate implements to plug

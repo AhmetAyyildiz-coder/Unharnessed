@@ -10,6 +10,12 @@ const INITIALIZE_TIMEOUT_MS = 30_000;
 /** How long `stop` waits after closing stdin, then after SIGTERM. */
 const EXIT_GRACE_MS = 2_000;
 
+/** Request params whose values never reach the log (API keys, pasted codes). */
+const SECRET_PARAMS: Record<string, string> = {
+  "_unharnessed/providers/set_api_key": "apiKey",
+  "_unharnessed/providers/login_answer": "answer",
+};
+
 /**
  * One `unharnessed --mode acp` process and its ACP connection. The state
  * moves starting → ready → failed (crash), and back to starting on restart.
@@ -21,6 +27,7 @@ export class Agent {
   private stderr: string[] = [];
   private restarting: Promise<void> | undefined;
   private readonly listeners = new Set<(state: AgentState) => void>();
+  private readonly notificationListeners = new Map<string, Set<(params: unknown) => void>>();
 
   constructor(
     private readonly binary: string,
@@ -38,6 +45,28 @@ export class Agent {
   onChange(listener: (state: AgentState) => void): { dispose(): void } {
     this.listeners.add(listener);
     return { dispose: () => this.listeners.delete(listener) };
+  }
+
+  /** Listens to an agent notification; register before `start`. */
+  onNotification(method: string, listener: (params: unknown) => void): { dispose(): void } {
+    const listeners = this.notificationListeners.get(method) ?? new Set();
+    this.notificationListeners.set(method, listeners.add(listener));
+    return { dispose: () => listeners.delete(listener) };
+  }
+
+  /** A request to the running agent; rejects when it is not ready. */
+  request<Response>(method: string, params: Record<string, unknown> = {}): Promise<Response> {
+    if (this.state.kind !== "ready" || !this.connection) {
+      return Promise.reject(new Error("the agent is not running"));
+    }
+    return this.connection.agent.request<Response>(method, params);
+  }
+
+  notify(method: string, params: Record<string, unknown> = {}): void {
+    if (this.state.kind !== "ready" || !this.connection) return;
+    this.connection.agent.notify(method, params).catch((error: unknown) => {
+      this.log.warn(`${method} not sent: ${errorText(error)}`);
+    });
   }
 
   start(): void {
@@ -58,7 +87,13 @@ export class Agent {
       Writable.toWeb(proc.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(proc.stdout) as ReadableStream<Uint8Array>,
     );
-    const connection = acp.client({ name: "unharnessed-vscode" }).connect(logged(stream, this.log));
+    const client = acp.client({ name: "unharnessed-vscode" });
+    for (const [method, listeners] of this.notificationListeners) {
+      client.onNotification(method, (params) => params, ({ params }) => {
+        for (const listener of listeners) listener(params);
+      });
+    }
+    const connection = client.connect(logged(stream, this.log));
     this.connection = connection;
 
     // Nothing is written before the process exists: a missing binary never
@@ -142,13 +177,21 @@ function logged(stream: acp.Stream, log: vscode.LogOutputChannel): acp.Stream {
   const tap = (arrow: string) =>
     new TransformStream<acp.AnyMessage, acp.AnyMessage>({
       transform(message, controller) {
-        log.info(`${arrow} ${JSON.stringify(message)}`);
+        log.info(`${arrow} ${JSON.stringify(redacted(message))}`);
         controller.enqueue(message);
       },
     });
   const outgoing = tap("→");
   outgoing.readable.pipeTo(stream.writable).catch(() => {});
   return { readable: stream.readable.pipeThrough(tap("←")), writable: outgoing.writable };
+}
+
+function redacted(message: acp.AnyMessage): acp.AnyMessage {
+  const secret = "method" in message ? SECRET_PARAMS[message.method] : undefined;
+  if (!secret || !("params" in message) || typeof message.params !== "object" || !message.params) {
+    return message;
+  }
+  return { ...message, params: { ...message.params, [secret]: "<redacted>" } };
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
@@ -179,8 +222,12 @@ function exitsWithin(proc: ChildProcessWithoutNullStreams, ms: number): Promise<
   });
 }
 
-function errorText(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error && "message" in error) return String(error.message);
+/** A JSON-RPC error's `data.details` (the agent's reason), else its message. */
+export function errorText(error: unknown): string {
+  if (typeof error === "object" && error) {
+    const { data } = error as { data?: unknown };
+    if (typeof data === "object" && data && "details" in data) return String(data.details);
+    if ("message" in error) return String(error.message);
+  }
   return String(error);
 }

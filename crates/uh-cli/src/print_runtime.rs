@@ -89,6 +89,10 @@ async fn acp_mode_main(options: &RunOptions) -> Result<i32, String> {
         api_key: engine.api_key,
         agent_dir: config.agent_dir.clone(),
         provider_target: engine.provider_target,
+        provider_auth: std::sync::Arc::new(crate::provider_login::ProviderAuth::new(
+            config.cwd.clone(),
+            config.agent_dir.clone(),
+        )),
         autonomous_config: options
             .config
             .autonomous

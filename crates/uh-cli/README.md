@@ -31,10 +31,15 @@ The `unharnessed` binary and composition root.
   `/compact`, `/goal` or `/autonomous` run through the uh-core session-command
   executor instead of reaching the model.
 - **ACP** (`--mode acp`): wires uh-daemon's ACP transport to the same headless
-  engine builder.
-- **Login logic** kept for a future front-end (`provider_login.rs`,
-  `prime_inference_login.rs`, `mcp_login.rs`, `client_auth.rs`): the provider
-  and MCP auth flows, driven through an auth-panel channel.
+  engine builder, and hands it the provider logins.
+- **Provider logins** (`provider_login.rs`, `subscription_login.rs`,
+  `codex_subscription_login.rs`, `prime_inference_login.rs`): the provider
+  list, the API-key store and the browser sign-ins, implementing uh-daemon's
+  `provider_auth` contract over the auth-panel channel. The ACP
+  `_unharnessed/providers/*` methods drive them (the VS Code extension's
+  login screens).
+- **MCP login logic** kept for a future front-end (`mcp_login.rs`,
+  `client_auth.rs`): the MCP auth flows, driven through the same channel.
 - **Packaged layout**: the binary plus `package.json`, `unharnessed-runtime/`
   and `skills/`, resolved from the executable's directory; the hidden
   `--unharnessed-bootstrap` flag pre-builds the kernel venv. Verifier:

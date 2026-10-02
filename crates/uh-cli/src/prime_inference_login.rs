@@ -368,8 +368,9 @@ fn default_team_status(auth: &AuthStorage, prime_team_id: Option<&str>) -> Strin
 
 /// The login's inline-panel surface (TS the login dialog renders in the
 /// TUI): progress lines, the paste prompt, and the team selection drive
-/// the auth panel through the request channel (the TUI loop answers the
-/// prompts and the picker); the flow never touches the terminal.
+/// the auth panel through the request channel (the host answers the
+/// prompts and the picker, and opens the browser); the flow never touches
+/// the terminal.
 pub(crate) struct PanelPrimeLoginUi {
     panel: crate::auth_panel::AuthPanelHandle,
 }
@@ -391,7 +392,6 @@ impl PrimeLoginUi for PanelPrimeLoginUi {
 
     fn on_auth(&self, url: &str, instructions: &str) {
         self.panel.auth_url(url, Some(instructions));
-        uh_core::platform::browser::open_in_browser(url);
     }
 
     fn is_cancelled(&self) -> bool {
