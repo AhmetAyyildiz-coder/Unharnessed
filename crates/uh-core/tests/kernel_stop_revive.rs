@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use uh_core::kernel::provisioner::{IpythonKernelProvisioner, IpythonKernelProvisionerOptions};
 use uh_core::kernel::shared::{ExecuteOptions, ExecuteStatus, KernelShutdownOptions};
 
-/// The kernel Python with prime-agent-runtime installed (see
+/// The kernel Python with unharnessed-runtime installed (see
 /// `kernel_snapshot_resume.rs`); skipped with a note when absent.
 fn kernel_python() -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("UH_CORE_KERNEL_PYTHON") {

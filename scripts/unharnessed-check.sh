@@ -25,7 +25,7 @@ LOG="$GATE/check.log"
 BASELINE="$ROOT/UNHARNESSED_BASELINE.txt"
 REAL_HOME=$HOME
 REAL_VENV="$REAL_HOME/.prime/agent/kernel-venv"
-BIN="$ROOT/target/release/prime-agent"
+BIN="$ROOT/target/release/unharnessed"
 VENV="$GATE/kernel-venv"
 RUN_ID="gate-$$-$(date +%s)"
 FAILED=0
@@ -79,12 +79,12 @@ touch "$GATE/started"
 step fmt cargo fmt --all --check
 step clippy cargo clippy --workspace --all-targets -- -D warnings
 step build-release cargo build --release --workspace
-step kernel-venv "$BIN" --prime-agent-bootstrap
+step kernel-venv "$BIN" --unharnessed-bootstrap
 echo "== test: cargo test --workspace --no-fail-fast" | tee -a "$LOG"
 (cd "$ROOT" && env UNHARNESSED_GATE_RUN="$RUN_ID" cargo test --workspace --no-fail-fast) > "$GATE/test.log" 2>&1
 cat "$GATE/test.log" >> "$LOG"
-echo "== python: unittest discover (prime-agent-runtime/test)" | tee -a "$LOG"
-(cd "$ROOT/prime-agent-runtime" && env UNHARNESSED_GATE_RUN="$RUN_ID" PYTHONPATH=src \
+echo "== python: unittest discover (unharnessed-runtime/test)" | tee -a "$LOG"
+(cd "$ROOT/unharnessed-runtime" && env UNHARNESSED_GATE_RUN="$RUN_ID" PYTHONPATH=src \
     "$VENV/bin/python" -m unittest discover -s test) > "$GATE/python.log" 2>&1
 cat "$GATE/python.log" >> "$LOG"
 
@@ -94,7 +94,7 @@ cat "$GATE/python.log" >> "$LOG"
 # matched. (The gate's own environment names the gate dir, hence the marker
 # for the environment match and command lines only for the paths.)
 leftovers=$( { ps -AEww -o pid=,command= | grep -e "UNHARNESSED_GATE_RUN=$RUN_ID"
-    ps -Aww -o pid=,command= | grep -e "$ROOT/target/" -e "$GATE/" -e '_prime_agent_gate'; } \
+    ps -Aww -o pid=,command= | grep -e "$ROOT/target/" -e "$GATE/" -e '_unharnessed_gate'; } \
     | grep -v -e '\.local/share/prime-agent' -e ' grep ' | awk '{ print $1 }' | sort -u)
 for pid in $leftovers; do
     { [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ]; } && continue

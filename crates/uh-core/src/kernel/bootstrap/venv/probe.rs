@@ -25,11 +25,11 @@ fn run_quiet(command: &str, args: &[&str]) -> bool {
 }
 
 /// The runtime-ready assertion from the TS product: a current
-/// prime-agent-runtime with the callable RLM surface, bash handles, and
+/// unharnessed-runtime with the callable RLM surface, bash handles, and
 /// protocol version 3.
-const RUNTIME_READY_CHECK: &str = "import rlm; from rlm import McpIntegration; import rlm.mcp as mcp; _mcp_discovery_methods = ['list_plugins', 'search_plugins', 'list_connections', 'search_tools', 'describe_tool']; assert callable(mcp.list_tools); assert callable(mcp.call_tool); assert all(callable(getattr(mcp, _m, None)) for _m in _mcp_discovery_methods), \"rlm.mcp is missing MCP discovery methods (list_plugins, search_plugins, list_connections, search_tools, describe_tool); the kernel venv needs a current prime-agent-runtime\"; assert callable(rlm.host_request); assert not hasattr(rlm, 'background'); from rlm.bash import BashHandle, BashResult; assert callable(rlm.bash); assert all(callable(getattr(BashHandle, _m, None)) for _m in ('tail', 'output', 'poll', 'kill')); assert {'exit_code', 'output', 'duration'} <= set(BashResult.__dataclass_fields__); import rlm.repl as _repl; assert callable(_repl.main); assert callable(_repl.emit); assert callable(_repl.host_request); assert callable(_repl.is_active); assert _repl.PROTOCOL_VERSION == 3; assert callable(rlm.emit); assert not hasattr(rlm, 'HOST_COMM_TARGET'); assert not hasattr(mcp, 'install_shutdown_hook')";
+const RUNTIME_READY_CHECK: &str = "import rlm; from rlm import McpIntegration; import rlm.mcp as mcp; _mcp_discovery_methods = ['list_plugins', 'search_plugins', 'list_connections', 'search_tools', 'describe_tool']; assert callable(mcp.list_tools); assert callable(mcp.call_tool); assert all(callable(getattr(mcp, _m, None)) for _m in _mcp_discovery_methods), \"rlm.mcp is missing MCP discovery methods (list_plugins, search_plugins, list_connections, search_tools, describe_tool); the kernel venv needs a current unharnessed-runtime\"; assert callable(rlm.host_request); assert not hasattr(rlm, 'background'); from rlm.bash import BashHandle, BashResult; assert callable(rlm.bash); assert all(callable(getattr(BashHandle, _m, None)) for _m in ('tail', 'output', 'poll', 'kill')); assert {'exit_code', 'output', 'duration'} <= set(BashResult.__dataclass_fields__); import rlm.repl as _repl; assert callable(_repl.main); assert callable(_repl.emit); assert callable(_repl.host_request); assert callable(_repl.is_active); assert _repl.PROTOCOL_VERSION == 3; assert callable(rlm.emit); assert not hasattr(rlm, 'HOST_COMM_TARGET'); assert not hasattr(mcp, 'install_shutdown_hook')";
 
-pub(crate) fn has_prime_agent_runtime(python: &str) -> bool {
+pub(crate) fn has_unharnessed_runtime(python: &str) -> bool {
     run_quiet(python, &["-c", RUNTIME_READY_CHECK])
 }
 
@@ -181,7 +181,7 @@ pub(super) fn runtime_probe_key(
 /// Managed-venv path only: a caller-owned `PRIME_AGENT_KERNEL_PYTHON`
 /// override never reaches this (it uses the direct probe, the d14
 /// ruling), and no memo file is read or written for it.
-pub(super) fn has_prime_agent_runtime_memoized(
+pub(super) fn has_unharnessed_runtime_memoized(
     python: &str,
     runtime_identity: &str,
     version_raw: &str,
@@ -205,7 +205,7 @@ pub(super) fn has_prime_agent_runtime_memoized(
         entries.insert(key, memo_path);
         return true;
     }
-    if !has_prime_agent_runtime(python) || !python_imports(python, "dill") {
+    if !has_unharnessed_runtime(python) || !python_imports(python, "dill") {
         return false;
     }
     let mut memo = lock_probe_memo();

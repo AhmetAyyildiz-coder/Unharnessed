@@ -19,7 +19,7 @@ use super::super::session::AcpSession;
 use super::super::{AcpModeState, ConnectionState, SessionEntry};
 
 /// The ACP meta namespace on the wire.
-const META: &str = "ai.primeintellect.prime-agent";
+const META: &str = "unharnessed";
 
 /// One armed ACP prompt turn over an in-process faux engine. The faux
 /// provider registry is process-global, so every test holds the

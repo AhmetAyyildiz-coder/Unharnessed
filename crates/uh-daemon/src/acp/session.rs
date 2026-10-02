@@ -17,8 +17,8 @@ use super::compaction_arms::CompactionArms;
 use super::events::{acp_updates_for_event, AcpEngineEvent, MappingState};
 use super::jsonrpc;
 use super::meta::{
-    PrimeAgentAutonomousMeta, PrimeAgentEventPhase, PrimeAgentOutcome, PrimeAgentQuiescenceMeta,
-    PrimeAgentSessionMeta,
+    UnharnessedAutonomousMeta, UnharnessedEventPhase, UnharnessedOutcome,
+    UnharnessedQuiescenceMeta, UnharnessedSessionMeta,
 };
 use super::producer::UpdateProducer;
 use super::types::{parse_prompt_blocks, AcpSessionUpdate, ImageBlock, PromptBlockError};
@@ -186,7 +186,7 @@ impl AcpSession {
         let updates = acp_updates_for_event(event, &mut mapping);
         for update in updates {
             self.producer
-                .publish(&update, turn_id, PrimeAgentEventPhase::Event, None)
+                .publish(&update, turn_id, UnharnessedEventPhase::Event, None)
                 .await;
         }
     }
@@ -242,7 +242,7 @@ async fn subscribe_engine_events(
                     };
                     for update in updates {
                         producer
-                            .publish(&update, turn_id, PrimeAgentEventPhase::Event, None)
+                            .publish(&update, turn_id, UnharnessedEventPhase::Event, None)
                             .await;
                     }
                 }
@@ -321,7 +321,7 @@ async fn subscribe_engine_events(
                     };
                     for update in acp_updates_for_event(&event, &mut mapping) {
                         producer
-                            .publish(&update, turn_id, PrimeAgentEventPhase::Event, None)
+                            .publish(&update, turn_id, UnharnessedEventPhase::Event, None)
                             .await;
                     }
                 }
@@ -459,37 +459,37 @@ pub async fn latest_assistant_message(agent: &Agent) -> Option<uh_types::ai::Ass
 pub async fn publish_completion_envelope(
     session: &AcpSession,
     turn_id: u64,
-    outcome: PrimeAgentOutcome,
-    autonomous: Option<&PrimeAgentAutonomousMeta>,
+    outcome: UnharnessedOutcome,
+    autonomous: Option<&UnharnessedAutonomousMeta>,
     remaining_autonomous_continuations: u64,
 ) -> anyhow::Result<()> {
-    let quiescence = PrimeAgentQuiescenceMeta {
+    let quiescence = UnharnessedQuiescenceMeta {
         remaining_autonomous_continuations,
     };
-    let info_meta = PrimeAgentSessionMeta {
+    let info_meta = UnharnessedSessionMeta {
         quiescence: Some(quiescence),
         autonomous: autonomous.cloned(),
         ..Default::default()
     };
     let completion = AcpSessionUpdate::SessionInfoUpdate {
-        meta: super::meta::prime_agent_meta(&info_meta),
+        meta: super::meta::unharnessed_meta(&info_meta),
     };
     if !session
         .producer()
-        .publish(&completion, turn_id, PrimeAgentEventPhase::Event, None)
+        .publish(&completion, turn_id, UnharnessedEventPhase::Event, None)
         .await
     {
         anyhow::bail!("Failed to publish ACP completion update");
     }
     let terminal = AcpSessionUpdate::SessionInfoUpdate {
-        meta: super::meta::prime_agent_meta(&info_meta),
+        meta: super::meta::unharnessed_meta(&info_meta),
     };
     if !session
         .producer()
         .publish(
             &terminal,
             turn_id,
-            PrimeAgentEventPhase::TerminalQuiescence,
+            UnharnessedEventPhase::TerminalQuiescence,
             Some(outcome),
         )
         .await
@@ -506,10 +506,10 @@ pub async fn publish_response_boundary(
     session: &AcpSession,
     turn_id: u64,
     expected: bool,
-    outcome: PrimeAgentOutcome,
+    outcome: UnharnessedOutcome,
 ) -> anyhow::Result<()> {
     let boundary = AcpSessionUpdate::SessionInfoUpdate {
-        meta: super::meta::prime_agent_meta(&PrimeAgentSessionMeta {
+        meta: super::meta::unharnessed_meta(&UnharnessedSessionMeta {
             terminal_quiescence_expected: Some(expected),
             ..Default::default()
         }),
@@ -519,7 +519,7 @@ pub async fn publish_response_boundary(
         .publish(
             &boundary,
             turn_id,
-            PrimeAgentEventPhase::ResponseBoundary,
+            UnharnessedEventPhase::ResponseBoundary,
             Some(outcome),
         )
         .await

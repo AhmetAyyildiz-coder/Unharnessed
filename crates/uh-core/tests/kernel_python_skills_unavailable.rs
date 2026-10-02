@@ -24,7 +24,7 @@
 //!   `details.skills` list.
 //!
 //! The kernel test needs the ambient product kernel (the auto-bootstrapped
-//! venv, exactly the interpreter `prime-agent` spawns); like
+//! venv, exactly the interpreter `unharnessed` spawns); like
 //! `kernel_lifecycle.rs` it skips (with a note) on machines without a live
 //! install so the suite stays hermetic elsewhere. `UH_CORE_KERNEL_PYTHON`
 //! points at an explicit interpreter.
@@ -48,7 +48,7 @@ use uh_types::session::FileEntry;
 /// ones, so holding it across awaits is safe).
 static FAUX_LOCK: Mutex<()> = Mutex::new(());
 
-/// The kernel Python with prime-agent-runtime installed (see
+/// The kernel Python with unharnessed-runtime installed (see
 /// `kernel_lifecycle.rs`); skipped with a note when absent.
 fn kernel_python() -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("UH_CORE_KERNEL_PYTHON") {

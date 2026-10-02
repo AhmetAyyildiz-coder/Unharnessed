@@ -75,7 +75,7 @@ impl AcpChild {
 
     fn spawn(args: &[&str], script: &serde_json::Value) -> AcpChild {
         let home = tempfile::TempDir::new().unwrap();
-        let bin = env!("CARGO_BIN_EXE_prime-agent");
+        let bin = env!("CARGO_BIN_EXE_unharnessed");
         let child = Command::new(bin)
             .args(args)
             .env("HOME", home.path())
@@ -187,12 +187,9 @@ fn acp_initialize_matches_the_ts_golden() {
     // flag (http support) is advertised.
     assert_eq!(capabilities["mcpCapabilities"], json!({ "http": true }));
     let info = &result["agentInfo"];
-    assert_eq!(info["name"], "prime-agent");
-    assert_eq!(info["title"], "Prime Agent");
-    assert_eq!(
-        result["_meta"],
-        json!({ "ai.primeintellect.prime-agent": {} })
-    );
+    assert_eq!(info["name"], "unharnessed");
+    assert_eq!(info["title"], "Unharnessed");
+    assert_eq!(result["_meta"], json!({ "unharnessed": {} }));
 }
 
 #[test]
@@ -231,7 +228,7 @@ fn acp_prompt_stream_completion_envelope_and_stop_reason_match_ts() {
     let mut shapes = Vec::new();
     for update in &updates {
         let body = &update["params"]["update"];
-        let meta = &body["_meta"]["ai.primeintellect.prime-agent"];
+        let meta = &body["_meta"]["unharnessed"];
         shapes.push((
             body["sessionUpdate"]
                 .as_str()
@@ -278,7 +275,7 @@ fn acp_prompt_stream_completion_envelope_and_stop_reason_match_ts() {
     let mut sequences: Vec<u64> = Vec::new();
     for update in &updates {
         sequences.push(
-            update["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"]["eventSequence"]
+            update["params"]["update"]["_meta"]["unharnessed"]["eventSequence"]
                 .as_u64()
                 .unwrap(),
         );
@@ -317,14 +314,14 @@ fn acp_prompt_chunk_carries_the_assistant_message_id() {
         .expect("a message chunk");
     assert_eq!(
         chunk["params"]["update"]["messageId"],
-        "prime-agent-assistant-1"
+        "unharnessed-assistant-1"
     );
     assert_eq!(
         chunk["params"]["update"]["content"],
         json!({ "type": "text", "text": "ACP-OK" })
     );
     assert_eq!(
-        chunk["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"],
+        chunk["params"]["update"]["_meta"]["unharnessed"],
         json!({ "promptTurnId": 1, "eventSequence": 1, "phase": "event" })
     );
 }
@@ -337,7 +334,7 @@ fn acp_cwd_mismatch_is_reported_not_adopted() {
     let _ = client.wait_response(init, TIMEOUT);
     let new = client.request("session/new", &json!({ "cwd": "/tmp", "mcpServers": [] }));
     let (new_response, _) = client.wait_response(new, TIMEOUT);
-    let meta = &new_response["result"]["_meta"]["ai.primeintellect.prime-agent"]["cwd"];
+    let meta = &new_response["result"]["_meta"]["unharnessed"]["cwd"];
     assert_eq!(meta["requested"], "/tmp");
     // The actual cwd is the temp dir the client runs in; only the mismatch
     // shape is asserted here (the value is tempdir-random).
@@ -386,7 +383,7 @@ fn acp_error_shapes_match_the_ts_goldens() {
     assert_eq!(response["error"]["code"], -32603);
     assert_eq!(
         response["error"]["data"]["details"],
-        "prime-agent ACP mode hosts one session per connection; start another prime-agent process for a second session"
+        "unharnessed ACP mode hosts one session per connection; start another unharnessed process for a second session"
     );
 
     // Unknown method (ts-errors.jsonl): -32601 with the observed message.
@@ -533,7 +530,7 @@ fn acp_mcp_admission_rejects_a_second_session_only_when_open() {
     assert_eq!(second_response["error"]["message"], "Internal error");
     assert_eq!(
         second_response["error"]["data"]["details"],
-        "prime-agent ACP mode hosts one session per connection; start another prime-agent process for a second session"
+        "unharnessed ACP mode hosts one session per connection; start another unharnessed process for a second session"
     );
     // Close, then a replacement admission with a different server list.
     let close = client.request("session/close", &json!({ "sessionId": session_id }));
@@ -675,11 +672,11 @@ fn acp_compact_command_publishes_the_compaction_meta_and_end_turn() {
     let compaction = updates
         .iter()
         .find(|update| {
-            let meta = &update["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"];
+            let meta = &update["params"]["update"]["_meta"]["unharnessed"];
             meta.get("compaction").is_some_and(|value| !value.is_null())
         })
         .expect("a compaction meta frame");
-    let meta = &compaction["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"];
+    let meta = &compaction["params"]["update"]["_meta"]["unharnessed"];
     assert_eq!(
         meta["compaction"],
         json!({}),
@@ -689,7 +686,7 @@ fn acp_compact_command_publishes_the_compaction_meta_and_end_turn() {
 
     // The turn settles normally: boundary, completion, terminal, end_turn.
     let boundary = updates.iter().any(|update| {
-        let meta = &update["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"];
+        let meta = &update["params"]["update"]["_meta"]["unharnessed"];
         meta["phase"] == "responseBoundary" && meta["terminalQuiescenceExpected"] == true
     });
     assert!(boundary, "updates: {updates:?}");
@@ -729,13 +726,12 @@ fn acp_goal_command_publishes_goal_meta_and_runs_the_continuation() {
     let goal_frames: Vec<&Value> = updates
         .iter()
         .filter(|update| {
-            let meta = &update["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"];
+            let meta = &update["params"]["update"]["_meta"]["unharnessed"];
             meta.get("goal").is_some_and(|value| !value.is_null())
         })
         .collect();
     assert!(!goal_frames.is_empty(), "updates: {updates:?}");
-    let first =
-        &goal_frames[0]["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"]["goal"];
+    let first = &goal_frames[0]["params"]["update"]["_meta"]["unharnessed"]["goal"];
     assert_eq!(first["status"], "active");
     assert_eq!(first["objective"], "reply with exactly: GOAL-PROGRESS");
     assert_eq!(first["tokensUsed"], 0);
@@ -743,8 +739,7 @@ fn acp_goal_command_publishes_goal_meta_and_runs_the_continuation() {
     // crosses at the first turn, so the goal is budget_limited before
     // the wrap-up steer segment runs.
     assert!(goal_frames.len() >= 2, "goal frames: {goal_frames:?}");
-    let second =
-        &goal_frames[1]["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"]["goal"];
+    let second = &goal_frames[1]["params"]["update"]["_meta"]["unharnessed"]["goal"];
     assert_eq!(second["status"], "budget_limited");
     assert!(second["tokensUsed"].as_u64().unwrap_or(0) > 0);
     // The budget-limit wrap-up steer ran as the prompt's second model
@@ -798,12 +793,11 @@ fn acp_autonomous_token_limit_maps_to_max_tokens_stop_reason() {
     let completion = updates
         .iter()
         .find(|update| {
-            let meta = &update["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"];
+            let meta = &update["params"]["update"]["_meta"]["unharnessed"];
             meta["phase"] == "event" && meta.get("autonomous").is_some_and(|v| !v.is_null())
         })
         .expect("an autonomous completion meta");
-    let autonomous =
-        &completion["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"]["autonomous"];
+    let autonomous = &completion["params"]["update"]["_meta"]["unharnessed"]["autonomous"];
     assert_eq!(autonomous["enabled"], true);
     assert_eq!(autonomous["turnsUsed"], 1);
 
@@ -834,7 +828,7 @@ fn acp_autonomous_disabled_reports_end_turn_without_accounting() {
     );
     let (prompt_response, updates) = client.wait_response(prompt, TIMEOUT);
     for update in &updates {
-        let meta = &update["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"];
+        let meta = &update["params"]["update"]["_meta"]["unharnessed"];
         assert!(
             meta.get("autonomous")
                 .is_none_or(serde_json::Value::is_null),
@@ -870,7 +864,7 @@ fn spawn_with_compaction_settings(
         .to_string(),
     )
     .expect("write settings.json");
-    let bin = env!("CARGO_BIN_EXE_prime-agent");
+    let bin = env!("CARGO_BIN_EXE_unharnessed");
     let child = Command::new(bin)
         .args(args)
         .env("HOME", home.path())
@@ -892,7 +886,7 @@ fn compaction_metas(updates: &[Value]) -> Vec<Value> {
     updates
         .iter()
         .filter_map(|update| {
-            let meta = &update["params"]["update"]["_meta"]["ai.primeintellect.prime-agent"];
+            let meta = &update["params"]["update"]["_meta"]["unharnessed"];
             Some(meta["compaction"].clone()).filter(|value| !value.is_null())
         })
         .collect()

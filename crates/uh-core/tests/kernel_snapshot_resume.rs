@@ -52,7 +52,7 @@ use uh_types::session::FileEntry;
 /// it across awaits is safe).
 static FAUX_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// The kernel Python with prime-agent-runtime installed (see
+/// The kernel Python with unharnessed-runtime installed (see
 /// `kernel_lifecycle.rs`); skipped with a note when absent.
 fn kernel_python() -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("UH_CORE_KERNEL_PYTHON") {

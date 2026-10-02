@@ -1,4 +1,4 @@
-//! `prime-agent prompt`: dump the fully-assembled effective system prompt
+//! `unharnessed prompt`: dump the fully-assembled effective system prompt
 //! with its per-layer breakdown. Assembles the prompt exactly the way a
 //! fresh root session would (same resource loading, MCP gating, and tool
 //! surface), without starting a session or a provider.
@@ -50,7 +50,7 @@ pub fn run_prompt_command(args: &[String]) -> i32 {
         Err(help_request) if help_request.is_empty() => return 0,
         Err(error) => {
             eprintln!("Error: {error}");
-            eprintln!("Run `prime-agent help prompt` for usage.");
+            eprintln!("Run `unharnessed help prompt` for usage.");
             return 1;
         }
     };
@@ -118,7 +118,7 @@ fn assemble_breakdown(
 }
 
 fn print_text(breakdown: &uh_core::prompts::SystemPromptBreakdown) {
-    println!("# prime-agent system prompt breakdown");
+    println!("# unharnessed system prompt breakdown");
     println!();
     println!("cached prefix (static layers, byte-stable across sessions):");
     for segment in &breakdown.segments {

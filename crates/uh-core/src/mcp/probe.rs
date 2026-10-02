@@ -197,7 +197,7 @@ async fn probe_endpoint(
         &serde_json::json!({
             "protocolVersion": "2025-06-18",
             "capabilities": {},
-            "clientInfo": { "name": "prime-agent", "version": "mcp-verify" }
+            "clientInfo": { "name": "unharnessed", "version": "mcp-verify" }
         }),
     );
     let (status, session_id, value) =

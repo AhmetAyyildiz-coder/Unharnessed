@@ -1,4 +1,4 @@
-//! `prime-agent session export <file> [output]`: the HTML export of a saved
+//! `unharnessed session export <file> [output]`: the HTML export of a saved
 //! session file (TS main.ts' `--export` branch, reached through the
 //! `session export` rewrite; the export itself is uh-core's `export_from_file`).
 

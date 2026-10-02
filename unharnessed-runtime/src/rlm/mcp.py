@@ -1071,7 +1071,7 @@ def _strings(value: Any) -> bool:
 
 
 def _agent_dir() -> Path:
-    """Resolve the Prime Agent config dir the same way the rest of the runtime does."""
+    """Resolve the Unharnessed config dir the same way the rest of the runtime does."""
     raw = (
         os.environ.get("PRIME_AGENT_CODING_AGENT_DIR")
         or os.environ.get("PI_CODING_AGENT_DIR")

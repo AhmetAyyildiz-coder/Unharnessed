@@ -37,7 +37,7 @@ use uh_types::session::FileEntry;
 /// it across awaits is safe).
 static FAUX_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// The kernel Python with prime-agent-runtime installed (the interpreter
+/// The kernel Python with unharnessed-runtime installed (the interpreter
 /// the session-path provisioner resolves). Skipped (with a note) on
 /// machines without a live install; set `UH_CORE_KERNEL_PYTHON` to point at
 /// an explicit interpreter instead.

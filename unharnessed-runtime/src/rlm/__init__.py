@@ -1,4 +1,4 @@
-"""Tiny rlm-compatible kernel shim for Prime Agent."""
+"""Tiny rlm-compatible kernel shim for Unharnessed."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def _parse_host_reply(request_type: str, reply: dict[str, Any]) -> dict[str, Any
 
 
 async def host_request(request_type: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Send a typed request to the Prime Agent host and await its reply.
+    """Send a typed request to the Unharnessed host and await its reply.
 
     This is the kernel side of the generic host bridge: Python skills call
     ``await host_request("<type>", {...})`` and the TypeScript host dispatches

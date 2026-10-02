@@ -34,9 +34,9 @@ use probe::{
     lock_probe_memo, runtime_probe_key,
 };
 pub(crate) use probe::{
-    has_prime_agent_runtime, missing_python_skill_import_labels, missing_rlm_extra_import_labels,
+    has_unharnessed_runtime, missing_python_skill_import_labels, missing_rlm_extra_import_labels,
 };
-use probe::{has_prime_agent_runtime_memoized, installed_runtime_identity};
+use probe::{has_unharnessed_runtime_memoized, installed_runtime_identity};
 pub use runtime_source::resolve_runtime_identity;
 use runtime_source::{collect_python_files, resolve_runtime_source_dir};
 pub(super) use runtime_source::{package_dir, packaged_runtime_dir};
@@ -57,7 +57,7 @@ use version::{
 use version::{recorded_skills_cover, BOOTSTRAP_SCHEMA};
 
 const PYTHON_VERSION: &str = "3.11";
-const RUNTIME_REQUIREMENT: &str = "prime-agent-runtime";
+const RUNTIME_REQUIREMENT: &str = "unharnessed-runtime";
 pub(crate) const BOOTSTRAP_LOCK_NAME: &str = ".bootstrap.lock";
 pub(crate) const BOOTSTRAP_LOCK_RETRY_MS: u64 = 100;
 pub(crate) const BOOTSTRAP_LOCK_STALE_WITHOUT_PID_MS: u64 = 30_000;
@@ -262,7 +262,7 @@ pub(crate) async fn sync_python_skills(
 pub(crate) fn kernel_base_ready(python: &str, venv: &Path, runtime_identity: &str) -> bool {
     let (version, raw) = read_bootstrap_version_raw(venv);
     bootstrap_base_version_current(version, runtime_identity)
-        && has_prime_agent_runtime_memoized(
+        && has_unharnessed_runtime_memoized(
             python,
             runtime_identity,
             &raw,
@@ -279,7 +279,7 @@ pub(crate) fn kernel_ready(
 ) -> bool {
     let (version, raw) = read_bootstrap_version_raw(venv);
     bootstrap_version_current(version.as_ref(), runtime_identity, python_skills)
-        && has_prime_agent_runtime_memoized(
+        && has_unharnessed_runtime_memoized(
             python,
             runtime_identity,
             &raw,

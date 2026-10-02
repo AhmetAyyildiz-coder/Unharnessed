@@ -119,7 +119,7 @@ pub fn parse_prime_inference_model_catalog(
         // Capability filtering (documented deviation from the TS parser,
         // which never reads this field): a model that declares its
         // supported request parameters without "tools" can never serve a
-        // prime-agent turn — the session always attaches its tool set and
+        // unharnessed turn — the session always attaches its tool set and
         // the router answers `404 No endpoints found that support tool
         // use` — so it never enters the selectable catalog. Entries
         // without the field stay: no signal, historical behavior.

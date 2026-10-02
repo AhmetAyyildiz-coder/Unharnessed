@@ -7,8 +7,8 @@ usage: scripts/unharnessed-wakes-e2e.py <out-dir>
 
 Each scenario writes <out-dir>/<name>.out: the command run, then every line
 the binary printed (ACP frames with the seconds since start). The kernel
-venv lives in <out-dir> (PRIME_AGENT_BIN picks the binary, default
-target/release/prime-agent). Exits non-zero when a check fails.
+venv lives in <out-dir> (UNHARNESSED_BIN picks the binary, default
+target/release/unharnessed). Exits non-zero when a check fails.
 """
 import json
 import os
@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BIN = os.environ.get("PRIME_AGENT_BIN", str(ROOT / "target/release/prime-agent"))
+BIN = os.environ.get("UNHARNESSED_BIN", str(ROOT / "target/release/unharnessed"))
 OUT = Path(sys.argv[1]).resolve()
 WORK = OUT / "work"
 WORK.mkdir(parents=True, exist_ok=True)
@@ -42,7 +42,7 @@ def run_print(name, responses, args):
     """Run `-p` on a faux script; return (exit code, seconds, json events)."""
     script = json.dumps({"responses": responses})
     with open(OUT / f"{name}.out", "w") as out:
-        out.write(f"$ PRIME_AGENT_FAUX_SCRIPT='{script}' prime-agent {' '.join(args)}\n")
+        out.write(f"$ PRIME_AGENT_FAUX_SCRIPT='{script}' unharnessed {' '.join(args)}\n")
         out.flush()
         start = time.time()
         code = subprocess.run([BIN, *args], cwd=WORK, stdout=out, stderr=subprocess.DEVNULL,
@@ -74,7 +74,7 @@ def run_acp(name, responses, steps):
     start = time.time()
     frames, inbox, answers = [], queue.Queue(), {}
     out = open(OUT / f"{name}.out", "w")
-    out.write(f"$ PRIME_AGENT_FAUX_SCRIPT='{script}' prime-agent --mode acp  <<< {json.dumps(steps)}\n")
+    out.write(f"$ PRIME_AGENT_FAUX_SCRIPT='{script}' unharnessed --mode acp  <<< {json.dumps(steps)}\n")
 
     def read():
         for line in child.stdout:
@@ -134,7 +134,7 @@ def acp_texts(frames):
     for stamp, frame in frames:
         update = (frame.get("params") or {}).get("update") or {}
         if update.get("sessionUpdate") == "agent_message_chunk":
-            turn = update["_meta"]["ai.primeintellect.prime-agent"]["promptTurnId"]
+            turn = update["_meta"]["unharnessed"]["promptTurnId"]
             first, text = turns.get(turn, (stamp, ""))
             turns[turn] = (first, text + update["content"]["text"])
     return [(first, turn, text) for turn, (first, text) in sorted(turns.items())]

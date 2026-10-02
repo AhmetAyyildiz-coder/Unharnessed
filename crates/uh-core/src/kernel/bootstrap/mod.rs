@@ -23,7 +23,7 @@ pub use runtime_code::{
     PYTHON_SKILL_IMPORT_ERROR_REPORT_MARKER,
 };
 use venv::{
-    bootstrap_venv, ensure_uv, expand_home, has_prime_agent_runtime,
+    bootstrap_venv, ensure_uv, expand_home, has_unharnessed_runtime,
     missing_python_skill_import_labels, missing_rlm_extra_import_labels, normalize_python_skills,
     resolve_writable_kernel_venv_dir, sync_python_skills, BootstrapPythonSkill,
 };
@@ -104,9 +104,9 @@ impl EnsureKernelPythonOptions {
 fn format_bootstrap_failure(error: &anyhow::Error) -> anyhow::Error {
     let mut message = format!(
         "Failed to set up the Python kernel runtime. {error:#}\n\
-         First-time setup needs internet to install uv, Python, prime-agent-runtime, and default Python packages; once set up, prime-agent runs offline. \
+         First-time setup needs internet to install uv, Python, unharnessed-runtime, and default Python packages; once set up, unharnessed runs offline. \
          An interrupted runtime upgrade needs network once more, so re-run this while online. \
-         Set PRIME_AGENT_KERNEL_PYTHON to a Python with a current prime-agent-runtime and default Python packages installed to skip auto-bootstrap."
+         Set PRIME_AGENT_KERNEL_PYTHON to a Python with a current unharnessed-runtime and default Python packages installed to skip auto-bootstrap."
     );
     // The packaged exe-adjacent sidecar is the kernel runtime source; when it
     // is missing everywhere (packaged layout and source checkout), name it:
@@ -115,7 +115,7 @@ fn format_bootstrap_failure(error: &anyhow::Error) -> anyhow::Error {
     if venv::packaged_runtime_dir().is_none() {
         let package = venv::package_dir();
         let _ = write!(message,
-            "\nThe packaged prime-agent-runtime directory was not found (looked next to the executable at {} and PI_PACKAGE_DIR); reinstall prime-agent so the kernel runtime ships beside the binary.",
+            "\nThe packaged unharnessed-runtime directory was not found (looked next to the executable at {} and PI_PACKAGE_DIR); reinstall unharnessed so the kernel runtime ships beside the binary.",
             package.display()
         );
     }
@@ -194,9 +194,9 @@ async fn ensure_kernel_python_uncached(
             let python = expand_home(&override_python);
             let python_str = python.to_string_lossy().to_string();
             let mut missing = Vec::new();
-            if !has_prime_agent_runtime(&python_str) {
+            if !has_unharnessed_runtime(&python_str) {
                 missing.push(
-                    "a current prime-agent-runtime with callable rlm.host_request".to_string(),
+                    "a current unharnessed-runtime with callable rlm.host_request".to_string(),
                 );
             }
             if missing.is_empty() {

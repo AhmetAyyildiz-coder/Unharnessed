@@ -146,7 +146,7 @@ impl ModelThinkingLevel {
     }
 }
 
-/// Maps Prime Agent thinking levels to provider/model-specific values.
+/// Maps Unharnessed thinking levels to provider/model-specific values.
 /// `None` values mark a level as unsupported.
 ///
 /// Ordered (`BTreeMap`): the map serializes into wire JSON (the model

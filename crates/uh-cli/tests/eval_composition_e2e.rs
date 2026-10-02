@@ -20,7 +20,7 @@
 //! End-to-end verifier for the eval/verifiers composition over the headless
 //! session: the CLI autonomous flags drive a print/json session with a
 //! verifier gate command through the #98 gate seams (no eval-specific core
-//! code — the composition is the `prime-agent` binary itself). A fixture
+//! code — the composition is the `unharnessed` binary itself). A fixture
 //! verifier script decides completion; the gate outcome must surface as
 //! durable session rows and structured json events, and the process exit
 //! code must follow the TS print-mode contract (print-mode.ts).
@@ -35,7 +35,7 @@ fn isolated_home() -> tempfile::TempDir {
 }
 
 fn run(home: &Path, args: &[&str], script: &Value) -> (String, String, i32) {
-    let bin = env!("CARGO_BIN_EXE_prime-agent");
+    let bin = env!("CARGO_BIN_EXE_unharnessed");
     let output = Command::new(bin)
         .args(args)
         .env("HOME", home)

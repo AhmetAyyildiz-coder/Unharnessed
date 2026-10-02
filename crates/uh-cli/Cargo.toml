@@ -3,7 +3,7 @@ name = "uh-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "The prime-agent binary."
+description = "The unharnessed binary."
 
 [dependencies]
 uh-types = { path = "../uh-types" }
@@ -20,7 +20,7 @@ serde_json = { workspace = true }
 base64 = "0.22"
 
 [[bin]]
-name = "prime-agent"
+name = "unharnessed"
 path = "src/main.rs"
 
 [dev-dependencies]

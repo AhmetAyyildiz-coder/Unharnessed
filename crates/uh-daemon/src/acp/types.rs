@@ -175,7 +175,7 @@ pub enum AcpSessionUpdate {
         #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
         meta: Option<Value>,
     },
-    /// Namespaced prime-agent state (compaction, quiescence, ...).
+    /// Namespaced unharnessed state (compaction, quiescence, ...).
     #[serde(rename = "session_info_update")]
     SessionInfoUpdate {
         #[serde(rename = "_meta")]
@@ -192,7 +192,7 @@ pub enum AcpSessionUpdate {
 
 impl AcpSessionUpdate {
     /// Serialize to the wire value. `ToolCallUpdate::meta` carries a
-    /// namespaced `_meta` payload (see [`meta::prime_agent_meta`]); the
+    /// namespaced `_meta` payload (see [`meta::unharnessed_meta`]); the
     /// producer merges its correlation fields into that payload afterwards.
     pub fn to_bare_value(&self) -> Value {
         serde_json::to_value(self).expect("session updates serialize")
@@ -400,11 +400,11 @@ pub fn initialize_result(product_version: &str) -> InitializeResult {
             },
         },
         agent_info: AgentInfo {
-            name: "prime-agent".to_string(),
-            title: "Prime Agent".to_string(),
+            name: "unharnessed".to_string(),
+            title: "Unharnessed".to_string(),
             version: product_version.to_string(),
         },
-        meta: super::meta::prime_agent_meta(&super::meta::PrimeAgentSessionMeta::default()),
+        meta: super::meta::unharnessed_meta(&super::meta::UnharnessedSessionMeta::default()),
     }
 }
 
@@ -426,8 +426,8 @@ mod tests {
                     "mcpCapabilities": { "http": true },
                     "sessionCapabilities": { "close": {} },
                 },
-                "agentInfo": { "name": "prime-agent", "title": "Prime Agent", "version": "9.9.9" },
-                "_meta": { "ai.primeintellect.prime-agent": {} },
+                "agentInfo": { "name": "unharnessed", "title": "Unharnessed", "version": "9.9.9" },
+                "_meta": { "unharnessed": {} },
             })
         );
     }

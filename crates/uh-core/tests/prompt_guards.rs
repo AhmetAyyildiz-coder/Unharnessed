@@ -166,7 +166,7 @@ fn prompt_token_for_host_request(request: &str) -> Option<String> {
 }
 
 /// Kernel-side programmatic tools implemented by the vendored
-/// `prime-agent-runtime` package (generic MCP calls). Update together with
+/// `unharnessed-runtime` package (generic MCP calls). Update together with
 /// the runtime sidecar.
 const KERNEL_LOCAL_TOKENS: &[&str] = &[
     "mcp.list_tools",

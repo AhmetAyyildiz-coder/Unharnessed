@@ -2,7 +2,7 @@
 //! #254 ambiguity, resolved against the TS binary).
 //!
 //! TS ruling (probed over the shared faux-provider harness,
-//! `prime-agent --mode json`): the autonomous continuation rides the agent
+//! `--mode json`): the autonomous continuation rides the agent
 //! loop's natural-turn-end hook (`getContinuationMessages` -> the
 //! autonomous arm of `_getContinuationMessages`), so the continuation
 //! churns INSIDE the one prompt wait — `turn_end -> turn_start` with the

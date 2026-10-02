@@ -7,7 +7,7 @@ its name so the ACP code stays where it was.
 
 ## Scope
 
-- `acp` — the Agent Client Protocol stdio mode (`prime-agent --mode acp`): a thin
+- `acp` — the Agent Client Protocol stdio mode (`unharnessed --mode acp`): a thin
   JSON-RPC transport over the uh-core session engine. One connection hosts at
   most one session. `session/new` admits it and advertises the model and
   reasoning-effort pickers; `session/prompt` drives one engine turn with
@@ -15,7 +15,7 @@ its name so the ACP code stays where it was.
   `session/cancel` and `session/close` stop work (close flushes the kernel
   snapshot). Every frame leaves through one ordered write queue, so responses
   and `session/update` notifications interleave in publication order, with
-  namespaced `_meta` (`ai.primeintellect.prime-agent`). The transport hosts the
+  namespaced `_meta` (`unharnessed`). The transport hosts the
   automatic compaction arms at its turn boundaries (`acp/compaction_arms.rs`:
   overflow compact-and-retry, model-requested `compact.run`, threshold) and the
   goal/autonomous continuation loop (`acp/goal_continuation.rs`). A failed turn
@@ -28,7 +28,7 @@ its name so the ACP code stays where it was.
   (`<agent-dir>/session-leases/<sha256(path)>.lock`, atomic acquisition, stale
   owner reclaim), so two processes never drive the same session file.
 - `hold_refusal` — the message a `-c`/`-r` open prints when another live process
-  holds the lease (the holder's product when it can be identified, `kill <pid>`).
+  holds the lease (whether the holder is another Unharnessed process, `kill <pid>`).
 - `overflow_compaction` — the overflow-arm outcome shared by the print and ACP
   compaction arms.
 - `paths`, `util` — small helpers for the above.

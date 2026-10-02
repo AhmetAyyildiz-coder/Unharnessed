@@ -60,7 +60,7 @@ impl AcpChild {
         if let Some(models) = models_json {
             std::fs::write(agent_dir.join("models.json"), models.to_string()).unwrap();
         }
-        let bin = env!("CARGO_BIN_EXE_prime-agent");
+        let bin = env!("CARGO_BIN_EXE_unharnessed");
         let mut command = Command::new(bin);
         command
             .args(args)

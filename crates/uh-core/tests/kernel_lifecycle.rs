@@ -35,9 +35,9 @@ use uh_core::kernel::shared::{
 };
 use uh_core::kernel::state_snapshot::{manifest_path_in, snapshot_path_in};
 
-/// The kernel Python with prime-agent-runtime installed. The TS product's
+/// The kernel Python with unharnessed-runtime installed. The TS product's
 /// auto-bootstrapped kernel venv is the ground-truth environment; this is
-/// exactly the interpreter `prime-agent` spawns.
+/// exactly the interpreter `unharnessed` spawns.
 ///
 /// The venv is ambient product state, not test input: it exists wherever a
 /// TS product instance bootstrapped a kernel. Tests that need it are skipped

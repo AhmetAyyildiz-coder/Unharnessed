@@ -14,7 +14,7 @@ The session engine.
   branch summaries, side questions, and the kernel host-request handlers
   (`goal.*`, `compact.*`, `model.info`).
 - `kernel` — the persistent IPython kernel: venv bootstrap (`uv`, the
-  `prime-agent-runtime` sidecar, the runtime-ready probe), spawn/execute/
+  `unharnessed-runtime` sidecar, the runtime-ready probe), spawn/execute/
   interrupt/teardown, the host-request bridge, the bootstrap code injected at
   start (binds `bash`, `mcp`, pre-imports the Python skills), and the namespace
   snapshot (`state_snapshot`) that revives a resumed session.

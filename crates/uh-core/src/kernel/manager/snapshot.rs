@@ -10,7 +10,7 @@ use super::{
 };
 
 /// The runtime snapshot writer's reason for a name above the per-variable
-/// cap (prime-agent-runtime/src/rlm/repl.py): such a skipped name is a live
+/// cap (unharnessed-runtime/src/rlm/repl.py): such a skipped name is a live
 /// over-cap survivor unless the same capture also pruned it.
 const OVER_CAP_SKIP_REASON: &str = "exceeds per-variable snapshot size cap";
 

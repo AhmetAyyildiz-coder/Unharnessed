@@ -795,7 +795,7 @@ fn lease_fresh_manager(
             ) {
                 Ok(lease) => Some(lease),
                 Err(error) => {
-                    eprintln!("prime-agent: could not lease the fresh session file: {error:#}");
+                    eprintln!("unharnessed: could not lease the fresh session file: {error:#}");
                     None
                 }
             }
@@ -890,7 +890,7 @@ fn open_session_file(
 /// plus the browse hint.
 pub(crate) fn render_selector_error(error: &SessionSelectorError) -> String {
     format!(
-        "{}.{}\nOpen prime-agent and press left-arrow to browse sessions.",
+        "{}.{}\nOpen unharnessed and press left-arrow to browse sessions.",
         error.message(),
         error.suggestion().unwrap_or_default()
     )

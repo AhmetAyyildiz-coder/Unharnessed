@@ -1,4 +1,4 @@
-//! Shared domain and wire types for Prime Agent.
+//! Shared domain and wire types for Unharnessed.
 //!
 //! This crate is the serde port of the TypeScript wire and domain contracts:
 //!

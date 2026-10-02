@@ -23,7 +23,7 @@ use uh_core::session_engine::{PromptOptions, PromptOutcome, StreamingBehavior};
 use super::compaction_arms::{CompactionCheckRun, ThresholdGoalQueue};
 use super::goal_continuation;
 use super::internal_error;
-use super::meta::{self, PrimeAgentAutonomousMeta, PrimeAgentEventPhase, PrimeAgentOutcome};
+use super::meta::{self, UnharnessedAutonomousMeta, UnharnessedEventPhase, UnharnessedOutcome};
 use super::session::{self, AcpSession, TurnBoundary};
 use super::stop_reason_response;
 use super::types::PromptParams;
@@ -31,7 +31,7 @@ use super::{events, jsonrpc, producer, AcpModeState, AcpStopReason, ConnectionSt
 
 /// The `_meta.autonomous` accounting for a completion update: shared with
 /// the daemon-attached settlement (meta.rs).
-fn autonomous_meta(status: &AgentAutonomousStatus) -> PrimeAgentAutonomousMeta {
+fn autonomous_meta(status: &AgentAutonomousStatus) -> UnharnessedAutonomousMeta {
     meta::autonomous_meta(status)
 }
 
@@ -328,7 +328,7 @@ async fn run_prompt_turn(
                         &session,
                         turn_id,
                         false,
-                        PrimeAgentOutcome::Error,
+                        UnharnessedOutcome::Error,
                     )
                     .await;
                     session.producer().finish_prompt(turn_id).await;
@@ -350,7 +350,7 @@ async fn run_prompt_turn(
                 &session,
                 turn_id,
                 false,
-                PrimeAgentOutcome::Error,
+                UnharnessedOutcome::Error,
             )
             .await;
             session.producer().finish_prompt(turn_id).await;
@@ -680,7 +680,7 @@ async fn publish_engine_event(session: &Arc<AcpSession>, event: &events::AcpEngi
     for update in updates {
         session
             .producer()
-            .publish(&update, turn_id, PrimeAgentEventPhase::Event, None)
+            .publish(&update, turn_id, UnharnessedEventPhase::Event, None)
             .await;
     }
 }
@@ -719,9 +719,9 @@ async fn settle_turn(
     }
 
     let outcome = if turn_failure.is_some() {
-        PrimeAgentOutcome::Error
+        UnharnessedOutcome::Error
     } else {
-        PrimeAgentOutcome::Result
+        UnharnessedOutcome::Result
     };
     // The response boundary precedes the correlated response; the completion
     // event and terminal quiescence envelope follow it in publication order.
@@ -793,7 +793,7 @@ async fn settle_turn(
     };
     if let Some(id) = id {
         let response = match turn_failure {
-            Some(failure) => internal_error(id, &format!("prime-agent turn failed: {failure}")),
+            Some(failure) => internal_error(id, &format!("unharnessed turn failed: {failure}")),
             None => jsonrpc::response(id, &stop_reason_response(stop_reason)),
         };
         let _ = tx.send(response);

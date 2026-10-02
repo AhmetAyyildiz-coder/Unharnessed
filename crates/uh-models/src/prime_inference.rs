@@ -194,7 +194,7 @@ pub fn is_private_prime_inference_model_id(model_id: &str) -> bool {
 pub fn scope_key(api_key: &str, team_id: &str) -> String {
     let mut mac =
         Hmac::<Sha256>::new_from_slice(api_key.as_bytes()).expect("HMAC accepts any key length");
-    mac.update(b"prime-agent:private-prime-authorization:v1\0");
+    mac.update(b"unharnessed:private-prime-authorization:v1\0");
     mac.update(team_id.as_bytes());
     hex::encode(mac.finalize().into_bytes())
 }
@@ -335,7 +335,7 @@ pub fn parse_prime_inference_model_catalog(
         // Capability filtering (documented deviation from the TS parser,
         // which never reads this field): a model that declares its
         // supported request parameters without "tools" can never serve a
-        // prime-agent turn — the session always attaches its tool set and
+        // unharnessed turn — the session always attaches its tool set and
         // the router answers `404 No endpoints found that support tool use`
         // — so it never enters the selectable catalog. Entries without the
         // field stay: no signal, historical behavior. The check reads the

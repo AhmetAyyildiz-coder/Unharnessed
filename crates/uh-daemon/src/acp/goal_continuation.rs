@@ -211,7 +211,7 @@ mod tests {
     use super::super::{ConnectionState, SessionEntry};
 
     /// The ACP meta namespace on the wire.
-    const META: &str = "ai.primeintellect.prime-agent";
+    const META: &str = "unharnessed";
 
     /// One armed ACP prompt turn over an in-process faux engine whose
     /// session is persisted (the CLI-built ACP engine shape).

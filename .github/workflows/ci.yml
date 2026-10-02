@@ -97,7 +97,7 @@ jobs:
       # the next kernel test fails against the half-built venv. The
       # bootstrap entry point readies it first.
       - name: Bootstrap the kernel venv (ready before the kernel e2e tests)
-        run: ./target/debug/prime-agent --prime-agent-bootstrap
+        run: ./target/debug/unharnessed --unharnessed-bootstrap
       - name: Test (workspace)
         run: cargo test --workspace --locked
 

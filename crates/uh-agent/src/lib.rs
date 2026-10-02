@@ -1,4 +1,4 @@
-//! Agent loop for Prime Agent.
+//! Agent loop for Unharnessed.
 //!
 //! Rust port of the TypeScript `packages/agent` package (agent-loop.ts, agent.ts,
 //! types.ts, proxy.ts). The loop works with [`types::AgentMessage`] throughout and

@@ -89,7 +89,7 @@ pub type UnavailableSkillsCallback = Arc<dyn Fn(&UnavailablePythonSkills) + Send
 
 #[derive(Default, Clone)]
 pub struct IpythonKernelProvisionerOptions {
-    /// Python override. Must have prime-agent-runtime installed.
+    /// Python override. Must have unharnessed-runtime installed.
     pub python: Option<PathBuf>,
     pub env: HashMap<String, String>,
     /// Command prefix prepended to every kernel `bash()` invocation.
@@ -477,7 +477,7 @@ fn startup_failure_is_retryable(error: &anyhow::Error) -> bool {
         "Failed to set up the Python kernel runtime",
         "PRIME_AGENT_KERNEL_PYTHON points to a Python",
         "Failed to initialize rlm runtime",
-        "Update prime-agent-runtime in the kernel Python",
+        "Update unharnessed-runtime in the kernel Python",
         "Kernel start superseded",
         "Kernel was disposed during startup",
     ];
@@ -905,11 +905,11 @@ mod tests {
             "Python execution aborted"
         )));
         assert!(!startup_failure_is_retryable(&anyhow!(
-            "PRIME_AGENT_KERNEL_PYTHON points to a Python missing a current prime-agent-runtime: /bad"
+            "PRIME_AGENT_KERNEL_PYTHON points to a Python missing a current unharnessed-runtime: /bad"
         )));
         assert!(!startup_failure_is_retryable(&anyhow!(
             "Kernel runtime speaks protocol 2, expected 3. \
-             Update prime-agent-runtime in the kernel Python (PRIME_AGENT_KERNEL_PYTHON) to match this prime-agent."
+             Update unharnessed-runtime in the kernel Python (PRIME_AGENT_KERNEL_PYTHON) to match this unharnessed."
         )));
     }
 

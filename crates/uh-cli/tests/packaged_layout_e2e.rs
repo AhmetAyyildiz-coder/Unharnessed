@@ -21,14 +21,14 @@
 //! session with NO `PI_PACKAGE_DIR`.
 //!
 //! The staged layout is the binary plus `package.json` (the version
-//! manifest), the `prime-agent-runtime/` sidecar, and `skills/` beside it,
+//! manifest), the `unharnessed-runtime/` sidecar, and `skills/` beside it,
 //! all resolved at runtime from the executable's directory.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The repo root (crates/uh-cli -> crates -> root): the vendored
-/// prime-agent-runtime sidecar and skills live there.
+/// unharnessed-runtime sidecar and skills live there.
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -51,17 +51,17 @@ fn serial_lock() -> std::sync::MutexGuard<'static, ()> {
 
 /// Stage the packaged layout into `dir`: the binary, the version manifest,
 /// and the shipped assets. `with_runtime` controls whether the
-/// prime-agent-runtime sidecar is present (the failure-UX scenario removes
+/// unharnessed-runtime sidecar is present (the failure-UX scenario removes
 /// it).
 fn stage_packaged_layout(dir: &Path, with_runtime: bool) {
     std::fs::create_dir_all(dir).expect("stage dir");
-    let binary = dir.join("prime-agent");
-    std::fs::copy(env!("CARGO_BIN_EXE_prime-agent"), &binary).expect("copy binary");
+    let binary = dir.join("unharnessed");
+    std::fs::copy(env!("CARGO_BIN_EXE_unharnessed"), &binary).expect("copy binary");
     set_executable(&binary);
     std::fs::write(
         dir.join("package.json"),
         format!(
-            r#"{{"name":"prime-agent","version":"{}","piConfig":{{"name":"prime-agent","configDir":".prime/agent"}}}}"#,
+            r#"{{"name":"unharnessed","version":"{}","piConfig":{{"name":"unharnessed","configDir":".prime/agent"}}}}"#,
             env!("CARGO_PKG_VERSION")
         ),
     )
@@ -77,8 +77,8 @@ fn stage_packaged_layout(dir: &Path, with_runtime: bool) {
     }
     if with_runtime {
         copy_dir(
-            &repo_root().join("prime-agent-runtime"),
-            &dir.join("prime-agent-runtime"),
+            &repo_root().join("unharnessed-runtime"),
+            &dir.join("unharnessed-runtime"),
         );
     }
 }
@@ -119,7 +119,7 @@ fn set_executable(path: &Path) {
     let _ = path;
 }
 
-/// The kernel Python with prime-agent-runtime installed (the interpreter the
+/// The kernel Python with unharnessed-runtime installed (the interpreter the
 /// TS product's kernel venv bootstraps). Skipped (with a note) on machines
 /// without a live install; `UH_E2E_KERNEL_PYTHON` points at an explicit one.
 fn kernel_python() -> Option<PathBuf> {
@@ -174,7 +174,7 @@ impl Sandbox {
     /// ambient API keys. A test that wants an override sets it after this
     /// call: a later `Command::env` wins over the scrub.
     fn command(&self, staged: &Path) -> Command {
-        let mut command = Command::new(staged.join("prime-agent"));
+        let mut command = Command::new(staged.join("unharnessed"));
         command
             .env("HOME", self.home.path())
             .env("PRIME_AGENT_CODING_AGENT_DIR", &self.agent_dir)
@@ -303,7 +303,7 @@ fn packaged_binary_reports_manifest_version() {
     // fallback.
     std::fs::write(
         staged.join("package.json"),
-        r#"{"name":"prime-agent","version":"9.8.7-test"}"#,
+        r#"{"name":"unharnessed","version":"9.8.7-test"}"#,
     )
     .expect("version manifest");
     let box_ = sandbox();
@@ -322,7 +322,7 @@ fn packaged_binary_reports_manifest_version() {
 
 /// A missing sidecar (broken install) surfaces the actionable bootstrap
 /// failure: the TS-matching base text plus the missing
-/// prime-agent-runtime hint, not a raw uv/pip error.
+/// unharnessed-runtime hint, not a raw uv/pip error.
 #[test]
 fn missing_sidecar_reports_actionable_bootstrap_error() {
     let _guard = serial_lock();
@@ -332,7 +332,7 @@ fn missing_sidecar_reports_actionable_bootstrap_error() {
     let box_ = sandbox();
     let output = box_
         .command(staged)
-        .arg("--prime-agent-bootstrap")
+        .arg("--unharnessed-bootstrap")
         // No uv anywhere the bootstrap looks (PATH and ~/.local/bin under
         // the sandboxed HOME), so the failure is the resolution error, not
         // an install attempt against the network.
@@ -346,7 +346,7 @@ fn missing_sidecar_reports_actionable_bootstrap_error() {
         "TS bootstrap failure text missing: {stderr}"
     );
     assert!(
-        stderr.contains("prime-agent-runtime directory was not found"),
+        stderr.contains("unharnessed-runtime directory was not found"),
         "missing-sidecar hint missing: {stderr}"
     );
     assert!(
@@ -368,7 +368,7 @@ fn invalid_kernel_python_override_reports_ts_error() {
     let bogus = box_.home.path().join("not-a-kernel-python");
     let output = box_
         .command(staged)
-        .arg("--prime-agent-bootstrap")
+        .arg("--unharnessed-bootstrap")
         .env("PRIME_AGENT_KERNEL_PYTHON", &bogus)
         .output()
         .expect("run packaged binary");
@@ -420,7 +420,7 @@ fn hostile_child_assertions(staged: &Path) {
     // kernel-python override error and never the decoy package dir.
     let output = box_
         .command(staged)
-        .arg("--prime-agent-bootstrap")
+        .arg("--unharnessed-bootstrap")
         .env("PATH", "/usr/bin:/bin")
         .output()
         .expect("run packaged binary");
@@ -431,7 +431,7 @@ fn hostile_child_assertions(staged: &Path) {
         "TS bootstrap failure text missing: {stderr}"
     );
     assert!(
-        stderr.contains("prime-agent-runtime directory was not found"),
+        stderr.contains("unharnessed-runtime directory was not found"),
         "missing-sidecar hint missing: {stderr}"
     );
     assert!(
@@ -471,7 +471,7 @@ fn packaged_layout_stays_hermetic_under_hostile_host_env() {
     stage_packaged_layout(staged, false);
     std::fs::write(
         staged.join("package.json"),
-        format!(r#"{{"name":"prime-agent","version":"{HOSTILE_STAGED_VERSION}"}}"#),
+        format!(r#"{{"name":"unharnessed","version":"{HOSTILE_STAGED_VERSION}"}}"#),
     )
     .expect("version manifest");
 
@@ -482,7 +482,7 @@ fn packaged_layout_stays_hermetic_under_hostile_host_env() {
     std::fs::create_dir_all(&package_decoy).expect("package decoy dir");
     std::fs::write(
         package_decoy.join("package.json"),
-        r#"{"name":"prime-agent","version":"0.0.0-decoy"}"#,
+        r#"{"name":"unharnessed","version":"0.0.0-decoy"}"#,
     )
     .expect("decoy manifest");
     let venv_decoy = decoys.path().join("kernel-venv");
@@ -528,11 +528,11 @@ fn bootstrap_kernel_venv_from_packaged_sidecar() {
     let box_ = sandbox();
     let venv = box_.home.path().join("kernel-venv");
 
-    // --prime-agent-bootstrap (the installer handoff) builds the venv from
+    // --unharnessed-bootstrap (the installer handoff) builds the venv from
     // the exe-adjacent sidecar.
     let output = box_
         .command(staged)
-        .arg("--prime-agent-bootstrap")
+        .arg("--unharnessed-bootstrap")
         .env("PRIME_AGENT_KERNEL_VENV", &venv)
         .output()
         .expect("run packaged binary");

@@ -337,11 +337,11 @@ fn render_page(title: &str, message: &str) -> String {
 }
 
 fn success_page(message: &str) -> String {
-    render_page("Prime Agent authentication completed", message)
+    render_page("Unharnessed authentication completed", message)
 }
 
 fn error_page(message: &str) -> String {
-    render_page("Prime Agent authentication failed", message)
+    render_page("Unharnessed authentication failed", message)
 }
 
 #[cfg(test)]

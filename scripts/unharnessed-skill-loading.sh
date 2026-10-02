@@ -8,7 +8,7 @@
 set -u
 OUT=${1:?usage: unharnessed-skill-loading.sh <out-dir>}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-BIN=${PRIME_AGENT_BIN:-$ROOT/target/release/prime-agent}
+BIN=${UNHARNESSED_BIN:-$ROOT/target/release/unharnessed}
 rm -rf "$OUT" && mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
 AGENT="$OUT/agent"
@@ -28,7 +28,7 @@ skill "$OUT/pkg/skills" package-skill                 # removed `packages` setti
 mkdir -p "$PROJECT/.git"
 printf '{"skills": ["../extra/settings-array-skill"], "packages": ["../pkg"]}\n' > "$AGENT/settings.json"
 
-echo "\$ prime-agent prompt --json --cwd $PROJECT" > "$OUT/prompt.out"
+echo "\$ unharnessed prompt --json --cwd $PROJECT" > "$OUT/prompt.out"
 PRIME_AGENT_CODING_AGENT_DIR="$AGENT" "$BIN" prompt --json --cwd "$PROJECT" >> "$OUT/prompt.out" 2> "$OUT/prompt.err"
 code=$?
 

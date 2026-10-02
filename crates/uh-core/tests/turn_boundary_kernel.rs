@@ -31,7 +31,7 @@ use uh_core::session::manager::SessionManager;
 use uh_core::session_engine::engine::{create_session, SessionEngineConfig};
 use uh_core::session_engine::PromptOptions;
 
-/// The kernel Python with prime-agent-runtime installed (the interpreter the
+/// The kernel Python with unharnessed-runtime installed (the interpreter the
 /// TS product's kernel venv bootstraps). Skipped (with a note) on machines
 /// without a live install; `UH_CORE_KERNEL_PYTHON` points at an explicit one.
 fn kernel_python() -> Option<PathBuf> {
@@ -58,22 +58,22 @@ fn kernel_python() -> Option<PathBuf> {
     None
 }
 
-/// The installed release directory (ships `prime-agent-runtime/` and the
+/// The installed release directory (ships `unharnessed-runtime/` and the
 /// bundled skill packages): `PI_PACKAGE_DIR` wins, else the newest release
-/// under ~/.local/share/prime-agent/releases. Skipped when absent.
+/// under ~/.local/share/unharnessed/releases. Skipped when absent.
 fn release_dir() -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("PI_PACKAGE_DIR") {
         let explicit = PathBuf::from(explicit);
         assert!(
-            explicit.join("prime-agent-runtime").exists(),
-            "PI_PACKAGE_DIR {} has no prime-agent-runtime",
+            explicit.join("unharnessed-runtime").exists(),
+            "PI_PACKAGE_DIR {} has no unharnessed-runtime",
             explicit.display()
         );
         return Some(explicit);
     }
     let releases = PathBuf::from(std::env::var("HOME").map_or_else(
-        |_| "/home/ubuntu/.local/share/prime-agent/releases".to_string(),
-        |home| format!("{home}/.local/share/prime-agent/releases"),
+        |_| "/home/ubuntu/.local/share/unharnessed/releases".to_string(),
+        |home| format!("{home}/.local/share/unharnessed/releases"),
     ));
     let Ok(entries) = std::fs::read_dir(&releases) else {
         eprintln!(
@@ -85,12 +85,12 @@ fn release_dir() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| path.join("prime-agent-runtime").is_dir() && path.join("skills").is_dir())
+        .filter(|path| path.join("unharnessed-runtime").is_dir() && path.join("skills").is_dir())
         .collect();
     candidates.sort();
     let Some(latest) = candidates.pop() else {
         eprintln!(
-            "no release with prime-agent-runtime under {}; skipping live kernel test",
+            "no release with unharnessed-runtime under {}; skipping live kernel test",
             releases.display()
         );
         return None;

@@ -39,7 +39,7 @@ pub fn get_private_prime_inference_models() -> Vec<Model> {
 #[must_use]
 pub fn private_prime_authorization_fingerprint(api_key: &str, team_id: &str) -> String {
     let mut mac = Hmac::<Sha256>::new_from_slice(api_key.as_bytes()).expect("hmac key");
-    mac.update(b"prime-agent:private-prime-authorization:v1\0");
+    mac.update(b"unharnessed:private-prime-authorization:v1\0");
     mac.update(team_id.as_bytes());
     let digest = mac.finalize().into_bytes();
     digest.iter().fold(String::new(), |mut output, byte| {

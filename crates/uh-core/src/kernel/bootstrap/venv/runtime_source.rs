@@ -4,7 +4,7 @@
 
 use super::{expand_home, Digest, Path, PathBuf, RUNTIME_REQUIREMENT};
 
-/// Directory of the installed `prime-agent-runtime` sources. The Rust binary
+/// Directory of the installed `unharnessed-runtime` sources. The Rust binary
 /// ships the same sidecar layout the compiled TS executable uses; an explicit
 /// `PI_PACKAGE_DIR` override wins (matching the TS `getPackageDir`).
 pub(in crate::kernel::bootstrap) fn package_dir() -> PathBuf {
@@ -26,8 +26,8 @@ pub(in crate::kernel::bootstrap) fn package_dir() -> PathBuf {
 pub(in crate::kernel::bootstrap) fn packaged_runtime_dir() -> Option<PathBuf> {
     let package = package_dir();
     [
-        package.join("prime-agent-runtime"),
-        package.join("dist").join("prime-agent-runtime"),
+        package.join("unharnessed-runtime"),
+        package.join("dist").join("unharnessed-runtime"),
     ]
     .into_iter()
     .find(|candidate| candidate.join("pyproject.toml").exists())
@@ -38,7 +38,7 @@ fn runtime_candidate_dirs() -> Vec<PathBuf> {
     // Source checkouts keep the sidecar at the workspace root (TS resolves
     // module-relative monorepo candidates the same way).
     if let Some(root) = crate::resource_paths::source_checkout_root() {
-        candidates.push(root.join("prime-agent-runtime"));
+        candidates.push(root.join("unharnessed-runtime"));
     }
     candidates
 }

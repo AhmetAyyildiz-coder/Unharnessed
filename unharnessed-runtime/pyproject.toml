@@ -1,7 +1,7 @@
 [project]
-name = "prime-agent-runtime"
+name = "unharnessed-runtime"
 version = "0.1.0"
-description = "Kernel-side runtime shim for Prime Agent recursion"
+description = "Kernel-side runtime shim for Unharnessed recursion"
 requires-python = ">=3.11"
 dependencies = [
   "mcp>=2,<3",

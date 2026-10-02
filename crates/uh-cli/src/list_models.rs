@@ -1,4 +1,4 @@
-//! `prime-agent model list [search]`: the models catalog table. Port of
+//! `unharnessed model list [search]`: the models catalog table. Port of
 //! `cli/list-models.ts` — registry refresh, fuzzy search, and the
 //! provider/model/context/max-out/thinking/images table.
 

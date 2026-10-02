@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 /// The user-facing application name (`piConfig.name` in package.json).
-pub const APP_NAME: &str = "prime-agent";
+pub const APP_NAME: &str = "unharnessed";
 
 /// The agent state directory name (`piConfig.configDir` in package.json).
 pub const CONFIG_DIR_NAME: &str = ".prime/agent";

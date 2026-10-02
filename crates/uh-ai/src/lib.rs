@@ -1,4 +1,4 @@
-//! Provider APIs and model registry for Prime Agent.
+//! Provider APIs and model registry for Unharnessed.
 //!
 //! Rust port of the TypeScript `packages/ai` reference implementation. The
 //! wire/domain types live in `uh-types` and are re-exported from [`types`];

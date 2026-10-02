@@ -39,18 +39,18 @@ and the extra skills (`edit`, `websearch`, `skill-creator`, `prime-intellect`).
 Build the binary:
 
 ```bash
-cargo build --release -p uh-cli --bin prime-agent
-./target/release/prime-agent --prime-agent-bootstrap   # build the kernel venv
+cargo build --release -p uh-cli --bin unharnessed
+./target/release/unharnessed --unharnessed-bootstrap   # build the kernel venv
 ```
 
 Run it headless:
 
 ```bash
-prime-agent -p "Compute 2**100 in the kernel"           # text output
-prime-agent --mode json -p "..."                        # JSON event stream
-prime-agent -c -p "..."                                 # continue the last session
-prime-agent --mode acp                                  # Agent Client Protocol over stdio
-prime-agent prompt [--json]                             # dump the assembled system prompt
+unharnessed -p "Compute 2**100 in the kernel"           # text output
+unharnessed --mode json -p "..."                        # JSON event stream
+unharnessed -c -p "..."                                 # continue the last session
+unharnessed --mode acp                                  # Agent Client Protocol over stdio
+unharnessed prompt [--json]                             # dump the assembled system prompt
 ```
 
 Credentials come from the shared auth store (`~/.prime/agent/auth.json`) or the

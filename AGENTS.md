@@ -69,8 +69,9 @@ this repo.
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo test --workspace` must pass before every merge. Run `make check` — the local mirror of
   the same gates; `.github/workflows/ci.yml` runs them (plus `make deny`) on pushes to `main`
-  and on PRs. `scripts/unharnessed-check.sh` runs them isolated from an installed Prime Agent
-  and compares the failures to `UNHARNESSED_BASELINE.txt`.
+  and on PRs. `scripts/unharnessed-check.sh` runs them isolated from your environment (throwaway `HOME`,
+  installed agent binaries off the `PATH`) and compares the failures to
+  `UNHARNESSED_BASELINE.txt`.
 - TS parity is no longer a merge gate: Unharnessed diverges from the TS product on purpose
   (no TUI, no daemon, a minimal system prompt). Keep wire formats readable both ways where they
   still exist (session files, settings, ACP).
@@ -86,17 +87,20 @@ this repo.
 
 ## Branding
 
-The product is Prime Agent - we are not a pi fork. Scrub "pi"/"pi-mono"/"pi-ai"/
-"Prime Intellect"-style naming from all user-visible surfaces (docs, READMEs,
-CLI help text, error messages, splash/onboarding strings, keybinding hints, TUI
-labels, and code comments that quote user-facing strings); brand everything
-Prime Agent. Audit with a repo-wide grep and classify every hit (user-visible
-vs wire-internal vs comment) before scrubbing, and list the preserved wire
-identifiers in the PR body so the reviewer can verify none were wrongly scrubbed.
+The product is Unharnessed. User-visible surfaces (docs, READMEs, CLI help text, error
+messages, code comments that quote user-facing strings) say Unharnessed, and the wire
+identifiers follow: the `unharnessed` binary, the `UNHARNESSED_*` environment variables,
+the `unharnessed` ACP `_meta` namespace. Prime names stay only where they name Prime's
+own services or the upstream origin:
 
-EXPLICIT EXCEPTION: wire-protocol identifiers that must stay byte-compatible with the TS product (e.g. the PI_PACKAGE_DIR env var, settings keys, provider IDs like prime-inference, harness _meta namespaces like ai.primeintellect.prime-agent, lockfile names) stay until/unless the TS side renames them — PARITY BEATS BRANDING ON THE WIRE.
+- the Prime Inference provider (`prime-inference`, `api.primeintellect.ai`,
+  `app.primeintellect.ai`) and `~/.prime/config.json`, the `prime` CLI's file that its
+  login reads;
+- the model and MCP catalogs in `PrimeIntellect-ai/prime-agent-catalog`;
+- the origin note in README.md and LICENSE (MIT).
 
-
+Settings keys and provider IDs stay unchanged, so files migrated from an upstream install
+keep working.
 
 ## Surface contract
 
@@ -106,7 +110,7 @@ EXPLICIT EXCEPTION: wire-protocol identifiers that must stay byte-compatible wit
   `prompt_guards` pins the documented surface to the registered one.
 - System prompt: the cache-stable `core.md` layer (plus the per-model map) followed by one
   dynamic tail (packages, project context, skills inventory, MCP servers, environment).
-  `prime-agent prompt` dumps the assembled prompt with its layer breakdown.
+  `unharnessed prompt` dumps the assembled prompt with its layer breakdown.
 - CLI: headless only — `-p` in `text`/`json` modes, and `--mode acp` (Agent Client Protocol
   over stdio, the future VS Code front-end).
 
@@ -124,7 +128,7 @@ The table summarizes each crate's current direct workspace dependencies:
 | `uh-models` | Live model catalog and transport | `uh-ai`, `uh-types` |
 | `uh-core` | Session engine, kernel, skills, prompts, settings | `uh-types`, `uh-ai`, `uh-models`, `uh-agent` |
 | `uh-daemon` | ACP transport, session leases, the lease-hold refusal | `uh-types`, `uh-core`, `uh-agent`, `uh-ai` |
-| `uh-cli` | `prime-agent` binary, composition root | `uh-types`, `uh-core`, `uh-ai`, `uh-agent`, `uh-daemon` |
+| `uh-cli` | `unharnessed` binary, composition root | `uh-types`, `uh-core`, `uh-ai`, `uh-agent`, `uh-daemon` |
 
 Layering rules:
 
@@ -135,7 +139,7 @@ Layering rules:
 
 ## Reliability model
 
-- Sessions run in the `prime-agent` process itself (`-p` or `--mode acp`); there is no daemon.
+- Sessions run in the `unharnessed` process itself (`-p` or `--mode acp`); there is no daemon.
   Sessions persist on disk (append-only JSONL under `~/.prime/agent/sessions`), a session lease
   keeps two processes off the same file, and the kernel namespace is snapshotted so `-c`/`-r`
   revive it.

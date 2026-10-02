@@ -149,7 +149,7 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         handle.kill.assert_called_once_with(15)
         handle._notify_background_completion.return_value.close.assert_called_once_with()
         activity = bridge.emit.call_args_list[0].args[0]
-        mime = "application/vnd.prime-agent.bash-activity+json"
+        mime = "application/vnd.unharnessed.bash-activity+json"
         self.assertTrue(activity[mime]["active"])
         bridge.emit.assert_called_with({mime: {**activity[mime], "active": False}})
 
@@ -707,10 +707,10 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_sentinel_like_output_and_echoed_wrapper_do_not_truncate(self):
         token = "0123456789abcdef" * 4
-        raw_lookalike = "\x1eprime-agent-complete:not-this-invocation\x1f"
+        raw_lookalike = "\x1eunharnessed-complete:not-this-invocation\x1f"
         command = (
             "set -x\n"
-            "printf '\\036prime-agent-complete:not-this-invocation\\037'\n"
+            "printf '\\036unharnessed-complete:not-this-invocation\\037'\n"
             "if [ -r /proc/$$/cmdline ]; then cat /proc/$$/cmdline; fi\n"
             "printf '\\nafter-sentinel-lookalike\\n'"
         )

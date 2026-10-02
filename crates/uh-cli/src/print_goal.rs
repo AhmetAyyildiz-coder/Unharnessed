@@ -2,7 +2,7 @@
 //! driver runs the same in-run continuation the TS session hosts inside one
 //! `promptAndWait`.
 //!
-//! TS ruling (probed against the installed binary, `prime-agent --mode json
+//! TS ruling (probed against the installed binary, `unharnessed --mode json
 //! --goal <objective> [--goal-token-budget <n>] -p <prompt>` over the shared
 //! faux-provider harness): the seeded goal's context row rides the first
 //! turn; every settled turn's usage publishes a `goal_update`; the agent

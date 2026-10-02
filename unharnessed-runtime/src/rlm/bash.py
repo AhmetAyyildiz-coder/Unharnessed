@@ -39,7 +39,7 @@ _READ_CHUNK = 65536
 # guarantee single-digit fds in redirection syntax.
 _STATUS_FD = 9
 _OUTPUT_FD = 8
-_COMPLETION_PREFIX = b"\x1eprime-agent-complete:"
+_COMPLETION_PREFIX = b"\x1eunharnessed-complete:"
 _COMPLETION_SUFFIX = b"\x1f"
 # Cancelled one-shot awaits: TERM grace before the group KILL, then the bounded
 # wait for a confirmed group exit before CancelledError propagates.
@@ -693,14 +693,14 @@ class BashHandle:
 
         activity = {"id": self._activity_id, "pid": self._pid, "active": True}
         # Publish synchronously before bash() returns and the creating cell can end.
-        repl.emit({"application/vnd.prime-agent.bash-activity+json": activity})
+        repl.emit({"application/vnd.unharnessed.bash-activity+json": activity})
         notice = self._notify_background_completion(cell_finished, activity)
         try:
             task = loop.create_task(notice)
         except BaseException:
             self.kill(signal.SIGKILL if _IS_POSIX else signal.SIGTERM)
             notice.close()
-            repl.emit({"application/vnd.prime-agent.bash-activity+json": {**activity, "active": False}})
+            repl.emit({"application/vnd.unharnessed.bash-activity+json": {**activity, "active": False}})
             raise
         task.add_done_callback(_consume_notice_task)
 
@@ -742,7 +742,7 @@ class BashHandle:
             return
         finally:
             # Reap and deliver (or report rejection) before releasing kernel residency.
-            repl.emit({"application/vnd.prime-agent.bash-activity+json": {**activity, "active": False}})
+            repl.emit({"application/vnd.unharnessed.bash-activity+json": {**activity, "active": False}})
 
     def _arm_consumed_notice(self, command: str) -> None:
         # Armed only post-acceptance: the withdrawal can never overtake its notice.
@@ -1015,13 +1015,13 @@ def _status_script(command: str, completion_a: str, completion_b: str) -> str:
     emit = _fence_printf()
     return (
         f"exec {_STATUS_FD}>&0 {_OUTPUT_FD}>&1 0</dev/null\n"
-        f"read -r _prime_agent_gate <&{_STATUS_FD} || exit 127\n"
+        f"read -r _unharnessed_gate <&{_STATUS_FD} || exit 127\n"
         "{\n"
         f"{command}\n"
         f"}} {_OUTPUT_FD}>&- {_STATUS_FD}>&-\n"
         "__prime_status=$?\n"
         "\\set +x\n"
-        f"{emit} '\\036prime-agent-complete:%s%s\\037' "
+        f"{emit} '\\036unharnessed-complete:%s%s\\037' "
         f"'{completion_a}' '{completion_b}' >&{_OUTPUT_FD} || exit \"$__prime_status\"\n"
         f"{emit} '%s\\n' \"$__prime_status\" >&{_STATUS_FD}\n"
         f"exec {_OUTPUT_FD}>&- {_STATUS_FD}>&-\n"

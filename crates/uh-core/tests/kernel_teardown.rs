@@ -38,7 +38,7 @@ fn test_lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// The kernel Python with prime-agent-runtime installed; set
+/// The kernel Python with unharnessed-runtime installed; set
 /// `UH_CORE_KERNEL_PYTHON` to point at an explicit interpreter instead.
 fn kernel_python() -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("UH_CORE_KERNEL_PYTHON") {

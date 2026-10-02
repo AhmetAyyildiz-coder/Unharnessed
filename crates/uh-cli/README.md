@@ -1,6 +1,6 @@
 # uh-cli
 
-The `prime-agent` binary and composition root.
+The `unharnessed` binary and composition root.
 
 ## Scope
 
@@ -35,9 +35,9 @@ The `prime-agent` binary and composition root.
 - **Login logic** kept for a future front-end (`provider_login.rs`,
   `prime_inference_login.rs`, `mcp_login.rs`, `client_auth.rs`): the provider
   and MCP auth flows, driven through an auth-panel channel.
-- **Packaged layout**: the binary plus `package.json`, `prime-agent-runtime/`
+- **Packaged layout**: the binary plus `package.json`, `unharnessed-runtime/`
   and `skills/`, resolved from the executable's directory; the hidden
-  `--prime-agent-bootstrap` flag pre-builds the kernel venv. Verifier:
+  `--unharnessed-bootstrap` flag pre-builds the kernel venv. Verifier:
   `tests/packaged_layout_e2e.rs`.
 
 ## Non-goals
@@ -47,7 +47,7 @@ their public APIs.
 
 ## Public API
 
-The `prime-agent` executable surface (flags, subcommands, exit codes);
+The `unharnessed` executable surface (flags, subcommands, exit codes);
 `print_runtime` is public for the integration verifiers. Everything else is
 `pub(crate)`.
 

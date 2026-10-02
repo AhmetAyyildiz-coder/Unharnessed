@@ -1,4 +1,4 @@
-//! Live model catalog subsystem for Prime Agent.
+//! Live model catalog subsystem for Unharnessed.
 //!
 //! Port of the TS catalog client (branch `feat/catalog-client`):
 //! - `packages/coding-agent/src/core/model-catalog-cache.ts` (fetch + cache

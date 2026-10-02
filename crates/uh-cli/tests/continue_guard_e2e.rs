@@ -28,7 +28,7 @@ use std::process::Command;
 use serde_json::json;
 
 fn run_print(args: &[&str], env: &[(String, String)]) -> (String, String, i32) {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_prime-agent"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_unharnessed"));
     command.args(args);
     for (key, value) in env {
         command.env(key, value);
@@ -85,8 +85,7 @@ fn print_resume_refuses_a_foreign_lease_holder() {
 
     // The refusal: this test process runs a build of this product (the
     // cargo test binary under /target/), so the holder classification
-    // reads as another Rust build, never the TypeScript product and never
-    // an unnamed process.
+    // reads as another Unharnessed process, never an unnamed process.
     // The exact actionable refusal: the classified headline, the
     // take-over `kill` of this test process's pid with the holder-image
     // annotation (the pid-reuse guard: the refusal names what the kill
@@ -99,7 +98,7 @@ fn print_resume_refuses_a_foreign_lease_holder() {
         .unwrap_or_default();
     let expected = format!(
         concat!(
-            "Error: This session is currently open in another Rust build of Prime Agent ",
+            "Error: This session is currently open in another Unharnessed process ",
             "(active in foreign01ab3c) — another process of this product holds the file's runtime ",
             "lease.\n",
             "\n",

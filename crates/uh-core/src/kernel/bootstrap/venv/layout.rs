@@ -50,7 +50,7 @@ pub(crate) fn resolve_writable_kernel_venv_dir() -> anyhow::Result<PathBuf> {
     let fallback = xdg_kernel_venv_dir();
     if std::fs::create_dir_all(fallback.parent().unwrap_or(Path::new("/"))).is_err() {
         return Err(anyhow!(
-            "couldn't create kernel venv directory at {} or {}; set PRIME_AGENT_KERNEL_PYTHON to a python with a current prime-agent-runtime installed",
+            "couldn't create kernel venv directory at {} or {}; set PRIME_AGENT_KERNEL_PYTHON to a python with a current unharnessed-runtime installed",
             primary.display(),
             fallback.display()
         ));

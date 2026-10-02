@@ -367,7 +367,7 @@ pub(crate) async fn register_client(
 ) -> Result<String> {
     validated_https_url(registration_endpoint, "Registration endpoint")?;
     let body = serde_json::json!({
-        "client_name": format!("Prime Agent ({label})"),
+        "client_name": format!("Unharnessed ({label})"),
         "redirect_uris": super::oauth_callback::all_redirect_uris(),
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],

@@ -17,7 +17,7 @@
     clippy::cast_precision_loss
 )]
 
-//! uh-cli: the `prime-agent` binary. The argument surface, command routing,
+//! uh-cli: the `unharnessed` binary. The argument surface, command routing,
 //! help output, and validation are faithful ports of the TypeScript product's
 //! `packages/coding-agent/src/main.ts` and `src/cli/*.ts`. Runtime execution
 //! lives behind the [`mode::Runtime`] boundary.
@@ -61,7 +61,7 @@ pub(crate) mod session_export;
 pub(crate) mod subscription_login;
 
 /// The runtime boundary: everything a mode-runner crate implements to plug
-/// into the `prime-agent` binary, plus the entry point that drives it.
+/// into the `unharnessed` binary, plus the entry point that drives it.
 pub use mode::{AppMode, MissingSubsystem, RunOptions, Runtime, UnavailableRuntime};
 pub(crate) mod piped_stdin;
 pub(crate) mod print_autonomous;
@@ -95,9 +95,9 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     }
 
     // Install-time kernel preparation (TS cli-main.ts): the installer invokes
-    // `prime-agent --prime-agent-bootstrap` after extracting a release, so
+    // `unharnessed --unharnessed-bootstrap` after extracting a release, so
     // the venv is ready before the first session.
-    if args.len() == 1 && args[0] == "--prime-agent-bootstrap" {
+    if args.len() == 1 && args[0] == "--unharnessed-bootstrap" {
         return run_runtime_bootstrap();
     }
 

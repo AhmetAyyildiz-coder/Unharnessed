@@ -35,7 +35,7 @@ use uh_core::autonomous::create_autonomous_runtime_state;
 use uh_core::session_engine::engine::SessionEngine;
 
 use jsonrpc::Incoming;
-use meta::PrimeAgentSessionMeta;
+use meta::UnharnessedSessionMeta;
 use producer::UpdateProducer;
 use session::AcpSession;
 use types::{
@@ -413,7 +413,7 @@ async fn handle_session_new(
         if state.session.is_some() || state.session_new_in_flight || state.session_close_in_flight {
             let _ = tx.send(internal_error(
                 &id,
-                "prime-agent ACP mode hosts one session per connection; start another prime-agent process for a second session",
+                "unharnessed ACP mode hosts one session per connection; start another unharnessed process for a second session",
             ));
             return;
         }
@@ -477,7 +477,7 @@ async fn session_new(
     let mut cwd_mismatch = None;
     if let Some(requested) = params.cwd.as_deref().filter(|cwd| !cwd.is_empty()) {
         if !same_cwd(Path::new(requested), &mode.actual_cwd) {
-            cwd_mismatch = Some(meta::PrimeAgentCwdMeta {
+            cwd_mismatch = Some(meta::UnharnessedCwdMeta {
                 requested: requested.to_string(),
                 actual: mode.actual_cwd.display().to_string(),
             });
@@ -521,7 +521,7 @@ async fn session_new(
         "configOptions": *config.published.lock().await,
     });
     if let Some(cwd_mismatch) = cwd_mismatch {
-        result["_meta"] = meta::prime_agent_meta(&PrimeAgentSessionMeta {
+        result["_meta"] = meta::unharnessed_meta(&UnharnessedSessionMeta {
             cwd: Some(cwd_mismatch),
             ..Default::default()
         });

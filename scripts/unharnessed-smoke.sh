@@ -5,8 +5,7 @@
 # usage: scripts/unharnessed-smoke.sh <out-dir> [model]
 #
 # Isolation: sessions and the kernel venv live under <out-dir>, so the
-# installed prime-agent's venv (~/.prime/agent/kernel-venv) is never rebuilt
-# with this checkout's runtime. Credentials are read from the real agent dir
+# agent dir's own kernel venv is never rebuilt with this checkout's runtime. Credentials are read from the real agent dir
 # (a copy would rotate OAuth refresh tokens away from it). Telemetry is off.
 #
 # Kernel checks read only what the kernel returned (successful ipython
@@ -16,7 +15,7 @@ set -u
 OUT=${1:?usage: unharnessed-smoke.sh <out-dir> [model]}
 MODEL=${2:-anthropic/claude-haiku-4-5}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-BIN=${PRIME_AGENT_BIN:-$ROOT/target/release/prime-agent}
+BIN=${UNHARNESSED_BIN:-$ROOT/target/release/unharnessed}
 mkdir -p "$OUT/sessions" "$OUT/work"
 OUT=$(cd "$OUT" && pwd)
 export PRIME_AGENT_KERNEL_VENV="$OUT/kernel-venv"
@@ -46,7 +45,7 @@ kernel_check() { # kernel_check <name> <command-exit> <json|acp> <transcript> <c
 
 run() { # run <name> <args...>: stdout in $OUT/<name>.out (after the command line), stderr in .err
     name=$1; shift
-    echo "\$ prime-agent $*" > "$OUT/$name.out"
+    echo "\$ unharnessed $*" > "$OUT/$name.out"
     (cd "$WORK" && perl -e 'alarm shift; exec @ARGV' 600 "$BIN" "$@") >> "$OUT/$name.out" 2> "$OUT/$name.err"
 }
 
@@ -95,7 +94,7 @@ kernel_check "kernel variable survives a print resume" $? json "$OUT/print_get.o
     --forbid-code 'smoke_print_var\s*=(?!=)' 'print-42'
 
 # 5. ACP: the initialize handshake answers.
-echo '$ prime-agent --mode acp  <<< initialize' > "$OUT/acp.out"
+echo '$ unharnessed --mode acp  <<< initialize' > "$OUT/acp.out"
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}' \
     | (cd "$WORK" && perl -e 'alarm shift; exec @ARGV' 60 "$BIN" --mode acp --session-dir "$OUT/sessions") >> "$OUT/acp.out" 2> "$OUT/acp.err"
 check "acp initialize" 0 '"protocolVersion"' "$OUT/acp.out"

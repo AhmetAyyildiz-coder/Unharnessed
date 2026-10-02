@@ -190,7 +190,7 @@ pub async fn publish_config_options(
         config_options: options,
     };
     let _ = producer
-        .publish(&update, 0, super::meta::PrimeAgentEventPhase::Event, None)
+        .publish(&update, 0, super::meta::UnharnessedEventPhase::Event, None)
         .await;
 }
 

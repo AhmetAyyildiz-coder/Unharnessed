@@ -133,7 +133,7 @@ class ReplTest(unittest.TestCase):
         # Wait for the activity start display before requesting list.
         while True:
             event = self.repl.read_event()
-            data = event.get("data", {}).get("application/vnd.prime-agent.bash-activity+json")
+            data = event.get("data", {}).get("application/vnd.unharnessed.bash-activity+json")
             if data and data.get("active"):
                 activity_id = data["id"]
                 break
@@ -895,18 +895,18 @@ class ReplTest(unittest.TestCase):
 
     def test_emit_display(self):
         payloads = {
-            "application/vnd.prime-agent.diff+json": {
+            "application/vnd.unharnessed.diff+json": {
                 "path": "/tmp/file.py",
                 "old_str": "a",
                 "new_str": "b",
                 "start_line": 3,
             },
-            "application/vnd.prime-agent.attachment+json": {
+            "application/vnd.unharnessed.attachment+json": {
                 "mime_type": "image/png",
                 "data": "aGVsbG8=",
                 "path": "/tmp/img.png",
             },
-            "application/vnd.prime-agent.agent-message+json": {
+            "application/vnd.unharnessed.agent-message+json": {
                 "id": "agentmsg_1",
                 "message": "hi",
                 "deliveryStatus": "delivered",
@@ -1218,7 +1218,7 @@ class ReplTest(unittest.TestCase):
         reply_ok(self.repl, request)
 
     def test_bash_activity_and_notice_wait_for_group_reap(self):
-        mime = "application/vnd.prime-agent.bash-activity+json"
+        mime = "application/vnd.unharnessed.bash-activity+json"
         for awaited in (False, True):
             with self.subTest(awaited=awaited):
                 events = self.repl.execute(
@@ -1252,7 +1252,7 @@ class ReplTest(unittest.TestCase):
                 self.assertEqual(one(checked, "result")["text"], "True")
 
     def test_cancelled_released_bash_await_keeps_completion_notice(self):
-        mime = "application/vnd.prime-agent.bash-activity+json"
+        mime = "application/vnd.unharnessed.bash-activity+json"
         for released in (False, True):
             with self.subTest(released=released):
                 events = self.repl.execute(
@@ -1309,7 +1309,7 @@ class ReplTest(unittest.TestCase):
         events += self.repl.until_done("construct")
         self.assertEqual(one(events, "done")["status"], "error")
         self.assertEqual(one(events, "error")["ename"], "KeyboardInterrupt")
-        mime = "application/vnd.prime-agent.bash-activity+json"
+        mime = "application/vnd.unharnessed.bash-activity+json"
         activity = [event["data"][mime] for event in events if mime in event.get("data", {})]
         self.assertEqual([item["active"] for item in activity], [True, False])
         self.assertEqual(activity[0]["id"], activity[1]["id"])
@@ -1323,7 +1323,7 @@ class ReplTest(unittest.TestCase):
         self.assertEqual(one(checked, "result")["text"], "('CORO_CLOSED', None, False)")
 
     def test_rejected_bash_completion_reports_safe_stderr_and_releases_activity(self):
-        mime = "application/vnd.prime-agent.bash-activity+json"
+        mime = "application/vnd.unharnessed.bash-activity+json"
         for reply in ({"status": "error", "error": "secret-host-error"}, {}, {"status": "ok"}):
             with self.subTest(reply=reply):
                 events = self.repl.execute(

@@ -26,7 +26,7 @@ use std::process::Command;
 
 fn run(args: &[&str], script: &serde_json::Value) -> (String, String, i32) {
     let home = tempfile::TempDir::new().unwrap();
-    let bin = env!("CARGO_BIN_EXE_prime-agent");
+    let bin = env!("CARGO_BIN_EXE_unharnessed");
     let output = Command::new(bin)
         .args(args)
         .env("HOME", home.path())
@@ -123,7 +123,7 @@ fn run_in_home(
     args: &[&str],
     script: &serde_json::Value,
 ) -> (String, String, i32) {
-    let bin = env!("CARGO_BIN_EXE_prime-agent");
+    let bin = env!("CARGO_BIN_EXE_unharnessed");
     let output = Command::new(bin)
         .args(args)
         .env("HOME", home)
@@ -286,7 +286,7 @@ fn print_mode_resume_unknown_selector_fails_with_browse_hint() {
         "stderr: {stderr}"
     );
     assert!(
-        stderr.contains("Open prime-agent and press left-arrow to browse sessions."),
+        stderr.contains("Open unharnessed and press left-arrow to browse sessions."),
         "stderr: {stderr}"
     );
 }
@@ -811,7 +811,7 @@ fn run_in_home_cwd(
     args: &[&str],
     script: &serde_json::Value,
 ) -> (String, String, i32) {
-    let bin = env!("CARGO_BIN_EXE_prime-agent");
+    let bin = env!("CARGO_BIN_EXE_unharnessed");
     let output = Command::new(bin)
         .args(args)
         .env("HOME", home)

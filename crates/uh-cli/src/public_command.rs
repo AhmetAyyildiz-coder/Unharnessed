@@ -161,7 +161,7 @@ fn reject_removed_command(args: &[String]) -> PublicCommandResult {
     let command = args.first().map(String::as_str).unwrap_or_default();
     let subcommand = args.get(1).map(String::as_str);
     let replacement = match (command, subcommand) {
-        ("daemon", _) => Some("Run \"prime-agent help\" to see the agent commands.".to_string()),
+        ("daemon", _) => Some("Run \"unharnessed help\" to see the agent commands.".to_string()),
         _ => None,
     };
     let joined: Vec<&str> = args.iter().take(2).map(String::as_str).collect();

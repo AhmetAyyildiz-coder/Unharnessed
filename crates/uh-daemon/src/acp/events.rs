@@ -6,7 +6,7 @@
 
 use serde_json::{json, Value};
 
-use super::meta::PrimeAgentSessionMeta;
+use super::meta::UnharnessedSessionMeta;
 use super::types::{AcpSessionUpdate, TextBlock, ToolCallContent};
 pub use super::types::{AcpToolKind, AcpToolStatus};
 
@@ -24,7 +24,7 @@ impl MappingState {
     fn start_assistant_message(&mut self) -> String {
         self.next_assistant_message_sequence += 1;
         let id = format!(
-            "prime-agent-assistant-{}",
+            "unharnessed-assistant-{}",
             self.next_assistant_message_sequence
         );
         self.active_assistant_message_id = Some(id.clone());
@@ -159,8 +159,8 @@ pub fn acp_updates_for_event(
             tokens_before,
             summary,
         } => {
-            vec![session_info_update(&PrimeAgentSessionMeta {
-                compaction: Some(super::meta::PrimeAgentCompactionMeta {
+            vec![session_info_update(&UnharnessedSessionMeta {
+                compaction: Some(super::meta::UnharnessedCompactionMeta {
                     tokens_before: *tokens_before,
                     summary: summary.clone(),
                 }),
@@ -173,8 +173,8 @@ pub fn acp_updates_for_event(
             token_budget,
             tokens_used,
         } => {
-            vec![session_info_update(&PrimeAgentSessionMeta {
-                goal: Some(super::meta::PrimeAgentGoalMeta {
+            vec![session_info_update(&UnharnessedSessionMeta {
+                goal: Some(super::meta::UnharnessedGoalMeta {
                     status: status.clone(),
                     objective: objective.clone(),
                     token_budget: *token_budget,
@@ -204,7 +204,7 @@ pub fn acp_updates_for_event(
                 }),
                 content: text.map(|text| vec![ToolCallContent::new(text)]),
                 meta: rich.map(|rich| {
-                    super::meta::prime_agent_meta(&super::meta::PrimeAgentSessionMeta {
+                    super::meta::unharnessed_meta(&super::meta::UnharnessedSessionMeta {
                         ipython: Some(rich),
                         ..Default::default()
                     })
@@ -215,9 +215,9 @@ pub fn acp_updates_for_event(
 }
 
 /// A `session_info_update` carrying one namespaced payload.
-fn session_info_update(meta: &PrimeAgentSessionMeta) -> AcpSessionUpdate {
+fn session_info_update(meta: &UnharnessedSessionMeta) -> AcpSessionUpdate {
     AcpSessionUpdate::SessionInfoUpdate {
-        meta: super::meta::prime_agent_meta(meta),
+        meta: super::meta::unharnessed_meta(meta),
     }
 }
 
@@ -395,8 +395,8 @@ mod tests {
             ]
         );
         // The thought and the message share the turn's assistant message id.
-        assert_eq!(values[0]["messageId"], "prime-agent-assistant-1");
-        assert_eq!(values[1]["messageId"], "prime-agent-assistant-1");
+        assert_eq!(values[0]["messageId"], "unharnessed-assistant-1");
+        assert_eq!(values[1]["messageId"], "unharnessed-assistant-1");
         assert_eq!(values[2]["title"], "Python cell");
         assert_eq!(values[2]["rawInput"], json!({ "code": "1+1" }));
         assert_eq!(values[3]["status"], "completed");
@@ -423,7 +423,7 @@ mod tests {
         }
         assert_eq!(
             state.active_assistant_message_id.as_deref(),
-            Some("prime-agent-assistant-2")
+            Some("unharnessed-assistant-2")
         );
     }
 
@@ -465,7 +465,7 @@ mod tests {
             &mut state,
         );
         let value = updates[0].to_bare_value();
-        let meta = &value["_meta"]["ai.primeintellect.prime-agent"]["ipython"];
+        let meta = &value["_meta"]["unharnessed"]["ipython"];
         assert_eq!(meta["diffCount"], 2);
         assert_eq!(meta["attachments"][0]["mimeType"], "image/png");
         // "QUJD" decodes to 3 bytes ("ABC").
@@ -474,7 +474,7 @@ mod tests {
     }
 
     fn meta_of(value: &Value) -> Value {
-        value["_meta"]["ai.primeintellect.prime-agent"].clone()
+        value["_meta"]["unharnessed"].clone()
     }
 
     #[test]
