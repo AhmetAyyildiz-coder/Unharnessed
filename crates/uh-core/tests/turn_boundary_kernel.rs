@@ -1,0 +1,310 @@
+// The Tier-C/D ruling (fleet-uniform, 2026-09-28) - this target's own
+// crate root: the same bounded-boundary disposition as src/lib.rs
+// (large_futures/too_many_lines/the cast family; details there).
+#![allow(
+    clippy::large_futures,
+    clippy::too_many_lines,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+
+//! Verifier: the turn-boundary host-request contract (`model.info`,
+//! `compact.*`) over a REAL kernel, driven in-process through
+//! `create_session`.
+//!
+//! The scripted faux provider drives one turn whose `ipython` cell calls the
+//! kernel's `rlm.host_request` bridge directly — the exact surface the
+//! installed `compact` skill module uses (`rlm.host_request("<type>",
+//! {...})`). The cell records the raw handler responses on disk; the test
+//! asserts them against the TS contract.
+//!
+#![cfg(unix)]
+
+use std::path::{Path, PathBuf};
+
+use serde_json::{json, Value};
+use uh_agent::scripted::{tool_call_turn_steps, ScriptStep, ScriptedProvider, ScriptedTurn};
+use uh_agent::stream::AssistantMessageEvent;
+use uh_core::session::manager::SessionManager;
+use uh_core::session_engine::engine::{create_session, SessionEngineConfig};
+use uh_core::session_engine::PromptOptions;
+
+/// The kernel Python with prime-agent-runtime installed (the interpreter the
+/// TS product's kernel venv bootstraps). Skipped (with a note) on machines
+/// without a live install; `UH_CORE_KERNEL_PYTHON` points at an explicit one.
+fn kernel_python() -> Option<PathBuf> {
+    if let Some(explicit) = std::env::var_os("UH_CORE_KERNEL_PYTHON") {
+        let explicit = PathBuf::from(explicit);
+        assert!(
+            explicit.exists(),
+            "UH_CORE_KERNEL_PYTHON {} not found",
+            explicit.display()
+        );
+        return Some(explicit);
+    }
+    let candidate = PathBuf::from(std::env::var("HOME").map_or_else(
+        |_| "/home/ubuntu/.prime/agent/kernel-venv/bin/python".to_string(),
+        |home| format!("{home}/.prime/agent/kernel-venv/bin/python"),
+    ));
+    if candidate.exists() {
+        return Some(candidate);
+    }
+    eprintln!(
+        "kernel python {} not found; skipping live kernel test",
+        candidate.display()
+    );
+    None
+}
+
+/// The installed release directory (ships `prime-agent-runtime/` and the
+/// bundled skill packages): `PI_PACKAGE_DIR` wins, else the newest release
+/// under ~/.local/share/prime-agent/releases. Skipped when absent.
+fn release_dir() -> Option<PathBuf> {
+    if let Some(explicit) = std::env::var_os("PI_PACKAGE_DIR") {
+        let explicit = PathBuf::from(explicit);
+        assert!(
+            explicit.join("prime-agent-runtime").exists(),
+            "PI_PACKAGE_DIR {} has no prime-agent-runtime",
+            explicit.display()
+        );
+        return Some(explicit);
+    }
+    let releases = PathBuf::from(std::env::var("HOME").map_or_else(
+        |_| "/home/ubuntu/.local/share/prime-agent/releases".to_string(),
+        |home| format!("{home}/.local/share/prime-agent/releases"),
+    ));
+    let Ok(entries) = std::fs::read_dir(&releases) else {
+        eprintln!(
+            "no releases dir at {}; skipping live kernel test",
+            releases.display()
+        );
+        return None;
+    };
+    let mut candidates: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.join("prime-agent-runtime").is_dir() && path.join("skills").is_dir())
+        .collect();
+    candidates.sort();
+    let Some(latest) = candidates.pop() else {
+        eprintln!(
+            "no release with prime-agent-runtime under {}; skipping live kernel test",
+            releases.display()
+        );
+        return None;
+    };
+    Some(latest)
+}
+
+/// Scoped process-env overrides: applied on construction, restored on drop.
+/// This binary carries exactly one live-kernel test, so nothing races.
+struct EnvOverride {
+    saved: Vec<(String, Option<String>)>,
+}
+
+impl EnvOverride {
+    fn apply(pairs: &[(&str, Option<String>)]) -> Self {
+        let saved = pairs
+            .iter()
+            .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
+            .collect();
+        for (key, value) in pairs {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        EnvOverride { saved }
+    }
+}
+
+impl Drop for EnvOverride {
+    fn drop(&mut self) {
+        for (key, value) in &self.saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+}
+
+/// The kernel cell: the raw host requests the `compact` skill module issues, recorded on disk for the verifier (and printed so the tool result
+/// carries the same proof into the session transcript).
+fn harness_cell(receipt_path: &Path) -> String {
+    format!(
+        "import json\nfrom rlm import host_request\npayload = {{}}\npayload[\"model_info\"] = await host_request(\"model.info\", {{}})\npayload[\"compact_status\"] = await host_request(\"compact.status\", {{}})\npayload[\"compact_run\"] = await host_request(\"compact.run\", {{\"instructions\": \"keep the observation\"}})\nopen({receipt_path:?}, \"w\").write(json.dumps(payload))\nprint(\"HARNESS_CELL_OK\")",
+        receipt_path = receipt_path.display().to_string(),
+    )
+}
+
+fn scripted_model() -> uh_agent::types::Model {
+    serde_json::from_value(json!({
+        "id": "faux-1", "name": "Faux", "api": "test", "provider": "faux",
+        "baseUrl": "http://localhost", "reasoning": false,
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 200_000, "maxTokens": 4_000
+    }))
+    .expect("faux loop model")
+}
+
+/// The registry model `model.info` reports from: input modalities included.
+fn registry_model() -> uh_types::ai::Model {
+    serde_json::from_value(json!({
+        "id": "faux-1", "name": "Faux", "api": "test", "provider": "faux",
+        "baseUrl": "http://localhost", "reasoning": false, "input": ["text"],
+        "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+        "contextWindow": 200_000, "maxTokens": 4_000
+    }))
+    .expect("faux registry model")
+}
+
+/// The turn-boundary host requests round-trip through a real kernel: the
+/// registered handlers answer the `rlm.host_request` bridge with the TS
+/// contract shapes.
+#[tokio::test]
+async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
+    let Some(kernel_python) = kernel_python() else {
+        return;
+    };
+    let Some(release) = release_dir() else {
+        return;
+    };
+    let dir = tempfile::tempdir().expect("temp dir");
+    let agent_dir = dir.path().join("agent");
+    let sessions_dir = agent_dir.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    let cwd = dir.path().join("project");
+    std::fs::create_dir_all(&cwd).expect("project dir");
+    let receipt_path = dir.path().join("harness-receipt.json");
+
+    // Hermeticity: the kernel runs on the installed runtime (PI_PACKAGE_DIR +
+    // the ambient kernel venv), and no ambient agent state leaks in.
+    let _env = EnvOverride::apply(&[
+        (
+            "PRIME_AGENT_KERNEL_PYTHON",
+            Some(kernel_python.display().to_string()),
+        ),
+        ("PI_PACKAGE_DIR", Some(release.display().to_string())),
+        ("PRIME_AGENT_CODING_AGENT_DIR", None),
+        ("PRIME_API_KEY", None),
+    ]);
+
+    // A persisted session.
+    let mut session = SessionManager::in_memory(&cwd);
+    session.materialize_session_file(Some(sessions_dir));
+
+    let model = scripted_model();
+    let provider = std::sync::Arc::new(ScriptedProvider::new(model.clone()));
+    // One turn: the model calls the kernel cell. Then the turn settles.
+    // The scripted provider reports zero usage, but `compact.status` anchors
+    // its estimate on the last assistant usage (TS `getContextUsage`), so the
+    // tool-call turn carries a real one: 120 tokens.
+    let mut steps = tool_call_turn_steps(
+        &model,
+        Some("running the harness cell"),
+        vec![(
+            "call-1",
+            "ipython",
+            json!({ "code": harness_cell(&receipt_path) }),
+        )],
+    );
+    for step in &mut steps {
+        if let ScriptStep::Event(event) = step {
+            if let AssistantMessageEvent::Done { message, .. } = &mut **event {
+                message.usage = uh_agent::types::Usage {
+                    input: 100,
+                    output: 20,
+                    cache_read: 0,
+                    cache_write: 0,
+                    total_tokens: 120,
+                    cost: uh_agent::types::UsageCost::default(),
+                };
+            }
+        }
+    }
+    provider.push_turn(ScriptedTurn::Events(steps));
+    provider.push_text_turn("boundary reached");
+
+    let engine = create_session(SessionEngineConfig {
+        queued_steering_probe: None,
+        image_model_router: None,
+        steering_mode: None,
+        follow_up_mode: None,
+        cwd: cwd.clone(),
+        agent_dir,
+        model: Some(model),
+        thinking_level: None,
+        stream_fn: Some(provider.stream_fn()),
+        tools: Vec::new(),
+        custom_system_prompt: None,
+        prompt_guidelines: Vec::new(),
+        generic_mcp_servers: Vec::new(),
+        session_manager: Some(session),
+        extra_host_handlers: None,
+        additional_skill_paths: Vec::new(),
+        additional_prompt_paths: Vec::new(),
+        extra_builtin_skill_overrides: Vec::new(),
+        model_info: Some(registry_model()),
+        mcp_manager: None,
+        prewarm_ipython_kernel: None,
+        on_background_work_settled: None,
+        queued_goal_context_purge: None,
+    })
+    .await
+    .expect("create_session");
+
+    let outcome = engine
+        .prompt("run the harness cell", PromptOptions::default())
+        .await
+        .expect("prompt");
+    assert_eq!(
+        outcome,
+        uh_core::session_engine::PromptOutcome::Prompt,
+        "the prompt must reach the model loop"
+    );
+
+    // The kernel cell recorded the raw handler responses.
+    let raw = std::fs::read_to_string(&receipt_path)
+        .unwrap_or_else(|_| panic!("kernel cell wrote no receipt at {}", receipt_path.display()));
+    let payload: Value = serde_json::from_str(&raw).expect("receipt json");
+
+    // model.info: the resolved model with its input modalities.
+    assert_eq!(
+        payload["model_info"],
+        json!({ "id": "faux-1", "provider": "faux", "input": ["text"] }),
+        "model_info: {}",
+        payload["model_info"]
+    );
+    // compact.status: the usage estimate over the session, nothing scheduled.
+    let compact_status = &payload["compact_status"];
+    assert_eq!(compact_status["scheduled"], false, "{payload}");
+    assert_eq!(compact_status["context_window"], 200_000, "{payload}");
+    // The usage anchor (the faux turn's 120 tokens) with nothing trailing it.
+    assert_eq!(compact_status["tokens"], 120, "{payload}");
+    assert_eq!(compact_status["percent"], 0.06, "{payload}");
+    // compact.run on the fresh session: the TS prepare skip reason.
+    assert_eq!(payload["compact_run"]["scheduled"], false, "{payload}");
+    assert_eq!(
+        payload["compact_run"]["reason"],
+        "session is too short to compact"
+    );
+
+    // The cell output entered the session transcript (the model saw the
+    // same proof the receipt carries).
+    let serialized = {
+        let entries = engine.session.entries().await;
+        serde_json::to_string(&entries).expect("entries json")
+    };
+    assert!(
+        serialized.contains("HARNESS_CELL_OK"),
+        "no kernel cell output in the session rows"
+    );
+
+    assert!(
+        engine.turn_boundary.take_compaction().await.is_none(),
+        "the skipped compact.run must not schedule anything"
+    );
+}

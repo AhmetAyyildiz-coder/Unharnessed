@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/pa-types",
-    "crates/pa-ai",
-    "crates/pa-models",
-    "crates/pa-agent",
-    "crates/pa-core",
-    "crates/pa-daemon",
-    "crates/pa-cli",
+    "crates/uh-types",
+    "crates/uh-ai",
+    "crates/uh-models",
+    "crates/uh-agent",
+    "crates/uh-core",
+    "crates/uh-daemon",
+    "crates/uh-cli",
 ]
 
 [workspace.package]
@@ -27,9 +27,9 @@ anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 tracing = { version = "0.1", features = ["attributes"] }
-pa-types = { path = "crates/pa-types" }
-pa-ai = { path = "crates/pa-ai" }
-pa-agent = { path = "crates/pa-agent" }
+uh-types = { path = "crates/uh-types" }
+uh-ai = { path = "crates/uh-ai" }
+uh-agent = { path = "crates/uh-agent" }
 thiserror = "2"
 futures = "0.3"
 # Dev-only; the default fork/timeout features are unused.
@@ -39,8 +39,8 @@ proptest = { version = "1.11", default-features = false, features = ["std"] }
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
-# The pedantic gate the five clippy campaigns earned (pa-daemon #3029,
-# pa-cli #3050, pa-core #3093, the small crates #3110, pa-tui #3134):
+# The pedantic gate the five clippy campaigns earned (uh-daemon #3029,
+# uh-cli #3050, uh-core #3093, the small crates #3110, pa-tui #3134):
 # every workspace member is pedantic-clean; CI's -D warnings bar turns
 # this warn class into errors, and the per-crate #![allow] exceptions
 # (the design-choice classes, each with its in-code justification) keep

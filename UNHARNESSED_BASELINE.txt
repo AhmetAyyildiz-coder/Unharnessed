@@ -1,14 +1,14 @@
 # Unharnessed — échecs de tests de référence sur macOS (étape 0, main @ 3358e0016)
 # Format : <binaire de test> :: <test>. COMPILE = cible de test qui ne compile pas sur macOS.
 # Rust (cargo test --workspace, toolchain 1.98.1) :
-COMPILE :: error: could not compile `pa-cli` (test "interactive_daemon_e2e")
-COMPILE :: error: could not compile `pa-cli` (test "kitty_early_typing_e2e")
-COMPILE :: error: could not compile `pa-cli` (test "kitty_exit_routes_e2e")
-COMPILE :: error: could not compile `pa-cli` (test "kitty_release_handoff_e2e")
-COMPILE :: error: could not compile `pa-cli` (test "kitty_verdict_time_e2e")
-COMPILE :: error: could not compile `pa-cli` (test "slow_drain_exit_guard_e2e")
-COMPILE :: error: could not compile `pa-cli` (test "terminal_state_differential_e2e")
-COMPILE :: error: could not compile `pa-cli` (test "termios_process_exit_e2e")
+COMPILE :: error: could not compile `uh-cli` (test "interactive_daemon_e2e")
+COMPILE :: error: could not compile `uh-cli` (test "kitty_early_typing_e2e")
+COMPILE :: error: could not compile `uh-cli` (test "kitty_exit_routes_e2e")
+COMPILE :: error: could not compile `uh-cli` (test "kitty_release_handoff_e2e")
+COMPILE :: error: could not compile `uh-cli` (test "kitty_verdict_time_e2e")
+COMPILE :: error: could not compile `uh-cli` (test "slow_drain_exit_guard_e2e")
+COMPILE :: error: could not compile `uh-cli` (test "terminal_state_differential_e2e")
+COMPILE :: error: could not compile `uh-cli` (test "termios_process_exit_e2e")
 agents_view_flash_e2e :: the_first_agents_view_render_is_clean_behind_hundreds_of_dead_subagents
 agents_view_roster_e2e :: roster_subscribe_snapshot_and_live_update_pushes
 bash_bang_headless :: a_bang_during_a_streaming_turn_holds_then_flushes
@@ -59,16 +59,16 @@ lock_compat_e2e :: ts_binary_reclaims_stale_lock_directory_artifact
 lock_compat_e2e :: ts_binary_sees_a_rust_held_lock_as_contention
 mcp_view_e2e :: get_mcp_connections_answers_instantly_mid_turn
 mcp_view_e2e :: mcp_view_lists_the_configured_mock_connection
-pa_core :: tools::golden_replay::golden_bash_group_matches_ts
-pa_core :: update::install::tests::anchors_the_running_release_directory
-pa_daemon :: saved_session_commands::tombstone_usage_tests::a_non_regular_session_path_captures_nothing
-pa_daemon :: stop_cleanup::tests::finalize_cancels_the_tree_and_archives_the_root
-pa_daemon :: supervisor::handshake_tests::a_mid_handshake_registration_cannot_kill_the_handshake
-pa_daemon :: supervisor::handshake_tests::handshake_channel_stays_private_until_auth_answers
-pa_daemon :: supervisor::tests::a_ledger_delete_never_tombstones_an_unrelated_edge_sharing_the_child_id
-pa_daemon :: supervisor::tests::worker_probe_accepts_a_live_socket
-pa_daemon :: supervisor_roster_seed::tests::family_seed_renders_edges_then_hydrates_in_the_background
-pa_daemon :: worker::tests::kill_broadcast_tests::kill_cancels_the_sessions_scheduled_jobs
+uh_core :: tools::golden_replay::golden_bash_group_matches_ts
+uh_core :: update::install::tests::anchors_the_running_release_directory
+uh_daemon :: saved_session_commands::tombstone_usage_tests::a_non_regular_session_path_captures_nothing
+uh_daemon :: stop_cleanup::tests::finalize_cancels_the_tree_and_archives_the_root
+uh_daemon :: supervisor::handshake_tests::a_mid_handshake_registration_cannot_kill_the_handshake
+uh_daemon :: supervisor::handshake_tests::handshake_channel_stays_private_until_auth_answers
+uh_daemon :: supervisor::tests::a_ledger_delete_never_tombstones_an_unrelated_edge_sharing_the_child_id
+uh_daemon :: supervisor::tests::worker_probe_accepts_a_live_socket
+uh_daemon :: supervisor_roster_seed::tests::family_seed_renders_edges_then_hydrates_in_the_background
+uh_daemon :: worker::tests::kill_broadcast_tests::kill_cancels_the_sessions_scheduled_jobs
 pa_tui :: agents_view::tests::reply::the_reply_hints_follow_the_target_state
 pa_tui :: auth_panel::tests::provider_text_is_scrubbed_never_a_terminal_sequence
 pa_tui :: auth_panel::tests::the_onboarding_panel_is_chrome_less
@@ -82,8 +82,8 @@ pa_tui :: keybindings::tests::formats_key_text
 pa_tui :: model_picker::tests::scope_toggles_between_the_scoped_list_and_the_catalog
 pa_tui :: provider_auth::tests::the_api_key_prompt_renders_the_ts_login_dialog_frame
 pa_tui :: session_ui::stream::streaming_tray_hint_tests::the_hint_names_the_follow_up_key_over_a_draft
-pa_types :: platform::transport::tests::over_limit_paths_bind_connect_and_land_in_place
-pa_types :: platform::transport::tests::paths_at_the_limit_bind_directly
+uh_types :: platform::transport::tests::over_limit_paths_bind_connect_and_land_in_place
+uh_types :: platform::transport::tests::paths_at_the_limit_bind_directly
 package_e2e :: package_manager_corpus_matches_ts_binary
 packaged_layout_e2e :: packaged_session_boots_kernel_without_pi_package_dir
 packaged_layout_e2e :: packaging_dry_run_produces_artifact

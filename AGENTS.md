@@ -7,8 +7,8 @@ this repo.
 
 ## Style and structure
 
-- Workspace crates are prefixed `pa-`. The hard ownership rules: one owned area per crate,
-  pa-types is the only shared crate, cycle-free dependency direction, minimal public APIs,
+- Workspace crates are prefixed `uh-`. The hard ownership rules: one owned area per crate,
+  uh-types is the only shared crate, cycle-free dependency direction, minimal public APIs,
   no god-modules. The dependency direction is pinned in the Crates table below; each crate's
   README.md states its scope, non-goals, and public API surface.
 - Prefer private modules with an explicitly exported public crate API. Internals are `pub(crate)`.
@@ -16,7 +16,7 @@ this repo.
   signal, not a merge limit: when adding to an already-large file, consider splitting by
   responsibility rather than growing it further. Move related tests and docs with extracted code.
 - Name modules for what they own, not `utils` or `common`. Follow existing structure: in
-  `crates/pa-core/src/kernel/manager/`, `mod.rs` connects `execution.rs`, `requests.rs`, and
+  `crates/uh-core/src/kernel/manager/`, `mod.rs` connects `execution.rs`, `requests.rs`, and
   `teardown.rs`; put a new kernel-manager concern beside them.
 - Inline format args: always prefer `format!("{x}")` over positional.
 - Collapse if statements per clippy::collapsible_if.
@@ -78,10 +78,10 @@ this repo.
   direction) and classify the change: internals, new `pub` surface, or a new
   dependency/cross-crate re-export. The latter two are architectural changes — an innocent-looking
   `pub use` is a very simple way to break encapsulation.
-- The compiled fallback model catalog `crates/pa-ai/src/models_generated.rs` is
+- The compiled fallback model catalog `crates/uh-ai/src/models_generated.rs` is
   hand-maintained Rust mirroring the TS `packages/ai/src/models.generated.ts` object
   literal — edit it by hand, exactly like its TS source (there is no generator). The
-  parity fixture `crates/pa-models/tests/fixtures/catalog.v1.json` refreshes with
+  parity fixture `crates/uh-models/tests/fixtures/catalog.v1.json` refreshes with
   `scripts/generate-catalog-fixture.py`. Bulk data files are exempt from the size guidance.
 
 ## Branding
@@ -112,26 +112,26 @@ EXPLICIT EXCEPTION: wire-protocol identifiers that must stay byte-compatible wit
 
 ## Crates
 
-One owned area per crate; `pa-types` is the only shared vocabulary crate.
+One owned area per crate; `uh-types` is the only shared vocabulary crate.
 Dependencies flow from the composition root toward lower crates, never back upward.
 The table summarizes each crate's current direct workspace dependencies:
 
 | Crate | Purpose | Direct workspace dependencies |
 | --- | --- | --- |
-| `pa-types` | Shared wire and domain types | none |
-| `pa-agent` | Provider-independent agent loop | none |
-| `pa-ai` | Providers, model registry, streaming | `pa-types` |
-| `pa-models` | Live model catalog and transport | `pa-ai`, `pa-types` |
-| `pa-core` | Session engine, kernel, skills, prompts, settings | `pa-types`, `pa-ai`, `pa-models`, `pa-agent` |
-| `pa-daemon` | ACP transport, session leases, the lease-hold refusal | `pa-types`, `pa-core`, `pa-agent`, `pa-ai` |
-| `pa-cli` | `prime-agent` binary, composition root | `pa-types`, `pa-core`, `pa-ai`, `pa-agent`, `pa-daemon` |
+| `uh-types` | Shared wire and domain types | none |
+| `uh-agent` | Provider-independent agent loop | none |
+| `uh-ai` | Providers, model registry, streaming | `uh-types` |
+| `uh-models` | Live model catalog and transport | `uh-ai`, `uh-types` |
+| `uh-core` | Session engine, kernel, skills, prompts, settings | `uh-types`, `uh-ai`, `uh-models`, `uh-agent` |
+| `uh-daemon` | ACP transport, session leases, the lease-hold refusal | `uh-types`, `uh-core`, `uh-agent`, `uh-ai` |
+| `uh-cli` | `prime-agent` binary, composition root | `uh-types`, `uh-core`, `uh-ai`, `uh-agent`, `uh-daemon` |
 
 Layering rules:
 
 - Dependencies only point from higher crates to lower crates shown above. No cycles or
   reverse edges. The leaf crates are peers; add only the dependencies needed for their work.
-  Shared wire/domain vocabulary belongs in `pa-types`, not in a higher crate or a duplicate.
-- `pa-cli` is a composition root: it wires crates together and contains no business logic.
+  Shared wire/domain vocabulary belongs in `uh-types`, not in a higher crate or a duplicate.
+- `uh-cli` is a composition root: it wires crates together and contains no business logic.
 
 ## Reliability model
 

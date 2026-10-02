@@ -931,157 +931,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
-name = "pa-agent"
-version = "0.9.8"
-dependencies = [
- "anyhow",
- "futures",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "pa-ai"
-version = "0.9.8"
-dependencies = [
- "anyhow",
- "base64",
- "bytes",
- "futures",
- "h2",
- "hex",
- "hmac",
- "http",
- "pa-types",
- "rand 0.8.8",
- "regex",
- "reqwest",
- "rsa",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "thiserror",
- "tokio",
- "tokio-tungstenite",
- "tokio-util",
- "url",
-]
-
-[[package]]
-name = "pa-cli"
-version = "0.9.8"
-dependencies = [
- "anyhow",
- "base64",
- "futures",
- "libc",
- "pa-agent",
- "pa-ai",
- "pa-core",
- "pa-daemon",
- "pa-types",
- "rsa",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "pa-core"
-version = "0.9.8"
-dependencies = [
- "anyhow",
- "base64",
- "fancy-regex",
- "flate2",
- "futures",
- "getrandom 0.3.4",
- "globset",
- "hmac",
- "ignore",
- "libc",
- "nix",
- "pa-agent",
- "pa-ai",
- "pa-models",
- "pa-types",
- "proptest",
- "reqwest",
- "rsa",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha1",
- "sha2",
- "tar",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
- "unicode-normalization",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "pa-daemon"
-version = "0.9.8"
-dependencies = [
- "anyhow",
- "pa-agent",
- "pa-ai",
- "pa-core",
- "pa-types",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "pa-models"
-version = "0.9.8"
-dependencies = [
- "hex",
- "hmac",
- "pa-ai",
- "pa-types",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "pa-types"
-version = "0.9.8"
-dependencies = [
- "anyhow",
- "libc",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2010,6 +1859,157 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "uh-agent"
+version = "0.9.8"
+dependencies = [
+ "anyhow",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "uh-ai"
+version = "0.9.8"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "futures",
+ "h2",
+ "hex",
+ "hmac",
+ "http",
+ "rand 0.8.8",
+ "regex",
+ "reqwest",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "uh-types",
+ "url",
+]
+
+[[package]]
+name = "uh-cli"
+version = "0.9.8"
+dependencies = [
+ "anyhow",
+ "base64",
+ "futures",
+ "libc",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "uh-agent",
+ "uh-ai",
+ "uh-core",
+ "uh-daemon",
+ "uh-types",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "uh-core"
+version = "0.9.8"
+dependencies = [
+ "anyhow",
+ "base64",
+ "fancy-regex",
+ "flate2",
+ "futures",
+ "getrandom 0.3.4",
+ "globset",
+ "hmac",
+ "ignore",
+ "libc",
+ "nix",
+ "proptest",
+ "reqwest",
+ "rsa",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha1",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uh-agent",
+ "uh-ai",
+ "uh-models",
+ "uh-types",
+ "unicode-normalization",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "uh-daemon"
+version = "0.9.8"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uh-agent",
+ "uh-ai",
+ "uh-core",
+ "uh-types",
+ "uuid",
+]
+
+[[package]]
+name = "uh-models"
+version = "0.9.8"
+dependencies = [
+ "hex",
+ "hmac",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uh-ai",
+ "uh-types",
+]
+
+[[package]]
+name = "uh-types"
+version = "0.9.8"
+dependencies = [
+ "anyhow",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "unarray"

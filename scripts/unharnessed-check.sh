@@ -59,7 +59,7 @@ export UV_PYTHON_INSTALL_DIR=${UV_PYTHON_INSTALL_DIR:-$REAL_HOME/.local/share/uv
 export HOME="$GATE/home"
 export PRIME_AGENT_KERNEL_VENV="$VENV"
 export PI_PACKAGE_DIR="$ROOT"
-export PA_CORE_KERNEL_PYTHON="$VENV/bin/python"
+export UH_CORE_KERNEL_PYTHON="$VENV/bin/python"
 export DO_NOT_TRACK=1 CARGO_TERM_COLOR=never
 CLEAN_PATH=
 old_ifs=$IFS; IFS=:

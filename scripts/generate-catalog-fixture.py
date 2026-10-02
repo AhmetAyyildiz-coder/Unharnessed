@@ -32,7 +32,7 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-FIXTURE = REPO / "crates/pa-models/tests/fixtures/catalog.v1.json"
+FIXTURE = REPO / "crates/uh-models/tests/fixtures/catalog.v1.json"
 
 DEFAULT_MODEL_CATALOG_URL = (
     "https://raw.githubusercontent.com/PrimeIntellect-ai/prime-agent-catalog"

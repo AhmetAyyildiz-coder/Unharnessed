@@ -39,7 +39,7 @@ and the extra skills (`edit`, `websearch`, `skill-creator`, `prime-intellect`).
 Build the binary:
 
 ```bash
-cargo build --release -p pa-cli --bin prime-agent
+cargo build --release -p uh-cli --bin prime-agent
 ./target/release/prime-agent --prime-agent-bootstrap   # build the kernel venv
 ```
 

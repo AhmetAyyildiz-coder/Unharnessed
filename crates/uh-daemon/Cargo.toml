@@ -1,0 +1,25 @@
+[package]
+name = "uh-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ACP stdio transport and session leases."
+
+[dependencies]
+uh-types = { path = "../uh-types" }
+uh-core = { path = "../uh-core" }
+uh-agent = { path = "../uh-agent" }
+uh-ai = { path = "../uh-ai" }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4", "v7"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
