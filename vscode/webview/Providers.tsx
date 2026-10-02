@@ -1,17 +1,43 @@
-import { useEffect, useState, type SubmitEvent } from "react";
+import { useEffect, useState, type ReactNode, type SubmitEvent } from "react";
 import type { Provider } from "../src/protocol";
 import type { ProviderResult } from "./App";
 import { IconBack, IconChevron, IconSearch, IconUnlink } from "./icons";
+import { ProviderLogo } from "./logos";
 import { post } from "./vscode";
 
 /** From this many rows on, a search field filters them. */
 const SEARCH_FROM = 9;
 
-/** The row whose key form or disconnect confirmation is open. */
-type Open = { id: string; method: Provider["method"]; mode: "key" | "disconnect" };
+/**
+ * The row whose form is open: its key form, the confirmation before a
+ * sign-in that replaces a credential, or the one before a disconnect.
+ */
+type Open = { id: string; method: Provider["method"]; mode: "key" | "signin" | "disconnect" };
 
-function methodLabel(provider: Provider): string {
-  return provider.method === "subscription" ? "Subscription" : "API key";
+/** How a row is connected, or why it is not. */
+function status(provider: Provider): ReactNode {
+  const { note } = provider;
+  if (provider.connected) {
+    let how: string;
+    if (note?.startsWith("env: ")) how = `with ${note.slice(5)} from your environment`;
+    else if (note) how = `via ${note}`;
+    else how = provider.method === "subscription" ? "with your subscription" : "with a saved API key";
+    return (
+      <>
+        <span className="row-status">Connected</span> {how}
+      </>
+    );
+  }
+  switch (note) {
+    case "subscription configured":
+      return "The subscription sign-in is used instead";
+    case "API key configured":
+      return "The saved API key is used instead";
+    case "expired":
+      return "Sign-in expired";
+    default:
+      return note;
+  }
 }
 
 /**
@@ -69,7 +95,15 @@ export function Providers({
       <header className="topbar">
         <div className="topbar-title">
           {onBack && (
-            <button className="icon-button" type="button" title="Back" aria-label="Back" onClick={onBack}>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Back"
+              data-tip="Back"
+              data-tip-side="below"
+              data-tip-align="start"
+              onClick={onBack}
+            >
               <IconBack />
             </button>
           )}
@@ -104,10 +138,13 @@ export function Providers({
                 <ul className="list">
                   {rows.map((provider) => {
                     const mode = open?.id === provider.id && open.method === provider.method ? open.mode : null;
+                    // Anthropic and xAI: the other kind of credential, in the same slot.
+                    const other = providers.find((p) => p.id === provider.id && p.method !== provider.method && p.connected);
                     return (
                       <Row
                         key={`${provider.id}/${provider.method}`}
                         provider={provider}
+                        other={other}
                         mode={mode}
                         busy={busy}
                         error={mode ? error : undefined}
@@ -128,6 +165,7 @@ export function Providers({
 
 function Row({
   provider,
+  other,
   mode,
   busy,
   error,
@@ -135,6 +173,8 @@ function Row({
   onRun,
 }: {
   provider: Provider;
+  /** The provider's other credential, when that one is connected. */
+  other?: Provider;
   mode: Open["mode"] | null;
   busy: boolean;
   error?: string;
@@ -142,20 +182,26 @@ function Row({
   onRun: (message: Parameters<typeof post>[0]) => void;
 }) {
   const browser = provider.login === "browser";
-  // In the connected group the method tells the two Anthropic rows apart.
-  const meta = provider.connected ? (provider.note ?? methodLabel(provider)) : provider.note;
-  const activate = () => (browser ? post({ type: "login", providerId: provider.id }) : onToggle("key"));
+  const meta = status(provider);
+  // A sign-in that would replace a working credential asks first.
+  const activate = () => {
+    if (!browser) onToggle("key");
+    else if (provider.connected || other) onToggle("signin");
+    else post({ type: "login", providerId: provider.id });
+  };
 
   return (
     <li className="row">
       <div className="row-line">
         <button
-          className={`row-body is-button${mode === "key" ? " is-open" : ""}`}
+          className={`row-body is-button${mode === "key" || mode === "signin" ? " is-open" : ""}`}
           type="button"
-          aria-expanded={browser ? undefined : mode === "key"}
+          aria-expanded={mode === "key" || mode === "signin"}
           onClick={activate}
         >
-          {provider.connected && <span className="dot" />}
+          <span className={provider.connected ? "badge is-on" : "badge"}>
+            <ProviderLogo provider={provider.id} name={provider.name} />
+          </span>
           <span className="row-main">
             <span className="row-name">{provider.name}</span>
             {meta && <span className="row-meta">{meta}</span>}
@@ -166,7 +212,8 @@ function Row({
           <button
             className="icon-button"
             type="button"
-            title="Disconnect"
+            data-tip="Disconnect"
+            data-tip-align="end"
             aria-label={`Disconnect ${provider.name}`}
             onClick={() => onToggle("disconnect")}
           >
@@ -175,9 +222,36 @@ function Row({
         )}
       </div>
       {provider.warning && <p className="row-warning">{provider.warning}</p>}
+      {mode === "signin" && (
+        <div className="row-form">
+          <p className="note">
+            {provider.connected
+              ? `You are signed in to ${provider.name}. Sign in again to switch accounts or renew the sign-in.`
+              : other?.removable
+                ? `Signing in replaces the saved ${other.name} API key.`
+                : `Once you are signed in, the subscription is used instead of the ${other?.name} API key.`}
+          </p>
+          <div className="actions">
+            <button
+              className="button"
+              type="button"
+              onClick={() => {
+                onToggle("signin");
+                post({ type: "login", providerId: provider.id });
+              }}
+            >
+              {provider.connected ? "Sign in again" : "Sign in"}
+            </button>
+            <button className="button is-quiet" type="button" onClick={() => onToggle("signin")}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       {mode === "key" && (
         <KeyForm
           provider={provider}
+          other={other}
           busy={busy}
           error={error}
           onSave={(apiKey) => onRun({ type: "setApiKey", providerId: provider.id, apiKey })}
@@ -213,12 +287,14 @@ function Row({
 
 function KeyForm({
   provider,
+  other,
   busy,
   error,
   onSave,
   onCancel,
 }: {
   provider: Provider;
+  other?: Provider;
   busy: boolean;
   error?: string;
   onSave: (apiKey: string) => void;
@@ -231,8 +307,19 @@ function KeyForm({
     if (!empty && !busy) onSave(value);
   };
 
+  // What saving does to the key already in use.
+  let replaces: string | undefined;
+  if (provider.connected && provider.note?.startsWith("env: ")) {
+    replaces = `${provider.note.slice(5)} from your environment is in use. A key saved here is used instead.`;
+  } else if (provider.connected && provider.removable) {
+    replaces = "A key is saved. A new one replaces it.";
+  } else if (other) {
+    replaces = `Saving a key replaces the ${other.name} sign-in.`;
+  }
+
   return (
     <form className="row-form" onSubmit={submit} onKeyDown={(event) => event.key === "Escape" && onCancel()}>
+      {replaces && <p className="note">{replaces}</p>}
       <input
         className="input is-secret"
         type="password"

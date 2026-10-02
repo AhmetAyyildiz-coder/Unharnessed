@@ -17,7 +17,11 @@ export function LogoGlyph({ className }: { className?: string }) {
   );
 }
 
-/** "Unharnessed" with the logo as its U (sizing in DESIGN.md). */
+/**
+ * "Unharnessed" with the logo as its U, set at weight 460, tracking −0.025 em.
+ * The glyph is sized to the font's U (0.6585 em tall, baseline −0.008 em), so
+ * its stroke (10 in a 68-unit glyph) matches the font's stem at that weight.
+ */
 export function Wordmark({ animated = false }: { animated?: boolean }) {
   return (
     <span className={animated ? "wordmark is-animated" : "wordmark"} role="img" aria-label="Unharnessed">

@@ -6,7 +6,9 @@
 //! options change. Model values are opaque serialized
 //! `[provider, model-id]` pairs, exactly like the TS product (Zed
 //! round-trips the value it was handed); effort choices follow the
-//! selected model's supported levels.
+//! selected model's supported levels. Each model value carries its
+//! details in `_meta` (context window, input kinds, price), and models
+//! with a priority tier add a `fast_mode` boolean option.
 //!
 //! Both transports serve the same computation: the in-process mode
 //! reads the live agent state (plus the switchable provider target), the
@@ -21,6 +23,7 @@ use serde::Serialize;
 use serde_json::Value;
 use uh_types::ai::Model;
 
+use super::meta::{model_meta, UnharnessedModelMeta};
 use super::producer::UpdateProducer;
 use super::types::AcpSessionUpdate;
 
@@ -29,10 +32,46 @@ use super::types::AcpSessionUpdate;
 pub struct SessionConfigSelectOption {
     pub value: String,
     pub name: String,
+    /// The model details on a `model` value ([`super::meta::model_meta`]).
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
 }
 
-/// One session configuration option (ACP `SessionConfigOption`, the
-/// select form the product serves).
+/// An option's current value: a select's value id, or a boolean toggle's
+/// state.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ConfigValue {
+    Select(String),
+    Boolean(bool),
+}
+
+impl From<String> for ConfigValue {
+    fn from(value: String) -> ConfigValue {
+        ConfigValue::Select(value)
+    }
+}
+
+impl PartialEq<str> for ConfigValue {
+    fn eq(&self, other: &str) -> bool {
+        matches!(self, ConfigValue::Select(value) if value == other)
+    }
+}
+
+impl PartialEq<&str> for ConfigValue {
+    fn eq(&self, other: &&str) -> bool {
+        self == *other
+    }
+}
+
+impl PartialEq<String> for ConfigValue {
+    fn eq(&self, other: &String) -> bool {
+        self == other.as_str()
+    }
+}
+
+/// One session configuration option (ACP `SessionConfigOption`): a
+/// `select` with its values, or a `boolean` toggle (no values).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SessionConfigOption {
     pub id: String,
@@ -41,7 +80,8 @@ pub struct SessionConfigOption {
     pub kind: &'static str,
     pub category: String,
     #[serde(rename = "currentValue")]
-    pub current_value: String,
+    pub current_value: ConfigValue,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<SessionConfigSelectOption>,
 }
 
@@ -56,6 +96,8 @@ pub struct PickerModel {
     pub name: String,
     pub provider: String,
     pub reasoning: bool,
+    /// The registry model's details; the agent-state view has none.
+    pub meta: Option<UnharnessedModelMeta>,
 }
 
 impl PickerModel {
@@ -65,6 +107,14 @@ impl PickerModel {
             name: model.name.clone(),
             provider: model.provider.clone(),
             reasoning: model.reasoning,
+            meta: Some(UnharnessedModelMeta {
+                id: model.id.clone(),
+                name: model.name.clone(),
+                provider: model.provider.clone(),
+                context_window: model.context_window,
+                input: model.input.clone(),
+                cost: model.cost,
+            }),
         }
     }
 
@@ -77,6 +127,7 @@ impl PickerModel {
             name: model.name.clone(),
             provider: model.provider.clone(),
             reasoning: model.reasoning,
+            meta: None,
         }
     }
 }
@@ -105,12 +156,20 @@ pub fn session_config_options(
     // models in discovery order, the current model always present (an
     // auth-revoked or undiscovered current model stays selectable).
     let mut available: Vec<(String, PickerModel)> = Vec::new();
-    let upsert = |available: &mut Vec<(String, PickerModel)>, value: String, entry: PickerModel| {
-        match available.iter_mut().find(|(key, _)| *key == value) {
-            Some(slot) => slot.1 = entry,
-            None => available.push((value, entry)),
-        }
-    };
+    // An entry without details (the agent-state view of the current
+    // model) keeps the discovered entry's.
+    let upsert =
+        |available: &mut Vec<(String, PickerModel)>, value: String, mut entry: PickerModel| {
+            match available.iter_mut().find(|(key, _)| *key == value) {
+                Some(slot) => {
+                    if entry.meta.is_none() {
+                        entry.meta = slot.1.meta.take();
+                    }
+                    slot.1 = entry;
+                }
+                None => available.push((value, entry)),
+            }
+        };
     for candidate in models {
         let value = model_value(&candidate.provider, &candidate.id);
         upsert(&mut available, value, PickerModel::from_model(candidate));
@@ -125,12 +184,13 @@ pub fn session_config_options(
         name: "Model".to_string(),
         kind: "select",
         category: "model".to_string(),
-        current_value: model_value(&model.provider, &model.id),
+        current_value: model_value(&model.provider, &model.id).into(),
         options: available
             .iter()
             .map(|(value, model)| SessionConfigSelectOption {
                 value: value.clone(),
                 name: format!("{} ({})", model.name, model.provider),
+                meta: model.meta.as_ref().map(model_meta),
             })
             .collect(),
     }];
@@ -147,18 +207,35 @@ pub fn session_config_options(
             name: "Reasoning effort".to_string(),
             kind: "select",
             category: "thought_level".to_string(),
-            current_value: thinking_level.to_string(),
+            current_value: thinking_level.to_string().into(),
             options: available_levels
                 .iter()
                 .map(|level| SessionConfigSelectOption {
                     value: level.clone(),
                     name: level.clone(),
+                    meta: None,
                 })
                 .collect(),
         });
     }
     options
 }
+
+/// The `fast_mode` toggle (TS `/fast`): the priority service tier, for the
+/// models that have one ([`uh_types::ai::supports_fast_mode`]).
+pub fn fast_mode_option(enabled: bool) -> SessionConfigOption {
+    SessionConfigOption {
+        id: FAST_MODE.to_string(),
+        name: "Fast mode".to_string(),
+        kind: "boolean",
+        category: "model_config".to_string(),
+        current_value: ConfigValue::Boolean(enabled),
+        options: Vec::new(),
+    }
+}
+
+/// The fast mode option's id.
+pub const FAST_MODE: &str = "fast_mode";
 
 /// Serialize the options for a response payload (`configOptions`).
 pub fn config_options_value(options: &[SessionConfigOption]) -> Value {

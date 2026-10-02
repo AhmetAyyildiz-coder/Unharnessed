@@ -1,4 +1,16 @@
-/* Tokens and rules from DESIGN.md. */
+/*
+ * The panel's look. Soft and round, with a little matter: surfaces float on a
+ * neutral grey and are told apart by a step of lightness and wide, faint
+ * shadows rather than by lines. Controls are pills and discs; a press gives,
+ * springs back and leaves a puff of dust (powder.ts). Things move on springs.
+ * The cyan is the only colour, kept for what must stand out: the logo, the
+ * live state, focus, the main action. Everything is drawn in this panel,
+ * never in native VS Code popups; our icons are drawn by hand (icons.tsx).
+ * The splash (wordmark and ASCII field) is settled.
+ *
+ * These are directions, not limits: when a new screen calls for a better
+ * idea, propose it.
+ */
 
 @font-face {
   font-family: "Overused Grotesk";
@@ -10,34 +22,51 @@
 /* On body, not :root: the derived tokens (muted, lines) then follow the
    theme classes VS Code puts on body. */
 body {
-  /* Near-black grey with the faintest blue. Text and controls are white;
-     the cyan is kept for what must stand out (logo, live state, focus). */
-  --uh-bg: #0d0e10;
-  --uh-raised: #15171a;
-  --uh-ink-rgb: 255 255 255;
-  --uh-text: #f2f4f7;
-  --uh-muted: rgb(var(--uh-ink-rgb) / 0.5);
-  --uh-line: rgb(var(--uh-ink-rgb) / 0.08);
-  --uh-line-strong: rgb(var(--uh-ink-rgb) / 0.18);
-  --uh-accent: #5fd0ff;
-  --uh-accent-rgb: 95 208 255;
-  --uh-danger: #ff9e9e;
+  /* A neutral grey, no blue. Surfaces sit a step lighter instead of being
+     outlined; the cyan is the only colour (logo, live state, focus, the
+     main action). */
+  --uh-bg: #1a1a1b;
+  --uh-raised: #222223;
+  --uh-raised-2: #2a2a2c;
+  --uh-ink-rgb: 236 236 238;
+  --uh-text: #ececee;
+  --uh-muted: rgb(var(--uh-ink-rgb) / 0.56);
+  --uh-faint: rgb(var(--uh-ink-rgb) / 0.34);
+  --uh-tint: rgb(var(--uh-ink-rgb) / 0.06);
+  --uh-tint-strong: rgb(var(--uh-ink-rgb) / 0.1);
+  --uh-line: rgb(var(--uh-ink-rgb) / 0.06);
+  --uh-line-strong: rgb(var(--uh-ink-rgb) / 0.12);
+  --uh-highlight: rgb(255 255 255 / 0.04);
+  --uh-shadow: rgb(0 0 0 / 0.42);
+  --uh-accent: #86defc;
+  --uh-accent-rgb: 134 222 252;
+  --uh-on-accent: #06141c;
+  --uh-danger: #ffa3a3;
+  --uh-danger-rgb: 255 163 163;
   --uh-font: "Overused Grotesk", system-ui, sans-serif;
   --uh-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  /* The splash's curve; the panel's own moves use the soft curve and the spring. */
   --uh-ease: cubic-bezier(0.2, 0.7, 0.1, 1);
+  --uh-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --uh-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   color-scheme: dark;
 }
 
-/* Light themes: near-black ink on pale grey, a deeper cyan. */
+/* Light themes: near-black ink on pale neutral grey, a deeper cyan. */
 body.vscode-light,
 body.vscode-high-contrast-light {
-  --uh-bg: #f2f3f5;
+  --uh-bg: #f3f3f4;
   --uh-raised: #ffffff;
-  --uh-ink-rgb: 14 16 20;
-  --uh-text: #0e1014;
+  --uh-raised-2: #ffffff;
+  --uh-ink-rgb: 20 20 22;
+  --uh-text: #141416;
+  --uh-highlight: rgb(255 255 255 / 0);
+  --uh-shadow: rgb(0 0 0 / 0.1);
   --uh-accent: #0a7fc2;
   --uh-accent-rgb: 10 127 194;
+  --uh-on-accent: #ffffff;
   --uh-danger: #b3261e;
+  --uh-danger-rgb: 179 38 30;
   color-scheme: light;
 }
 
@@ -181,13 +210,20 @@ button {
   font-size: min(14vw, 72px);
 }
 
-/* Status screen */
+/* Screens */
+
+@keyframes uh-rise {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
 
 .screen {
   display: flex;
   flex-direction: column;
   height: 100%;
-  animation: uh-fade-in 300ms var(--uh-ease);
+  animation: uh-rise 420ms var(--uh-soft);
 }
 
 .topbar {
@@ -195,9 +231,8 @@ button {
   flex: none;
   align-items: center;
   justify-content: space-between;
-  height: 44px;
+  height: 50px;
   padding: 0 10px 0 16px;
-  border-bottom: 1px solid var(--uh-line);
 }
 
 .topbar .wordmark {
@@ -211,17 +246,26 @@ button {
 
 .content {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 18px;
-  padding: 22px 16px;
+  min-height: 0;
+  padding: 8px 14px 22px;
   overflow-y: auto;
 }
 
+/* The agent's state: a soft pill, its mark glowing while it runs. */
 .agent-line {
-  display: flex;
+  display: inline-flex;
+  align-self: flex-start;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
+  padding: 6px 13px 6px 11px;
+  font-size: 12px;
   font-weight: 500;
+  color: var(--uh-muted);
+  background: var(--uh-tint);
+  border-radius: 999px;
 }
 
 .agent-mark {
@@ -231,16 +275,21 @@ button {
   border-radius: 50%;
 }
 
+.agent-line.is-ready {
+  color: rgb(var(--uh-accent-rgb) / 0.9);
+  background: rgb(var(--uh-accent-rgb) / 0.1);
+}
+
 .agent-line.is-ready .agent-mark {
-  margin: 0 3px;
   background: var(--uh-accent);
-  outline: 3px solid rgb(var(--uh-accent-rgb) / 0.14);
+  box-shadow: 0 0 10px rgb(var(--uh-accent-rgb) / 0.7);
+  animation: uh-breathe 2.4s var(--uh-soft) infinite;
 }
 
 .agent-line.is-starting .agent-mark {
   width: 10px;
   height: 10px;
-  margin: 0 1.5px;
+  margin: 0 -1.5px;
   border: 1.25px solid var(--uh-accent);
   border-right-color: transparent;
   animation: uh-spin 800ms linear infinite;
@@ -248,17 +297,25 @@ button {
 
 .agent-line.is-failed {
   color: var(--uh-danger);
+  background: rgb(var(--uh-danger-rgb) / 0.1);
 }
 
 .agent-line.is-failed .agent-mark {
   width: 13px;
   height: 13px;
+  margin: 0 -3px;
   border-radius: 0;
 }
 
 @keyframes uh-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes uh-breathe {
+  50% {
+    box-shadow: 0 0 4px rgb(var(--uh-accent-rgb) / 0.35);
   }
 }
 
@@ -283,11 +340,15 @@ button {
   white-space: nowrap;
 }
 
+.intro {
+  padding: 4px 2px 0;
+}
+
 .intro h1 {
   margin: 0;
-  font-size: 17px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
+  font-size: 18px;
+  font-weight: 520;
+  letter-spacing: -0.015em;
 }
 
 .intro p {
@@ -304,16 +365,15 @@ button {
 
 .section-label {
   margin: 0;
-  font-size: 11px;
+  padding: 0 4px;
+  font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--uh-muted);
+  color: var(--uh-faint);
 }
 
 .step-title {
   margin: 0;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 500;
 }
 
@@ -324,17 +384,21 @@ button {
   overflow-wrap: anywhere;
 }
 
-/* Rows: providers, teams */
+/* Lists (providers, teams): one soft card, rows separated by space, not lines. */
 
 .list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   margin: 0;
-  padding: 0;
+  padding: 5px;
   list-style: none;
-  border-top: 1px solid var(--uh-line);
-}
-
-.row {
-  border-bottom: 1px solid var(--uh-line);
+  background: var(--uh-raised);
+  border-radius: 18px;
+  box-shadow:
+    0 0 0 1px var(--uh-line),
+    0 14px 30px -18px var(--uh-shadow),
+    inset 0 1px 0 var(--uh-highlight);
 }
 
 .row-line {
@@ -347,29 +411,30 @@ button {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   min-width: 0;
-  min-height: 42px;
-  padding: 7px 6px;
+  min-height: 46px;
+  padding: 7px 10px;
   color: inherit;
   text-align: left;
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 13px;
 }
 
 .row-body.is-button {
   cursor: pointer;
-  transition: background-color 150ms var(--uh-ease);
+  transition: background-color 220ms var(--uh-soft);
 }
 
-.row-body.is-button:hover {
-  background: rgb(var(--uh-ink-rgb) / 0.05);
+.row-body.is-button:hover,
+.row-body.is-open {
+  background: var(--uh-tint);
 }
 
 .row-body.is-button:focus-visible {
-  outline: 1px solid var(--uh-accent);
-  outline-offset: -1px;
+  outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
+  outline-offset: -2px;
 }
 
 .row-main {
@@ -396,40 +461,66 @@ button {
 
 .row-end {
   flex: none;
-  color: var(--uh-muted);
-  transition: transform 150ms var(--uh-ease);
+  color: var(--uh-faint);
+  transition: transform 380ms var(--uh-spring);
 }
 
 .row-body.is-open .row-end {
   transform: rotate(90deg);
 }
 
+.row-line > .icon-button {
+  margin-right: 4px;
+}
+
+.row-status {
+  color: rgb(var(--uh-accent-rgb) / 0.9);
+}
+
+/* Under the name it is about, clear of the row's hover. */
 .row-warning {
-  margin: 0 6px 10px;
-  padding-left: 10px;
+  margin: 6px 10px 8px 49px;
+  padding: 8px 11px;
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--uh-muted);
-  border-left: 1px solid var(--uh-line-strong);
+  background: var(--uh-tint);
+  border-radius: 12px;
 }
 
 .row-form {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 2px 6px 14px;
-  animation: uh-fade-in 150ms var(--uh-ease);
+  padding: 12px 10px 12px;
+  animation: uh-rise 300ms var(--uh-soft);
 }
 
-/* The connected mark, on the providers screen only: the agent-line dot. */
-.dot {
+/* A provider's mark in a soft round badge; a connected one carries the cyan dot. */
+.badge {
+  position: relative;
+  display: grid;
   flex: none;
-  width: 7px;
-  height: 7px;
-  margin: 0 3px;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--uh-text);
+  background: var(--uh-tint-strong);
+  border-radius: 999px;
+}
+
+.badge.is-on::after {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 8px;
+  height: 8px;
+  content: "";
   background: var(--uh-accent);
   border-radius: 50%;
-  outline: 3px solid rgb(var(--uh-accent-rgb) / 0.14);
+  box-shadow:
+    0 0 0 2px var(--uh-raised),
+    0 0 8px rgb(var(--uh-accent-rgb) / 0.6);
 }
 
 /* Sign-in */
@@ -455,7 +546,14 @@ button {
 .code-line {
   display: flex;
   align-items: center;
+  align-self: flex-start;
   gap: 8px;
+  padding: 8px 8px 8px 16px;
+  background: var(--uh-raised);
+  border-radius: 16px;
+  box-shadow:
+    0 0 0 1px var(--uh-line),
+    inset 0 1px 0 var(--uh-highlight);
 }
 
 .code {
@@ -474,40 +572,42 @@ button {
 .log {
   max-height: 40vh;
   margin: 0;
-  padding: 10px 12px;
+  padding: 12px 14px;
   overflow: auto;
   font: 11px/1.55 var(--uh-mono);
   color: var(--uh-muted);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   background: var(--uh-raised);
-  border: 1px solid var(--uh-line);
-  border-radius: 6px;
+  border-radius: 16px;
+  box-shadow:
+    0 0 0 1px var(--uh-line),
+    inset 0 1px 0 var(--uh-highlight);
 }
 
-/* Controls */
+/* Controls: pills. The main action is a soft cyan; the others stay quiet. */
 
 .button {
   display: inline-flex;
   align-self: flex-start;
   align-items: center;
   gap: 8px;
-  height: 30px;
-  padding: 0 14px 0 12px;
+  height: 32px;
+  padding: 0 16px 0 14px;
   font-size: 12.5px;
-  color: var(--uh-text);
+  font-weight: 500;
+  color: rgb(var(--uh-accent-rgb) / 0.95);
   cursor: pointer;
-  background: transparent;
-  border: 1px solid var(--uh-line-strong);
-  border-radius: 6px;
+  background: rgb(var(--uh-accent-rgb) / 0.13);
+  border: 0;
+  border-radius: 999px;
   transition:
-    border-color 150ms var(--uh-ease),
-    background-color 150ms var(--uh-ease);
+    color 220ms var(--uh-soft),
+    background-color 220ms var(--uh-soft);
 }
 
 .button:hover:not(:disabled) {
-  background: rgb(var(--uh-ink-rgb) / 0.06);
-  border-color: rgb(var(--uh-ink-rgb) / 0.4);
+  background: rgb(var(--uh-accent-rgb) / 0.2);
 }
 
 .button:disabled {
@@ -517,16 +617,21 @@ button {
 
 .button.is-quiet {
   color: var(--uh-muted);
-  border-color: transparent;
+  background: transparent;
 }
 
 .button.is-quiet:hover:not(:disabled) {
   color: var(--uh-text);
-  border-color: transparent;
+  background: var(--uh-tint);
 }
 
 .button.is-danger {
   color: var(--uh-danger);
+  background: rgb(var(--uh-danger-rgb) / 0.12);
+}
+
+.button.is-danger:hover:not(:disabled) {
+  background: rgb(var(--uh-danger-rgb) / 0.18);
 }
 
 /* A quiet text action, for what most people never need. */
@@ -541,7 +646,7 @@ button {
   text-decoration: underline;
   text-decoration-color: var(--uh-line-strong);
   text-underline-offset: 3px;
-  transition: color 150ms var(--uh-ease);
+  transition: color 220ms var(--uh-soft);
 }
 
 .link:hover {
@@ -549,36 +654,50 @@ button {
 }
 
 .link:focus-visible {
-  outline: 1px solid var(--uh-accent);
-  outline-offset: 2px;
+  outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
+  outline-offset: 3px;
+  border-radius: 4px;
 }
 
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .input {
   width: 100%;
-  height: 32px;
-  padding: 0 10px;
+  height: 34px;
+  padding: 0 13px;
   font: inherit;
   font-size: 12.5px;
   color: var(--uh-text);
   background: var(--uh-raised);
-  border: 1px solid var(--uh-line-strong);
-  border-radius: 6px;
+  border: 0;
+  border-radius: 12px;
   outline: none;
-  transition: border-color 150ms var(--uh-ease);
+  caret-color: var(--uh-accent);
+  box-shadow:
+    0 0 0 1px var(--uh-line),
+    inset 0 1px 0 var(--uh-highlight);
+  transition: background-color 260ms var(--uh-soft);
 }
 
+/* Inside a card, an input sits one step higher. */
+.list .input {
+  background: var(--uh-raised-2);
+}
+
+/* Placeholders are UI text, even over a mono field: one face, one size. */
 .input::placeholder {
-  color: var(--uh-muted);
+  font-family: var(--uh-font);
+  font-size: 12px;
+  color: var(--uh-faint);
 }
 
+/* Focus: no ring; the field lights up a shade under a cyan caret. */
 .input:focus {
-  border-color: var(--uh-accent);
+  background-image: linear-gradient(var(--uh-tint), var(--uh-tint));
 }
 
 .input:disabled {
@@ -596,14 +715,15 @@ button {
 
 .search svg {
   position: absolute;
-  top: 8px;
-  left: 9px;
-  color: var(--uh-muted);
+  top: 9px;
+  left: 11px;
+  color: var(--uh-faint);
   pointer-events: none;
 }
 
 .search .input {
-  padding-left: 31px;
+  padding-left: 34px;
+  border-radius: 999px;
 }
 
 .search .input::-webkit-search-cancel-button {
@@ -613,22 +733,22 @@ button {
 .icon-button {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   color: var(--uh-muted);
   cursor: pointer;
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 999px;
   transition:
-    color 150ms var(--uh-ease),
-    background-color 150ms var(--uh-ease);
+    color 220ms var(--uh-soft),
+    background-color 220ms var(--uh-soft);
 }
 
 .icon-button:hover:not(:disabled) {
   color: var(--uh-text);
-  background: rgb(var(--uh-ink-rgb) / 0.08);
+  background: var(--uh-tint-strong);
 }
 
 .icon-button:disabled {
@@ -638,8 +758,622 @@ button {
 
 .button:focus-visible,
 .icon-button:focus-visible {
-  outline: 1px solid var(--uh-accent);
+  outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
   outline-offset: 2px;
+}
+
+/* Composer: the message box at the bottom of home, with the pickers */
+
+/* The box and the glow behind it: a cyan light, uneven, slowly circling the
+   box; on hover, and kept while typing. It only runs while shown. */
+@property --uh-glow-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes uh-orbit {
+  to {
+    --uh-glow-angle: 360deg;
+  }
+}
+
+.composer-shell {
+  position: relative;
+  flex: none;
+  margin: 0 12px 12px;
+  isolation: isolate;
+}
+
+.composer-glow {
+  position: absolute;
+  inset: 4px;
+  border-radius: 20px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--uh-glow-angle),
+    rgb(var(--uh-accent-rgb) / 0) 0deg,
+    rgb(var(--uh-accent-rgb) / 0.8) 70deg,
+    rgb(var(--uh-accent-rgb) / 0.12) 150deg,
+    rgb(var(--uh-accent-rgb) / 0.5) 230deg,
+    rgb(var(--uh-accent-rgb) / 0) 320deg
+  );
+  filter: blur(14px);
+  opacity: 0;
+  transition: opacity 600ms var(--uh-soft);
+  animation: uh-orbit 9s linear infinite paused;
+}
+
+.composer-shell:hover .composer-glow,
+.composer-shell:focus-within .composer-glow {
+  opacity: 0.3;
+  animation-play-state: running;
+}
+
+.composer {
+  position: relative;
+  z-index: 1;
+  background: var(--uh-raised);
+  border-radius: 20px;
+  box-shadow:
+    0 0 0 1px var(--uh-line),
+    0 18px 38px -18px var(--uh-shadow),
+    inset 0 1px 0 var(--uh-highlight);
+  transition:
+    background-color 320ms var(--uh-soft),
+    box-shadow 320ms var(--uh-soft);
+}
+
+/* Focus: no ring; the box steps up a shade and lifts. */
+.composer:focus-within {
+  background: var(--uh-raised-2);
+  box-shadow:
+    0 0 0 1px var(--uh-line),
+    0 24px 46px -18px var(--uh-shadow),
+    inset 0 1px 0 var(--uh-highlight);
+}
+
+.composer-field {
+  position: relative;
+}
+
+.composer-input {
+  display: block;
+  width: 100%;
+  min-height: 62px;
+  max-height: 40vh;
+  padding: 12px 15px 4px;
+  font: inherit;
+  color: var(--uh-text);
+  resize: none;
+  background: transparent;
+  border: 0;
+  outline: none;
+  caret-color: var(--uh-accent);
+  field-sizing: content;
+}
+
+
+/* Drawn over the empty box, so it can stream in letter by letter. */
+.composer-placeholder {
+  position: absolute;
+  top: 12px;
+  right: 15px;
+  left: 15px;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--uh-faint);
+  white-space: pre;
+  pointer-events: none;
+}
+
+.composer-placeholder.is-streaming > span {
+  display: inline-block;
+  animation: uh-stream 420ms var(--uh-soft) both;
+}
+
+@keyframes uh-stream {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    translate: 0 3px;
+  }
+}
+
+.composer-error {
+  margin: 0;
+  padding: 0 15px 4px;
+  font: 11.5px/1.5 var(--uh-mono);
+  color: var(--uh-danger);
+  overflow-wrap: anywhere;
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 4px 8px 8px 10px;
+}
+
+.composer-spacer {
+  flex: 1;
+}
+
+.picker {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+/* A picker's face: a soft pill, brighter when hovered or open. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 27px;
+  padding: 0 11px 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--uh-muted);
+  white-space: nowrap;
+  cursor: pointer;
+  background: var(--uh-tint);
+  border: 0;
+  border-radius: 999px;
+  transition:
+    color 220ms var(--uh-soft),
+    background-color 220ms var(--uh-soft);
+}
+
+.chip:hover,
+.chip.is-open {
+  color: var(--uh-text);
+  background: var(--uh-tint-strong);
+}
+
+.chip:focus-visible {
+  outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
+  outline-offset: 2px;
+}
+
+.chip svg {
+  flex: none;
+}
+
+/* The fast mode, while on: it changes what each request costs. */
+.chip.is-on {
+  color: var(--uh-accent);
+  background: rgb(var(--uh-accent-rgb) / 0.14);
+}
+
+/* An icon alone (the fast mode) gets an even pill. */
+.chip:has(> svg:only-child) {
+  padding: 0 7px;
+}
+
+.chip.is-idle {
+  cursor: default;
+}
+
+.chip.is-idle:hover {
+  color: var(--uh-muted);
+  background: var(--uh-tint);
+}
+
+.chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The reasoning effort: one bar per level, lit up to the selected one. */
+.gauge {
+  display: inline-flex;
+  flex: none;
+  align-items: flex-end;
+  gap: 2px;
+  height: 11px;
+}
+
+.gauge-bar {
+  width: 2px;
+  background: currentColor;
+  border-radius: 1px;
+  opacity: 0.25;
+  transition: opacity 260ms var(--uh-soft);
+}
+
+.gauge-bar.is-lit {
+  opacity: 1;
+}
+
+.chip .gauge-bar.is-lit {
+  color: var(--uh-text);
+}
+
+.chip-chevron {
+  margin: 0 -4px 0 -3px;
+  opacity: 0.6;
+}
+
+/* Send: the cyan disc; quiet until there is something to send. */
+.send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--uh-on-accent);
+  cursor: pointer;
+  background: var(--uh-accent);
+  border: 0;
+  border-radius: 999px;
+  box-shadow: 0 8px 18px -8px rgb(var(--uh-accent-rgb) / 0.7);
+  transition:
+    color 220ms var(--uh-soft),
+    background-color 220ms var(--uh-soft),
+    box-shadow 220ms var(--uh-soft);
+}
+
+.send svg {
+  stroke-width: 1.7;
+}
+
+.send:disabled {
+  color: var(--uh-faint);
+  cursor: default;
+  background: var(--uh-tint);
+  box-shadow: none;
+}
+
+.send:focus-visible {
+  outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
+  outline-offset: 2px;
+}
+
+/* Provider marks: the brands' own, monochrome. */
+.logo {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+}
+
+.logo svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.logo.is-letter {
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+}
+
+.badge .logo.is-letter {
+  border: 0;
+  font-size: 11px;
+}
+
+/* Menus open upward, over home, with a little spring. */
+@keyframes uh-pop {
+  from {
+    opacity: 0;
+    scale: 0.96;
+    translate: 0 6px;
+  }
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  max-height: min(440px, 70vh);
+  overflow: hidden;
+  background: var(--uh-raised-2);
+  border-radius: 18px;
+  box-shadow:
+    0 0 0 1px var(--uh-line),
+    0 22px 46px -18px var(--uh-shadow),
+    inset 0 1px 0 var(--uh-highlight);
+  transform-origin: 30% 100%;
+  animation: uh-pop 420ms var(--uh-spring);
+}
+
+.menu.is-compact {
+  right: auto;
+  bottom: calc(100% + 12px);
+  left: 0;
+  width: 180px;
+}
+
+.menu-title {
+  margin: 0;
+  padding: 11px 14px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--uh-faint);
+}
+
+.menu-search {
+  flex: none;
+  padding: 7px 7px 3px;
+}
+
+.menu-search .input {
+  height: 32px;
+  background: var(--uh-tint);
+  box-shadow: none;
+}
+
+
+.menu-search svg {
+  top: 15px;
+  left: 18px;
+}
+
+.menu-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.menu-list {
+  padding: 4px 5px 5px;
+  overflow-y: auto;
+}
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  color: var(--uh-text);
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  transition: background-color 180ms var(--uh-soft);
+}
+
+.menu-row:hover,
+.menu-row.is-active {
+  background: var(--uh-tint);
+}
+
+.menu-row-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.menu-row-name {
+  flex: 1;
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--uh-accent);
+}
+
+.menu-empty {
+  padding: 10px 9px;
+  font-size: 12px;
+  color: var(--uh-muted);
+}
+
+/* A model: its provider's mark in a round badge, its name and provider,
+   then its specs as small labelled pills. */
+.model-row {
+  align-items: flex-start;
+  gap: 11px;
+  padding: 8px 10px 9px;
+}
+
+.model-badge {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  color: var(--uh-text);
+  background: var(--uh-tint-strong);
+  border-radius: 999px;
+}
+
+.model-badge .logo,
+.model-badge .logo svg {
+  width: 13px;
+  height: 13px;
+}
+
+.model-badge .logo.is-letter {
+  font-size: 10.5px;
+  border: 0;
+}
+
+.model-title {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.model-title .menu-row-name {
+  flex: 0 1 auto;
+  font-weight: 500;
+}
+
+.model-provider {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--uh-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-row .menu-check {
+  margin-top: 5px;
+}
+
+.specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.spec {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--uh-text);
+  white-space: nowrap;
+  background: var(--uh-tint);
+  border-radius: 999px;
+  transition: background-color 180ms var(--uh-soft);
+}
+
+.menu-row:hover .spec,
+.menu-row.is-active .spec {
+  background: var(--uh-tint-strong);
+}
+
+.spec-label {
+  color: var(--uh-faint);
+}
+
+/* What the model reads: lit when it does, dim when it does not. */
+.spec svg {
+  width: 12px;
+  height: 12px;
+  margin: 0 -2px;
+}
+
+.spec svg.is-off {
+  opacity: 0.3;
+}
+
+/* Tooltips, ours: `data-tip` on a control, above it by default
+   (`data-tip-side="below"`), centred or held to one edge
+   (`data-tip-align="start" | "end"`). */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  z-index: 30;
+  width: max-content;
+  max-width: 240px;
+  padding: 5px 10px;
+  font: 500 11.5px/1.35 var(--uh-font);
+  color: var(--uh-text);
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  content: attr(data-tip);
+  background: var(--uh-raised-2);
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px var(--uh-line),
+    0 12px 26px -12px var(--uh-shadow);
+  opacity: 0;
+  translate: -50% 3px;
+  transition:
+    opacity 160ms var(--uh-soft),
+    translate 260ms var(--uh-soft);
+}
+
+[data-tip=""]::after {
+  display: none;
+}
+
+[data-tip-side="below"]::after {
+  top: calc(100% + 7px);
+  bottom: auto;
+  translate: -50% -3px;
+}
+
+[data-tip-align="start"]::after {
+  left: 0;
+  translate: 0 3px;
+}
+
+[data-tip-align="end"]::after {
+  right: 0;
+  left: auto;
+  translate: 0 3px;
+}
+
+[data-tip-side="below"][data-tip-align]::after {
+  translate: 0 -3px;
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  translate: -50% 0;
+  transition-delay: 350ms;
+}
+
+[data-tip][data-tip-align]:hover::after,
+[data-tip][data-tip-align]:focus-visible::after {
+  translate: 0 0;
+}
+
+/* An open picker shows its menu, not its tip. */
+[data-tip][aria-expanded="true"]::after {
+  display: none;
+}
+
+/* The press: the pressed control's dust (powder.ts). */
+.puff {
+  position: fixed;
+  z-index: 50;
+  width: 60px;
+  height: 60px;
+  margin: -30px 0 0 -30px;
+  pointer-events: none;
+  background: radial-gradient(circle, rgb(var(--uh-accent-rgb) / 0.42) 0%, transparent 68%);
+  border-radius: 50%;
+  filter: blur(7px);
+}
+
+.grain {
+  position: fixed;
+  z-index: 51;
+  pointer-events: none;
+  border-radius: 50%;
 }
 
 @media (prefers-reduced-motion: reduce) {

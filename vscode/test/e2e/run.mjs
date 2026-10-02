@@ -1,14 +1,16 @@
 // Launches a real VS Code with the extension once per scenario, each in a
 // throwaway profile, and runs suite.cjs. The agent's data (agent dir, kernel
 // venv, cwd) lives in that profile too; a scenario's `auth` is written to the
-// agent dir's auth.json first. Provider keys and tokens from the caller's
+// agent dir's auth.json first, `catalog` seeds the agent's model catalog cache
+// with the uh-models test fixture, and `env` adds to the agent's environment
+// (`UNHARNESSED_OFFLINE` keeps the catalog off the network). Provider keys and tokens from the caller's
 // environment are dropped. After VS Code exits, checks that no agent process
 // (or anything else started in the profile) is left behind.
 // UNHARNESSED_VSCODE_EXECUTABLE picks an installed VS Code; without it, VS Code
 // stable is downloaded into .vscode-test/. UNHARNESSED_BIN picks the agent
 // binary, default target/debug/unharnessed.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -47,6 +49,20 @@ const scenarios = [
     expect: ["agent ready: unharnessed", "connected: openai (apiKey)", "panel: status"],
   },
   {
+    name: "model pickers",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    catalog: true,
+    env: { UNHARNESSED_OFFLINE: "1" },
+    expect: [
+      "connected: openai (apiKey)",
+      '"method":"session/new"',
+      // The fixture's 44 OpenAI models; gpt-5.4 is OpenAI's default, with an effort and a fast mode.
+      "session: opened, model openai/gpt-5.4 (44 choices), effort medium, fast off",
+      "panel: status",
+    ],
+  },
+  {
     name: "binary missing",
     binary: "/nonexistent/unharnessed",
     expect: ["webview ready", "agent failed: spawn /nonexistent/unharnessed ENOENT", "panel: status"],
@@ -70,6 +86,7 @@ for (const scenario of scenarios) {
   mkdirSync(workspace);
   mkdirSync(agentDir);
   if (scenario.auth) writeFileSync(join(agentDir, "auth.json"), JSON.stringify(scenario.auth));
+  if (scenario.catalog) seedCatalog(agentDir);
   try {
     await runTests({
       vscodeExecutablePath: process.env.UNHARNESSED_VSCODE_EXECUTABLE,
@@ -82,6 +99,7 @@ for (const scenario of scenarios) {
         UNHARNESSED_CODING_AGENT_DIR: agentDir,
         UNHARNESSED_KERNEL_VENV: join(profile, "v"),
         DO_NOT_TRACK: "1",
+        ...scenario.env,
       },
       launchArgs: [
         workspace,
@@ -103,6 +121,15 @@ for (const scenario of scenarios) {
   }
 }
 process.exit(failed ? 1 : 0);
+
+/** The agent's catalog cache, as a fetch of the catalog would have left it. */
+function seedCatalog(agentDir) {
+  const payload = JSON.parse(readFileSync(resolve(here, "../../../crates/uh-models/tests/fixtures/catalog.v1.json"), "utf8"));
+  const url = "https://raw.githubusercontent.com/PrimeIntellect-ai/prime-agent-catalog/main/models/catalog.v1.json";
+  mkdirSync(join(agentDir, "models"));
+  const cache = { url, scope: "public", fetchedAt: Date.now(), payload };
+  writeFileSync(join(agentDir, "models", "provider-model-catalog.v1.json"), JSON.stringify(cache));
+}
 
 async function checkNothingLeft(profile, logsDir) {
   const pids = readLog(logsDir).flatMap((line) => [...line.matchAll(/agent started \(pid (\d+)\)/g)].map((m) => +m[1]));

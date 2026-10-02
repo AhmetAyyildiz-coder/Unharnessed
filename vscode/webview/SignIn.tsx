@@ -28,8 +28,10 @@ export function SignIn({ login }: { login: LoginState }) {
           <button
             className="icon-button"
             type="button"
-            title={failed ? "Back" : "Cancel sign-in"}
             aria-label={failed ? "Back" : "Cancel sign-in"}
+            data-tip={failed ? "Back" : "Cancel sign-in"}
+            data-tip-side="below"
+            data-tip-align="start"
             onClick={failed ? close : cancel}
           >
             {failed ? <IconBack /> : <IconCross />}
@@ -208,7 +210,7 @@ function CopyCode({ code }: { code: string }) {
   };
 
   return (
-    <button className="icon-button" type="button" title="Copy code" aria-label="Copy code" onClick={copy}>
+    <button className="icon-button" type="button" aria-label="Copy code" data-tip={copied ? "Copied" : "Copy code"} onClick={copy}>
       {copied ? <IconCheck /> : <IconCopy />}
     </button>
   );

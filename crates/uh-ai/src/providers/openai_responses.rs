@@ -462,11 +462,14 @@ pub fn stream_simple_openai_responses(
         .and_then(|options| options.reasoning)
         .map(|reasoning| clamp_thinking_level(model, reasoning));
     let reasoning_effort = clamped_reasoning.filter(|level| *level != ModelThinkingLevel::Off);
+    // The request's tier (the fast mode) rides the base options, like the
+    // TS spread of the base into the provider options.
+    let service_tier = base.service_tier;
     let stream_options = OpenAIResponsesOptions {
         base,
         reasoning_effort,
         reasoning_summary: None,
-        service_tier: None,
+        service_tier,
     };
     stream_openai_responses(model, context, Some(&stream_options))
 }

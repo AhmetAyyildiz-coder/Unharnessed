@@ -66,6 +66,43 @@ export type LoginState = {
   error?: string;
 };
 
+/** One model the session can switch to: a value of the `model` option. */
+export type ModelChoice = {
+  /** The agent's opaque value, sent back to select it. */
+  value: string;
+  id: string;
+  name: string;
+  /** The provider id (`openai`); the panel names it from the providers list. */
+  provider: string;
+  /** Tokens; 0 when the agent did not say. */
+  contextWindow: number;
+  /** What the model reads: `text`, `image`. */
+  input: string[];
+  /** Dollars per million tokens; absent when the agent did not say. */
+  cost?: { input: number; output: number };
+};
+
+/** The session's pickers: its config options, kept current by the agent. */
+export type SessionConfig = {
+  model: { current: string; choices: ModelChoice[] } | null;
+  /** The reasoning effort; `null` when the model has none to pick. */
+  effort: { current: string; levels: string[] } | null;
+  /** The fast mode (priority tier); `null` when the model has none. */
+  fast: boolean | null;
+};
+
+/** The agent session (`session/new`) as the panel shows it. */
+export type SessionState =
+  | { kind: "opening" }
+  /** `error`: the last selection the agent refused. */
+  | { kind: "open"; config: SessionConfig; error?: string }
+  | { kind: "failed"; error: string };
+
+/** The options the panel sets. */
+export type ConfigChange =
+  | { configId: "model" | "thought_level"; value: string }
+  | { configId: "fast_mode"; value: boolean };
+
 export type HostMessage =
   /** Answer to `ready`; `splash` is true once per window. */
   | {
@@ -74,8 +111,11 @@ export type HostMessage =
       agent: AgentState;
       providers: Provider[] | null;
       login: LoginState | null;
+      session: SessionState | null;
     }
   | { type: "agent"; agent: AgentState }
+  /** `null` while the agent is not running. */
+  | { type: "session"; session: SessionState | null }
   /** `providers` is `null` until the agent has listed them. */
   | { type: "providers"; providers: Provider[] | null; login: LoginState | null }
   /** How a saved key or a disconnect went; `error` is shown on the row. */
@@ -95,6 +135,7 @@ export type WebviewMessage =
   | { type: "loginClose" }
   /** Open the running sign-in's page in the browser. */
   | { type: "loginOpen" }
+  | ({ type: "setConfig" } & ConfigChange)
   | { type: "copy"; text: string };
 
 export type Screen = "splash" | "status" | "providers" | "login";

@@ -477,10 +477,11 @@ mod tests {
                 name: "Model".to_string(),
                 kind: "select",
                 category: "model".to_string(),
-                current_value: r#"["faux","faux-1"]"#.to_string(),
+                current_value: r#"["faux","faux-1"]"#.to_string().into(),
                 options: vec![super::super::config_options::SessionConfigSelectOption {
                     value: r#"["faux","faux-1"]"#.to_string(),
                     name: "Faux Model (faux)".to_string(),
+                    meta: None,
                 }],
             }],
         };

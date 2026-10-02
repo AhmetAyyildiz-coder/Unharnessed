@@ -2,7 +2,9 @@
 //!
 //! One connection hosts at most one session. `session/new` admits the
 //! session (reporting a cwd mismatch instead of adopting one) and
-//! advertises the model and reasoning-effort pickers, `session/prompt`
+//! advertises the model, reasoning-effort and fast-mode pickers, which
+//! follow the provider logins and the model catalog refreshes,
+//! `session/prompt`
 //! drives one engine turn with follow-up queueing semantics,
 //! `session/set_config_option` applies a picker selection, and
 //! `session/cancel` / `session/close` stop work. The
@@ -106,6 +108,10 @@ struct AcpModeState {
     config_queue: Arc<tokio::sync::Mutex<()>>,
     agent_dir: Arc<PathBuf>,
     provider_target: ProviderTargetSlot,
+    /// The service-tier preference (the fast-mode toggle, persisted as
+    /// the settings default): the live target carries it clamped to the
+    /// current model.
+    service_tier: Arc<Mutex<uh_types::ai::ServiceTier>>,
     autonomous_config: Option<uh_core::autonomous::AgentAutonomousConfig>,
     /// Session-scoped MCP servers live on the connection, exactly like the
     /// TS process-lifetime manager: one owner id fences them and
@@ -182,6 +188,9 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
     });
 
     let state = Arc::new(Mutex::new(ConnectionState::default()));
+    let service_tier =
+        uh_core::settings::SettingsManager::create(&options.actual_cwd, &options.agent_dir)
+            .get_default_service_tier();
     let mode = AcpModeState {
         engine: options.engine.clone(),
         actual_cwd: Arc::new(options.actual_cwd.clone()),
@@ -191,6 +200,7 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
         config_queue: Arc::new(tokio::sync::Mutex::new(())),
         agent_dir: Arc::new(options.agent_dir.clone()),
         provider_target: options.provider_target.clone(),
+        service_tier: Arc::new(Mutex::new(service_tier)),
         autonomous_config: options.autonomous_config.clone(),
         // One MCP store with the engine's prompt gating (the core engine
         // builds it at session assembly): admitted servers reach the model
@@ -204,6 +214,11 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
     // a quota park resets while no prompt runs.
     let wake_watcher = tokio::spawn(watch_wakes(state.clone(), mode.clone(), tx.clone()));
     let providers = providers::Providers::new(options.provider_auth.clone());
+    let models_watcher = tokio::spawn(watch_models(
+        state.clone(),
+        mode.clone(),
+        providers.auth_changes(),
+    ));
     let mut stdin = BufReader::new(tokio::io::stdin());
     let mut line = String::new();
     loop {
@@ -237,6 +252,7 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
     // the producer, and let the writer drain.
     providers.cancel_login();
     wake_watcher.abort();
+    models_watcher.abort();
     teardown(&state, &mode).await;
     // The final namespace snapshot (TS session dispose): the next process
     // that resumes this session revives it.
@@ -262,6 +278,42 @@ async fn watch_wakes(
             mode.engine.wakes().requeue(wake);
             mode.engine.wakes().changed().await;
         }
+    }
+}
+
+/// Keep the pickers in step with what the agent can use. The model
+/// catalog refreshes at startup and after each provider login or logout
+/// (forced, like the TS registry's auth-change refresh), then hourly; the
+/// models are discovered again after each refresh, and at once after a
+/// login or logout, before its refresh lands.
+async fn watch_models(
+    state: Arc<Mutex<ConnectionState>>,
+    mode: AcpModeState,
+    auth_changes: Arc<tokio::sync::Notify>,
+) {
+    let catalog = uh_core::models::catalog_for(Some(&mode.agent_dir.join("models.json")));
+    let mut hourly = tokio::time::interval(std::time::Duration::from_hours(1));
+    // The interval's first tick is immediate: the startup refresh.
+    let mut startup = true;
+    loop {
+        let forced = tokio::select! {
+            _ = hourly.tick() => std::mem::take(&mut startup),
+            () = auth_changes.notified() => {
+                in_process_config::refresh_after_auth_change(&state, &mode).await;
+                true
+            }
+        };
+        let credentials = tokio::task::spawn_blocking({
+            let agent_dir = Arc::clone(&mode.agent_dir);
+            move || uh_core::models::prime_credentials_for_dir(&agent_dir)
+        })
+        .await
+        .ok()
+        .flatten();
+        catalog
+            .refresh_with_credentials(forced, credentials.as_ref())
+            .await;
+        in_process_config::refresh_after_auth_change(&state, &mode).await;
     }
 }
 

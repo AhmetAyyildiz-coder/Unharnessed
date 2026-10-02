@@ -328,6 +328,7 @@ mod tests {
                 config_queue: std::sync::Arc::new(tokio::sync::Mutex::new(())),
                 agent_dir: std::sync::Arc::new(agent_dir),
                 provider_target: std::sync::Arc::new(std::sync::RwLock::new(None)),
+                service_tier: std::sync::Arc::new(Mutex::new(uh_types::ai::ServiceTier::Default)),
                 autonomous_config: None,
                 mcp: engine.mcp_manager.clone(),
                 mcp_owner_id: std::sync::Arc::new("acp-goal-owner".to_string()),

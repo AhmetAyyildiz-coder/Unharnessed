@@ -58,6 +58,9 @@ const LOGIN_UPDATE: &str = "_unharnessed/providers/login_update";
 pub(super) struct Providers {
     auth: Arc<dyn ProviderAuthCommands>,
     logins: Arc<Mutex<Logins>>,
+    /// Signalled when a login, an API key or a logout changed the stored
+    /// credentials: the model pickers follow.
+    auth_changes: Arc<tokio::sync::Notify>,
 }
 
 #[derive(Default)]
@@ -133,7 +136,13 @@ impl Providers {
         Providers {
             auth,
             logins: Arc::new(Mutex::new(Logins::default())),
+            auth_changes: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    /// Signalled after each login, API key or logout that went through.
+    pub(super) fn auth_changes(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.auth_changes)
     }
 
     /// Handle one `_unharnessed/providers/*` request. `false`: not one of
@@ -405,6 +414,9 @@ impl Providers {
     }
 
     async fn settled(&self, outcome: ProviderAuthOutcome) -> Value {
+        if matches!(outcome, ProviderAuthOutcome::Status(_)) {
+            self.auth_changes.notify_one();
+        }
         let (outcome, message) = match outcome {
             ProviderAuthOutcome::Status(message) => ("done", Some(message)),
             ProviderAuthOutcome::Error(message) => ("failed", Some(message)),

@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import type { Agent } from "./agent";
 import type { HostMessage, WebviewMessage } from "./protocol";
 import type { Providers } from "./providers";
+import type { Session } from "./session";
 
 /** The panel in the right side bar: hosts the React app from dist/webview. */
 export class ChatViewProvider implements vscode.WebviewViewProvider {
@@ -15,12 +16,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly extensionUri: vscode.Uri,
     private readonly agent: Agent,
     private readonly providers: Providers,
+    private readonly session: Session,
     private readonly log: vscode.LogOutputChannel,
   ) {
     agent.onChange((state) => this.post({ type: "agent", agent: state }));
     providers.onChange(() =>
       this.post({ type: "providers", providers: providers.providers, login: providers.signIn }),
     );
+    session.onChange(() => this.post({ type: "session", session: session.current }));
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -44,6 +47,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           agent: this.agent.current,
           providers: this.providers.providers,
           login: this.providers.signIn,
+          session: this.session.current,
         });
         this.splashPlayed = true;
         break;
@@ -83,6 +87,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "loginClose":
         this.providers.closeLogin();
         break;
+      case "setConfig": {
+        const { type: _, ...change } = message;
+        void this.session.setOption(change);
+        break;
+      }
       case "copy":
         void vscode.env.clipboard.writeText(message.text);
         break;

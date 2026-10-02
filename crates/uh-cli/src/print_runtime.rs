@@ -220,10 +220,12 @@ async fn build_headless_engine_with(
     let mut registry =
         uh_core::models::ModelRegistry::create(auth, config.agent_dir.join("models.json"));
     registry.load_private_authorization_from_cache();
+    let settings = uh_core::settings::SettingsManager::create(&config.cwd, &config.agent_dir);
     let model = select_model(
         &mut registry,
         config.provider.as_deref(),
         config.model.as_deref(),
+        &settings,
     )?;
 
     // Resolve request auth once (single-shot mode): the merged headers
@@ -235,11 +237,17 @@ async fn build_headless_engine_with(
     // The stream reads the provider target per call (the switchable seam
     // the ACP pickers swap on a model switch; image-model routing swaps it
     // per dispatched batch).
+    // The settings' service tier (the fast mode) rides the target where
+    // the model serves it (TS `clampServiceTier`); the default tier sends
+    // nothing.
+    let service_tier =
+        uh_types::ai::clamp_service_tier(Some(&model), Some(settings.get_default_service_tier()))
+            .filter(|tier| *tier != uh_types::ai::ServiceTier::Default);
     let provider_target: ProviderTargetSlot =
         std::sync::Arc::new(std::sync::RwLock::new(Some(ProviderTarget {
             api_key: resolved.api_key.clone(),
             model: model.clone(),
-            service_tier: None,
+            service_tier,
             headers: resolved.headers.clone(),
         })));
     // The armed image route's target, shared with the stream seam: while
@@ -633,14 +641,32 @@ fn select_model(
     registry: &mut uh_core::models::ModelRegistry,
     provider: Option<&str>,
     model: Option<&str>,
+    settings: &uh_core::settings::SettingsManager,
 ) -> Result<Model, String> {
     let available: Vec<Model> = registry.get_available().into_iter().cloned().collect();
     let Some(model_name) = model else {
-        // No model selection: prefer the registry's featured default.
-        let all: Vec<Model> = registry.get_all().to_vec();
+        // No model selection (TS `findInitialModel`): the saved default
+        // (the last picker choice) while its provider has credentials,
+        // then the registry's featured default, then the first model with
+        // credentials.
+        let saved = settings
+            .get_default_provider()
+            .zip(settings.get_default_model())
+            .and_then(|(provider, id)| {
+                available
+                    .iter()
+                    .find(|model| model.provider == provider && model.id == id)
+            });
+        if let Some(saved) = saved {
+            return Ok(saved.clone());
+        }
         if let Some(default) = uh_core::models::find_preferred_default_model(&available) {
             return Ok(default.clone());
         }
+        if let Some(first) = available.first() {
+            return Ok(first.clone());
+        }
+        let all: Vec<Model> = registry.get_all().to_vec();
         return all.first().cloned().ok_or_else(|| {
             "No models available. Check your installation or add models to models.json.".to_string()
         });

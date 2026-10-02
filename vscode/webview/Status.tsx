@@ -1,4 +1,5 @@
-import type { AgentState } from "../src/protocol";
+import type { AgentState, Provider, SessionState } from "../src/protocol";
+import { Composer } from "./Composer";
 import { IconCross, IconPlug, IconRestart } from "./icons";
 import { post } from "./vscode";
 import { Wordmark } from "./Wordmark";
@@ -13,8 +14,18 @@ const LABELS: Record<AgentState["kind"], string> = {
 
 const restart = () => post({ type: "restartAgent" });
 
-/** Home, where the chat will be: the agent's state for now. */
-export function Status({ agent, onProviders }: { agent: AgentState; onProviders: () => void }) {
+/** Home, where the chat will be: the agent's state, and the message box with the model pickers. */
+export function Status({
+  agent,
+  session,
+  providers,
+  onProviders,
+}: {
+  agent: AgentState;
+  session: SessionState | null;
+  providers: Provider[];
+  onProviders: () => void;
+}) {
   return (
     <div className="screen">
       <header className="topbar">
@@ -23,8 +34,9 @@ export function Status({ agent, onProviders }: { agent: AgentState; onProviders:
           <button
             className="icon-button"
             type="button"
-            title="Providers"
             aria-label="Providers"
+            data-tip="Providers"
+            data-tip-side="below"
             disabled={agent.kind !== "ready"}
             onClick={onProviders}
           >
@@ -33,8 +45,10 @@ export function Status({ agent, onProviders }: { agent: AgentState; onProviders:
           <button
             className="icon-button"
             type="button"
-            title="Restart agent"
             aria-label="Restart agent"
+            data-tip="Restart agent"
+            data-tip-side="below"
+            data-tip-align="end"
             disabled={agent.kind === "starting"}
             onClick={restart}
           >
@@ -49,6 +63,7 @@ export function Status({ agent, onProviders }: { agent: AgentState; onProviders:
         </div>
         {agent.kind === "failed" && <Failure agent={agent} />}
       </main>
+      {agent.kind === "ready" && <Composer session={session} providers={providers} />}
     </div>
   );
 }

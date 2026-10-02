@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { AgentState, HostMessage, LoginState, Provider, Screen } from "../src/protocol";
+import type { AgentState, HostMessage, LoginState, Provider, Screen, SessionState } from "../src/protocol";
 import { Providers } from "./Providers";
 import { SignIn } from "./SignIn";
 import { Splash } from "./Splash";
@@ -14,6 +14,7 @@ export function App() {
   const [agent, setAgent] = useState<AgentState | null>(null);
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [login, setLogin] = useState<LoginState | null>(null);
+  const [session, setSession] = useState<SessionState | null>(null);
   const [result, setResult] = useState<ProviderResult | null>(null);
   const [managing, setManaging] = useState(false);
   const splashDone = useCallback(() => setPhase("main"), []);
@@ -25,10 +26,14 @@ export function App() {
           setAgent(message.agent);
           setProviders(message.providers);
           setLogin(message.login);
+          setSession(message.session);
           setPhase(message.splash ? "splash" : "main");
           break;
         case "agent":
           setAgent(message.agent);
+          break;
+        case "session":
+          setSession(message.session);
           break;
         case "providers":
           setProviders(message.providers);
@@ -72,6 +77,8 @@ export function App() {
         />
       );
     default:
-      return <Status agent={agent} onProviders={() => setManaging(true)} />;
+      return (
+        <Status agent={agent} session={session} providers={providers ?? []} onProviders={() => setManaging(true)} />
+      );
   }
 }

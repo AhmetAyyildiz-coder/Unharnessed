@@ -9,9 +9,14 @@ its name so the ACP code stays where it was.
 
 - `acp` — the Agent Client Protocol stdio mode (`unharnessed --mode acp`): a thin
   JSON-RPC transport over the uh-core session engine. One connection hosts at
-  most one session. `session/new` admits it and advertises the model and
-  reasoning-effort pickers; `session/prompt` drives one engine turn with
-  follow-up queueing; `session/set_config_option` applies a picker selection;
+  most one session. `session/new` admits it and advertises the model,
+  reasoning-effort and fast-mode pickers (each model value carries its
+  context window, input kinds and price in `_meta`); `session/prompt` drives
+  one engine turn with follow-up queueing; `session/set_config_option`
+  applies a picker selection, saved as the settings default the next process
+  starts on. The pickers follow the provider logins and the model catalog,
+  refreshed at startup, hourly and after each login or logout (a model left
+  without credentials switches to the preferred available one);
   `session/cancel` and `session/close` stop work (close flushes the kernel
   snapshot). Every frame leaves through one ordered write queue, so responses
   and `session/update` notifications interleave in publication order, with

@@ -1,8 +1,9 @@
 //! The in-process ACP picker machinery (the TS #2455 port's engine side):
 //! the session's picker state and serialized config queue, the
 //! `session/set_config_option` handler over the session engine, the
-//! model/thinking-level application semantics, and the agent-run refresh
-//! that republishes `config_option_update` on change.
+//! model/thinking-level/fast-mode application semantics, the agent-run
+//! refresh that republishes `config_option_update` on change, and the
+//! re-discovery after a provider login or logout (or a catalog refresh).
 //!
 //! The wire-shape builders and the compare-gated publisher live in
 //! [`super::config_options`]; this module owns the in-process state and
@@ -14,8 +15,9 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
 use super::config_options::{
-    acp_model_registry, config_options_value, discover_available_models, model_value,
-    publish_config_options, session_config_options, PickerModel, SessionConfigOption,
+    acp_model_registry, config_options_value, discover_available_models, fast_mode_option,
+    model_value, publish_config_options, session_config_options, PickerModel, SessionConfigOption,
+    FAST_MODE,
 };
 use super::jsonrpc;
 use super::producer;
@@ -54,12 +56,16 @@ pub(super) async fn admit_session_config(mode: &AcpModeState) -> Arc<InProcessCo
                 .wire_name()
                 .to_string();
         let levels = supported_levels(current.as_ref());
-        session_config_options(
+        let mut options = session_config_options(
             current.as_ref().map(PickerModel::from_model),
             &thinking_level,
             &levels,
             &models,
-        )
+        );
+        if let Some(fast) = fast_mode(current.as_ref(), mode).await {
+            options.push(fast);
+        }
+        options
     };
     Arc::new(InProcessConfig {
         published: tokio::sync::Mutex::new(published),
@@ -112,14 +118,7 @@ pub(super) async fn handle_set_config_option(
                 .is_some_and(|current| current.session.id == session.id)
     };
     let outcome = if live {
-        apply_in_process_config(
-            &session,
-            &config,
-            &mode,
-            &params.config_id,
-            params.value.as_str(),
-        )
-        .await
+        apply_in_process_config(&session, &config, &mode, &params.config_id, &params.value).await
     } else {
         Err(ConfigOptionError::invalid_params(
             "ACP session is closed or closing",
@@ -169,9 +168,16 @@ async fn apply_in_process_config(
     config: &Arc<InProcessConfig>,
     mode: &AcpModeState,
     config_id: &str,
-    value: Option<&str>,
+    value: &Value,
 ) -> Result<Vec<SessionConfigOption>, ConfigOptionError> {
-    match (config_id, value) {
+    if config_id == FAST_MODE {
+        let enabled = value
+            .as_bool()
+            .ok_or_else(|| ConfigOptionError::invalid_params("Fast mode takes a boolean value"))?;
+        apply_fast_mode(mode, enabled).await?;
+        return Ok(refresh_in_process_config(session, config, mode).await);
+    }
+    match (config_id, value.as_str()) {
         ("model", Some(value)) => {
             // The no-op check reads the agent's live model (TS
             // `getState().model`): the current model re-selected refreshes
@@ -289,8 +295,11 @@ async fn apply_in_process_model_switch(
         .clone();
     let previous_model = mode.current_model().await;
     let previous_api_key = mode.current_api_key().await;
+    // The service-tier preference survives the switch, clamped to what the
+    // selected model serves.
+    let service_tier = request_service_tier(&model, *mode.service_tier.lock().await);
     // The stream target swaps in place: the next turn streams on the
-    // selected model (the service-tier preference survives the switch).
+    // selected model.
     {
         let mut target = mode.provider_target.write().expect("provider target lock");
         match target.as_mut() {
@@ -298,12 +307,13 @@ async fn apply_in_process_model_switch(
                 target.api_key.clone_from(&resolved.api_key);
                 target.model = model.clone();
                 target.headers.clone_from(&resolved.headers);
+                target.service_tier = service_tier;
             }
             None => {
                 *target = Some(uh_core::session_engine::provider_adapter::ProviderTarget {
                     api_key: resolved.api_key.clone(),
                     model: model.clone(),
-                    service_tier: None,
+                    service_tier,
                     headers: resolved.headers.clone(),
                 });
             }
@@ -569,9 +579,184 @@ async fn refresh_in_process_config(
         .collect(),
         None => Vec::new(),
     };
-    let options = session_config_options(Some(live_model), &thinking_level, &levels, &models);
+    let mut options = session_config_options(Some(live_model), &thinking_level, &levels, &models);
+    drop(models);
+    if let Some(fast) = fast_mode(full_model.as_ref(), mode).await {
+        options.push(fast);
+    }
     publish_config_options(session.producer(), &config.published, options.clone()).await;
     options
+}
+
+/// The `fast_mode` toggle for `model`, when it has a priority tier: on
+/// while the preference is the priority tier.
+async fn fast_mode(
+    model: Option<&uh_types::ai::Model>,
+    mode: &AcpModeState,
+) -> Option<SessionConfigOption> {
+    model.filter(|model| uh_types::ai::supports_fast_mode(model))?;
+    let preference = *mode.service_tier.lock().await;
+    Some(fast_mode_option(
+        preference == uh_types::ai::ServiceTier::Priority,
+    ))
+}
+
+/// The tier a request on `model` carries for the `preference` (TS
+/// `clampServiceTier`): nothing for the default tier, so a request
+/// without a preference stays as it was.
+pub(crate) fn request_service_tier(
+    model: &uh_types::ai::Model,
+    preference: uh_types::ai::ServiceTier,
+) -> Option<uh_types::ai::ServiceTier> {
+    uh_types::ai::clamp_service_tier(Some(model), Some(preference))
+        .filter(|tier| *tier != uh_types::ai::ServiceTier::Default)
+}
+
+/// Apply a fast-mode toggle (TS `/fast`, `setServiceTier`): the priority
+/// tier when on, the default one when off. The preference reaches the
+/// live target, the durable `service_tier_change` row and the settings
+/// default (a fresh session starts on it); a model switch keeps it,
+/// clamped to what the selected model serves.
+async fn apply_fast_mode(mode: &AcpModeState, enabled: bool) -> Result<(), ConfigOptionError> {
+    use uh_types::ai::ServiceTier;
+    let model = mode
+        .current_model()
+        .await
+        .filter(uh_types::ai::supports_fast_mode)
+        .ok_or_else(|| {
+            ConfigOptionError::invalid_params("Fast mode is not available for this model")
+        })?;
+    let tier = if enabled {
+        ServiceTier::Priority
+    } else {
+        ServiceTier::Default
+    };
+    let previous = std::mem::replace(&mut *mode.service_tier.lock().await, tier);
+    let set_target = |tier| {
+        if let Some(target) = mode
+            .provider_target
+            .write()
+            .expect("provider target lock")
+            .as_mut()
+        {
+            target.service_tier = request_service_tier(&model, tier);
+        }
+    };
+    set_target(tier);
+    // A failed durable row rolls the live preference back: the client
+    // sees the refusal and the next turn keeps the tier it still reports.
+    if let Err(error) = mode.engine.session.set_service_tier(Some(tier)).await {
+        *mode.service_tier.lock().await = previous;
+        set_target(previous);
+        return Err(ConfigOptionError::Internal(format!(
+            "fast mode switch failed: {error:#}"
+        )));
+    }
+    // The file-backed settings write runs off the Tokio worker, like the
+    // other persists under the config queue.
+    let cwd = Arc::clone(&mode.actual_cwd);
+    let agent_dir = Arc::clone(&mode.agent_dir);
+    tokio::task::spawn_blocking(move || {
+        let mut settings =
+            uh_core::settings::SettingsManager::create(cwd.as_path(), agent_dir.as_path());
+        settings.set_default_service_tier(tier)
+    })
+    .await
+    .map_err(|error| {
+        ConfigOptionError::Internal(format!("the settings persist task failed: {error}"))
+    })?
+    .map_err(|error| {
+        ConfigOptionError::Internal(format!("fast mode default persist failed: {error:#}"))
+    })
+}
+
+/// Re-discover the models after a provider login or logout, or a catalog
+/// refresh, and republish the pickers when they changed. A current model
+/// still available gets its credentials resolved again (a new key or token
+/// reaches the live target); one no longer available (an agent started
+/// before any login runs on the catalog's first model, a logout) switches
+/// to the preferred available model.
+pub(super) async fn refresh_after_auth_change(
+    state: &Arc<Mutex<ConnectionState>>,
+    mode: &AcpModeState,
+) {
+    let entry = {
+        let state = state.lock().await;
+        state
+            .session
+            .as_ref()
+            .map(|entry| (Arc::clone(&entry.session), Arc::clone(&entry.config)))
+    };
+    let Some((session, config)) = entry else {
+        return;
+    };
+    let _guard = mode.config_queue.lock().await;
+    let live = {
+        let state = state.lock().await;
+        !state.session_close_in_flight
+            && state
+                .session
+                .as_ref()
+                .is_some_and(|current| current.session.id == session.id)
+    };
+    if !live {
+        return;
+    }
+    // A failed discovery keeps the last list.
+    let discovered = tokio::task::spawn_blocking({
+        let agent_dir = Arc::clone(&mode.agent_dir);
+        move || discover_available_models(&agent_dir)
+    })
+    .await
+    .ok()
+    .and_then(std::result::Result::ok);
+    let Some(models) = discovered else {
+        return;
+    };
+    (*config.models.lock().await).clone_from(&models);
+    if let Some(current) = mode.current_model().await {
+        let available = models
+            .iter()
+            .any(|model| model.provider == current.provider && model.id == current.id);
+        if available {
+            refresh_credentials(mode, &current).await;
+        } else if let Some(next) = uh_core::models::find_preferred_default_model(&models)
+            .or(models.first())
+            .cloned()
+        {
+            if let Err(error) = apply_in_process_model_switch(&session, mode, next).await {
+                eprintln!("uh-daemon: switching off an unavailable model failed: {error:#}");
+            }
+        }
+    }
+    let _ = refresh_in_process_config(&session, &config, mode).await;
+}
+
+/// Resolve the current model's credentials again (a replaced key, a new
+/// sign-in), so the next turn sends them.
+async fn refresh_credentials(mode: &AcpModeState, current: &uh_types::ai::Model) {
+    let Ok(mut registry) = tokio::task::spawn_blocking({
+        let agent_dir = Arc::clone(&mode.agent_dir);
+        move || acp_model_registry(&agent_dir)
+    })
+    .await
+    else {
+        return;
+    };
+    let resolved = registry.get_api_key_and_headers(current, current.headers.as_ref());
+    if !resolved.ok {
+        return;
+    }
+    {
+        let mut target = mode.provider_target.write().expect("provider target lock");
+        if let Some(target) = target.as_mut().filter(|target| {
+            target.model.provider == current.provider && target.model.id == current.id
+        }) {
+            target.api_key.clone_from(&resolved.api_key);
+            target.headers.clone_from(&resolved.headers);
+        }
+    }
+    *mode.api_key.lock().await = resolved.api_key;
 }
 
 /// Wire the picker refresh to the end of every agent run (the TS

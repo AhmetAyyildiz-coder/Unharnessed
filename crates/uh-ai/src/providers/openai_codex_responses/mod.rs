@@ -798,9 +798,13 @@ pub fn stream_simple_openai_codex_responses(
         .map(|reasoning| clamp_thinking_level(model, reasoning))
         .filter(|level| *level != ModelThinkingLevel::Off);
 
+    // The request's tier (the fast mode) rides the base options, like the
+    // TS spread of the base into the provider options.
+    let service_tier = base.service_tier;
     let stream_options = OpenAICodexResponsesOptions {
         base,
         reasoning_effort,
+        service_tier,
         ..Default::default()
     };
     stream_openai_codex_responses(model, context, Some(&stream_options))

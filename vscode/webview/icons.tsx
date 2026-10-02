@@ -1,4 +1,6 @@
-// Hand-drawn icons (DESIGN.md): 24 grid, stroke 1.25, round caps, no fill.
+// Our icons, drawn by hand, never taken from an icon pack: 24 grid, stroke
+// 1.25, round caps and joins, no fill, `currentColor`, 16 px, as few nodes as
+// possible. No AI clichés: no sparkles, magic wands, robot heads or brains.
 import type { SVGProps } from "react";
 
 type IconProps = SVGProps<SVGSVGElement>;
@@ -110,6 +112,52 @@ export function IconPlug(props: IconProps) {
       <path d="M9.5 4.5v4M14.5 4.5v4" />
       <path d="M7 8.5h10V11a5 5 0 0 1-10 0z" />
       <path d="M12 16v3.5" />
+    </Icon>
+  );
+}
+
+export function IconChevronDown(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M7.5 10l4.5 4.5 4.5-4.5" />
+    </Icon>
+  );
+}
+
+/** An arrow pointing up, for send. */
+export function IconSend(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 18.5V6M6.5 11.5L12 6l5.5 5.5" />
+    </Icon>
+  );
+}
+
+/** A capital T: the model reads text. */
+export function IconText(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6.5 6.5h11M12 6.5v11" />
+    </Icon>
+  );
+}
+
+/** A frame, a hill and a sun: the model reads images. */
+export function IconImage(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="4.5" y="5.5" width="15" height="13" rx="1.5" />
+      <path d="M4.5 16l4.5-4.5 4 4 2-2 4.5 4.5" />
+      <circle cx="15.25" cy="9.75" r="1.25" />
+    </Icon>
+  );
+}
+
+/** A lightning bolt: the fast mode. */
+export function IconBolt(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M13.5 4L7 13h5l-1.5 7L17 11h-5z" />
     </Icon>
   );
 }

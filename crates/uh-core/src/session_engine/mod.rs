@@ -353,6 +353,23 @@ impl AgentSession {
         session.append_thinking_level_change(&format!("{level:?}").to_lowercase())?;
         Ok(())
     }
+
+    /// Service tier bookkeeping (mirrors appendServiceTierChange). The
+    /// tier itself rides the host's provider target, which the stream
+    /// reads per call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the service-tier change row cannot be
+    /// persisted.
+    pub async fn set_service_tier(
+        &self,
+        service_tier: Option<uh_types::ai::ServiceTier>,
+    ) -> anyhow::Result<()> {
+        let mut session = self.session.lock().await;
+        session.append_service_tier_change(service_tier)?;
+        Ok(())
+    }
 }
 
 async fn persist_event(

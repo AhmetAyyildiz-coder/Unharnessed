@@ -159,6 +159,26 @@ pub fn unharnessed_meta(payload: &UnharnessedSessionMeta) -> Value {
     json!({ UNHARNESSED_META_NAMESPACE: payload })
 }
 
+/// What a `model` picker value is, beyond its label: the client shows the
+/// context window, the input kinds and the price beside the name.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnharnessedModelMeta {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    pub context_window: u64,
+    /// `text`, `image`.
+    pub input: Vec<uh_types::ai::ModelInput>,
+    /// Dollars per million tokens.
+    pub cost: uh_types::ai::ModelCost,
+}
+
+/// The `_meta` of one `model` picker value (`{ unharnessed: { model } }`).
+pub fn model_meta(model: &UnharnessedModelMeta) -> Value {
+    json!({ UNHARNESSED_META_NAMESPACE: { "model": model } })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
