@@ -1,7 +1,7 @@
 // Launches a real VS Code with the extension once per scenario, each in a
 // throwaway profile, and runs suite.cjs. The agent's data (agent dir, kernel
 // venv, cwd) lives in that profile too; a scenario's `auth` is written to the
-// agent dir's auth.json first, `catalog` seeds the agent's model catalog cache
+// agent dir's auth.json first, `settings` to its settings.json, `catalog` seeds the agent's model catalog cache
 // with the uh-models test fixture, and `env` adds to the agent's environment
 // (`UNHARNESSED_OFFLINE` keeps the catalog off the network). Provider keys and tokens from the caller's
 // environment are dropped. After VS Code exits, checks that no agent process
@@ -63,6 +63,26 @@ const scenarios = [
     ],
   },
   {
+    name: "settings",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    settings: {
+      compaction: { reserveTokens: 32000 },
+      theme: "dark",
+      mcpServers: { docs: { type: "stdio", command: "echo" } },
+    },
+    expect: [
+      '"method":"_unharnessed/settings/get"',
+      // The removed `theme` key is not a setting: `compaction` and `mcpServers` are.
+      "settings: read, 2 set",
+      // A server reached by a command needs no sign-in; the built-in services wait for one.
+      "mcp: docs (connected), linear (not_connected), notion (not_connected)",
+      // The built-in skills at least (the caller's ~/.agents/skills may add some).
+      "skills: read, ",
+      "panel: status",
+    ],
+  },
+  {
     name: "binary missing",
     binary: "/nonexistent/unharnessed",
     expect: ["webview ready", "agent failed: spawn /nonexistent/unharnessed ENOENT", "panel: status"],
@@ -86,6 +106,7 @@ for (const scenario of scenarios) {
   mkdirSync(workspace);
   mkdirSync(agentDir);
   if (scenario.auth) writeFileSync(join(agentDir, "auth.json"), JSON.stringify(scenario.auth));
+  if (scenario.settings) writeFileSync(join(agentDir, "settings.json"), JSON.stringify(scenario.settings));
   if (scenario.catalog) seedCatalog(agentDir);
   try {
     await runTests({

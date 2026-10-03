@@ -2,7 +2,7 @@
 //! `/mcp login <name>` and `/mcp logout <name>`: resolve the server through
 //! the settings + builtin catalog, run the uh-core OAuth login against
 //! the inline auth panel (the authorization URL block and the paste
-//! fallbacks render in the TUI; the browser launch rides the request),
+//! fallbacks reach the ACP client, which opens the page),
 //! and persist the endpoint-bound credential in the shared auth store.
 //! The TS interactive client runs the same
 //! flow in its own process (auth-flows.ts `runMcpLogin`) and reloads the
@@ -16,59 +16,15 @@ use anyhow::{anyhow, Context, Result};
 use crate::auth_panel::{PastePromptTone, PasteStyle};
 use crate::client_auth::{AuthFuture, ClientAuthCommands};
 use uh_core::auth::AuthStorage;
-use uh_core::mcp::{
-    McpLoginUi, McpManager, McpManagerOptions, McpServerConfig, OAuthHttp, ReqwestOAuthHttp,
-};
+use uh_core::mcp::{McpLoginUi, McpManager, OAuthHttp, ReqwestOAuthHttp};
 
 /// The CLI's live MCP manager: the shared auth store, settings-declared
 /// user servers (`mcpServers`), and local service-catalog sources
-/// (`mcpCatalogSources`) all re-read per resolve — the same closures TS
-/// `createAgentSessionServices` wires into every CLI session. No
-/// interactive login: hosts with a login UI call `set_begin_login`
-/// before the session registers host handlers; headless surfaces keep
-/// the host request absent (TS registers `mcp.begin_login` only when a
-/// login is wired).
+/// (`mcpCatalogSources`) all re-read per resolve. No interactive login:
+/// hosts with a login UI call `set_begin_login` before the session
+/// registers host handlers; headless surfaces keep the host request absent.
 pub(crate) fn cli_mcp_manager(cwd: &std::path::Path, agent_dir: &std::path::Path) -> McpManager {
-    let user_cwd = cwd.to_path_buf();
-    let user_agent_dir = agent_dir.to_path_buf();
-    let catalog_cwd = cwd.to_path_buf();
-    let catalog_agent_dir = agent_dir.to_path_buf();
-    McpManager::new(McpManagerOptions {
-        auth_storage: AuthStorage::create_with_oauth(
-            agent_dir,
-            std::sync::Arc::new(uh_core::mcp::McpOAuth::new()),
-        ),
-        get_user_servers: Box::new(move || {
-            let settings = uh_core::settings::SettingsManager::create(&user_cwd, &user_agent_dir);
-            Some(
-                settings
-                    .settings()
-                    .mcp_servers
-                    .clone()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|(server, config)| {
-                        serde_json::from_value::<McpServerConfig>(config)
-                            .ok()
-                            .map(|parsed| (server, parsed))
-                    })
-                    .collect(),
-            )
-        }),
-        begin_login: None,
-        agent_dir: Some(agent_dir.to_path_buf()),
-        get_catalog_sources: Some(Box::new(move || {
-            let settings =
-                uh_core::settings::SettingsManager::create(&catalog_cwd, &catalog_agent_dir);
-            settings
-                .settings()
-                .mcp_catalog_sources
-                .clone()
-                .unwrap_or_default()
-        })),
-        remote_source: None,
-        probe_override: None,
-    })
+    McpManager::from_settings(cwd, agent_dir)
 }
 
 /// `/mcp login` / `/mcp logout` against one daemon's shared directories.
@@ -206,8 +162,7 @@ impl ClientAuthCommands for TerminalMcpAuth {
 }
 
 /// The login's inline-panel surface (TS the OAuth login dialog renders in
-/// the TUI): progress lines, the authorization URL block (the browser
-/// launch rides the request; the panel only renders), and the paste
+/// the TUI): progress lines, the authorization URL block, and the paste
 /// fallbacks drive the auth panel through the request channel; the flow
 /// never touches the terminal.
 struct PanelMcpLoginUi {
@@ -221,9 +176,10 @@ impl McpLoginUi for PanelMcpLoginUi {
         self.panel.progress_line(message);
     }
 
+    /// The page opens when the client asks (`login_open`), like the
+    /// provider sign-ins: a client on another machine opens it itself.
     fn on_auth(&self, url: &str, instructions: &str) {
         self.panel.auth_url(url, Some(instructions));
-        uh_core::platform::browser::open_in_browser(url);
     }
 
     fn on_prompt(

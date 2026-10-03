@@ -119,6 +119,74 @@ impl ResourceLoaderOptions {
     }
 }
 
+/// One skill the agent finds, on or off.
+#[derive(Debug, Clone)]
+pub struct ListedSkill {
+    pub skill: Skill,
+    /// The agent loads it when it starts: no `skills` setting entry turns
+    /// it off.
+    pub enabled: bool,
+}
+
+/// Every skill the agent finds, the ones the `skills` setting turns off
+/// included, with the loading problems (the settings screen's list).
+#[derive(Debug, Default)]
+pub struct SkillListing {
+    pub skills: Vec<ListedSkill>,
+    pub diagnostics: Vec<ResourceDiagnostic>,
+}
+
+/// List the skills: the enabled ones load exactly as [`load_resources`]
+/// loads them (name collisions and diagnostics included); the others are
+/// read for their name and description.
+#[must_use]
+pub fn list_skills(mut options: ResourceLoaderOptions) -> SkillListing {
+    let settings = options
+        .settings
+        .take()
+        .unwrap_or_else(|| SettingsManager::create(&options.cwd, &options.agent_dir));
+    let resolution = resolution::resolve_session_resources(&options, settings);
+    let load = |skill_paths: Vec<String>| {
+        load_skills(&LoadSkillsOptions {
+            cwd: options.cwd.clone(),
+            agent_dir: options.agent_dir.clone(),
+            skill_paths,
+            include_defaults: false,
+        })
+    };
+    let on = load(resolution.skill_paths.clone());
+    let off = load(
+        resolution
+            .resolved
+            .skills
+            .iter()
+            .filter(|resource| !resource.enabled)
+            .map(|resource| resolution::map_skill_path(resource).display().to_string())
+            .collect(),
+    );
+    let listed = |skill: Skill, enabled: bool| {
+        let mut skill = skill;
+        if let Some(source_info) =
+            resolution::find_source_info(&resolution.source_infos, &skill.file_path)
+        {
+            skill.source_info = source_info;
+        }
+        ListedSkill { skill, enabled }
+    };
+    let mut skills: Vec<ListedSkill> = on
+        .skills
+        .into_iter()
+        .map(|skill| listed(skill, true))
+        .collect();
+    skills.extend(off.skills.into_iter().map(|skill| listed(skill, false)));
+    let mut diagnostics = on.diagnostics;
+    diagnostics.extend(resolution.resolved.diagnostics);
+    SkillListing {
+        skills,
+        diagnostics,
+    }
+}
+
 /// Load all session resources: the resolution (settings arrays,
 /// auto-discovery, bundled skills) feeds the enabled skill and prompt paths.
 #[must_use]

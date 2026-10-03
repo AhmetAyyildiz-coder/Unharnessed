@@ -40,26 +40,12 @@ fn merge_values(base: &mut Value, overrides: &Value) {
     }
 }
 
-/// Migrate legacy settings shapes (queueMode, websockets, skills object,
-/// retry.maxDelayMs, bad markdown) - port of
-/// `migrateSettings`.
+/// Migrate legacy settings shapes (queueMode, skills object,
+/// retry.maxDelayMs) - port of `migrateSettings`.
 pub fn migrate(document: &mut serde_json::Map<String, Value>) {
     // queueMode -> steeringMode
     if let Some(queue_mode) = document.remove("queueMode") {
         document.entry("steeringMode").or_insert(queue_mode);
-    }
-    // websockets bool -> transport
-    if !document.contains_key("transport") {
-        if let Some(websockets) = document.remove("websockets") {
-            if websockets.is_boolean() {
-                let transport = if websockets == Value::Bool(true) {
-                    "websocket"
-                } else {
-                    "sse"
-                };
-                document.insert("transport".into(), Value::String(transport.into()));
-            }
-        }
     }
     // skills object -> enableSkillCommands + customDirectories
     if let Some(skills) = document.remove("skills") {
@@ -94,12 +80,6 @@ pub fn migrate(document: &mut serde_json::Map<String, Value>) {
             }
         }
     }
-    // Non-object markdown is dropped.
-    if let Some(markdown) = document.get("markdown") {
-        if !markdown.is_object() {
-            document.remove("markdown");
-        }
-    }
 }
 
 #[cfg(test)]
@@ -110,7 +90,7 @@ mod tests {
     #[test]
     fn merge_prefers_overrides_and_merges_nested() {
         let base: Settings = serde_json::from_value(json!({
-            "theme": "prime", "compaction": { "enabled": true, "reserveTokens": 1024 }
+            "auxiliaryModel": "openai/gpt-5.4", "compaction": { "enabled": true, "reserveTokens": 1024 }
         }))
         .unwrap();
         let overrides: Settings = serde_json::from_value(json!({
@@ -118,7 +98,7 @@ mod tests {
         }))
         .unwrap();
         let merged = deep_merge(&base, &overrides);
-        assert_eq!(merged.theme.as_deref(), Some("prime"));
+        assert_eq!(merged.auxiliary_model.as_deref(), Some("openai/gpt-5.4"));
         assert_eq!(merged.compaction.as_ref().unwrap().enabled, Some(true));
         assert_eq!(
             merged.compaction.as_ref().unwrap().reserve_tokens,
@@ -130,14 +110,12 @@ mod tests {
     fn migration_rewrites_legacy_shapes() {
         let mut doc = json!({
             "queueMode": "all",
-            "websockets": true,
             "skills": { "enableSkillCommands": false, "customDirectories": ["/x"] },
             "retry": { "maxDelayMs": 5 }
         });
         let mut map = doc.as_object_mut().unwrap().clone();
         migrate(&mut map);
         assert_eq!(map.get("steeringMode"), Some(&json!("all")));
-        assert_eq!(map.get("transport"), Some(&json!("websocket")));
         assert_eq!(map.get("skills"), Some(&json!(["/x"])));
         assert_eq!(
             map.get("retry"),

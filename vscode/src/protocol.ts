@@ -103,6 +103,69 @@ export type ConfigChange =
   | { configId: "model" | "thought_level"; value: string }
   | { configId: "fast_mode"; value: boolean };
 
+/** The global settings, as `_unharnessed/settings/get` gives them. Keys are the file's dotted paths. */
+export type SettingsView = {
+  /** Each key's value in `~/.unharnessed/settings.json`; `null` when unset. */
+  values: Record<string, unknown>;
+  /** What the agent uses for an unset key; `null`: nothing. */
+  defaults: Record<string, unknown>;
+  /** Keys read when the agent starts; the others apply on their next use. */
+  restart: string[];
+};
+
+/** One MCP server, as the agent's `_unharnessed/mcp/list` gives it. */
+export type McpServer = {
+  id: string;
+  label: string;
+  /** `catalog`: a service the agent knows (Linear, Notion); `user`: one of the `mcpServers` setting. */
+  source: "catalog" | "user";
+  /** `pending`: signed in, the connection not checked yet. */
+  status: "connected" | "pending" | "not_connected" | "setup_required" | "disabled" | "error";
+  /** An OAuth sign-in can run now. */
+  signIn: boolean;
+  /** A sign-in or token is stored: signing out removes it. */
+  signedIn: boolean;
+  description?: string;
+  /** What it needs, or why it fails. */
+  hint?: string;
+};
+
+/** One skill, as the agent's `_unharnessed/skills/list` gives it. */
+export type Skill = {
+  name: string;
+  description: string;
+  /** Its file. */
+  path: string;
+  /** Its folder, `~` for the home folder. */
+  location: string;
+  /** `user`: the agent's skills folders; `folder`: a folder added here; `project`: the workspace's. */
+  source: "builtin" | "user" | "folder" | "project";
+  /** The agent loads it when it starts. */
+  enabled: boolean;
+  /** The running agent has it. */
+  active: boolean;
+};
+
+export type SkillsView = {
+  skills: Skill[];
+  /** The folders added to the `skills` setting. */
+  folders: string[];
+  /** What keeps a skill from loading. */
+  problems: { message: string; path?: string }[];
+  /** The next start loads other skills than the running agent has. */
+  restart: boolean;
+};
+
+/** The settings screen's state. */
+export type SettingsState = {
+  /** `null` until the agent has answered. */
+  view: SettingsView | null;
+  /** What a restart would apply: the restart keys changed since the agent started, `skills`, `mcp`. */
+  pending: string[];
+  mcp: McpServer[] | null;
+  skills: SkillsView | null;
+};
+
 export type HostMessage =
   /** Answer to `ready`; `splash` is true once per window. */
   | {
@@ -112,6 +175,7 @@ export type HostMessage =
       providers: Provider[] | null;
       login: LoginState | null;
       session: SessionState | null;
+      settings: SettingsState;
     }
   | { type: "agent"; agent: AgentState }
   /** `null` while the agent is not running. */
@@ -119,7 +183,14 @@ export type HostMessage =
   /** `providers` is `null` until the agent has listed them. */
   | { type: "providers"; providers: Provider[] | null; login: LoginState | null }
   /** How a saved key or a disconnect went; `error` is shown on the row. */
-  | { type: "providerResult"; action: "apiKey" | "logout"; providerId: string; error?: string };
+  | { type: "providerResult"; action: "apiKey" | "logout"; providerId: string; error?: string }
+  | { type: "settings"; settings: SettingsState }
+  /**
+   * How a settings write went; `error` is shown under the setting. MCP and
+   * skills actions answer under `mcp:<id>`, `skill:<path>`, `skills/create`
+   * and `skills/folder`.
+   */
+  | { type: "settingResult"; key: string; error?: string };
 
 export type WebviewMessage =
   | { type: "ready" }
@@ -136,6 +207,16 @@ export type WebviewMessage =
   /** Open the running sign-in's page in the browser. */
   | { type: "loginOpen" }
   | ({ type: "setConfig" } & ConfigChange)
+  /** `null` removes the key: its default applies again. */
+  | { type: "setSetting"; key: string; value: unknown }
+  | { type: "mcpSignIn"; id: string; label: string }
+  | { type: "mcpSignOut"; id: string }
+  | { type: "setSkill"; path: string; enabled: boolean }
+  /** The new skill's file opens once it is written. */
+  | { type: "createSkill"; name: string; description: string }
+  | { type: "skillFolder"; path: string; add: boolean }
+  /** Open a skill's file in the editor. */
+  | { type: "openFile"; path: string }
   | { type: "copy"; text: string };
 
-export type Screen = "splash" | "status" | "providers" | "login";
+export type Screen = "splash" | "status" | "providers" | "login" | "settings";

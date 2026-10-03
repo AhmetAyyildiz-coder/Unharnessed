@@ -9,7 +9,12 @@
 //! `session/set_config_option` applies a picker selection, and
 //! `session/cancel` / `session/close` stop work. The
 //! `_unharnessed/providers/*` extension methods list the providers and run
-//! their logins (`providers.rs`). Every frame leaves through one ordered
+//! their logins (`providers.rs`); the `_unharnessed/settings/*` ones read
+//! and write the global settings file (`settings.rs`), the
+//! `_unharnessed/mcp/*` ones list the MCP servers and remove their
+//! sign-ins (`mcp_servers.rs`), and the `_unharnessed/skills/*` ones list
+//! the skills and turn them on or off (`skills.rs`). Every frame leaves
+//! through one ordered
 //! write queue, so responses and `session/update` notifications interleave
 //! exactly in publication order. The process exits when stdin closes.
 
@@ -20,11 +25,14 @@ mod goal_continuation;
 mod in_process_config;
 mod jsonrpc;
 mod mcp;
+mod mcp_servers;
 mod meta;
 mod producer;
 mod prompt;
 mod providers;
 mod session;
+mod settings;
+mod skills;
 mod types;
 
 use std::path::{Path, PathBuf};
@@ -379,6 +387,22 @@ async fn handle_request(
     mode: AcpModeState,
     tx: producer::FrameSink,
 ) {
+    let (cwd, agent_dir) = (&mode.actual_cwd, &mode.agent_dir);
+    if settings::handle_request(&id, &method, &params, cwd, agent_dir, &tx).await
+        || mcp_servers::handle_request(&id, &method, &params, cwd, agent_dir, &tx).await
+        || skills::handle_request(
+            &id,
+            &method,
+            &params,
+            cwd,
+            agent_dir,
+            &mode.engine.skills,
+            &tx,
+        )
+        .await
+    {
+        return;
+    }
     match method.as_str() {
         "initialize" => handle_initialize(&id, &params, &mode.product_version, &tx),
         "session/new" => {

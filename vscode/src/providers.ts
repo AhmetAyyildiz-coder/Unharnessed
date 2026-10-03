@@ -80,25 +80,32 @@ export class Providers {
     return this.settle(`logout of ${providerId}`, LOGOUT, { providerId });
   }
 
-  async startLogin(providerId: string): Promise<void> {
-    if (this.login && !this.login.error) return;
+  /**
+   * `name` names what is signed in to when it is not a provider (an MCP
+   * server, `mcp:<id>`). Resolves `true` once the sign-in is done.
+   */
+  async startLogin(providerId: string, name?: string): Promise<boolean> {
+    if (this.login && !this.login.error) return false;
     const run = ++this.loginRun;
-    const name = this.list?.find((p) => p.id === providerId && p.login === "browser")?.name ?? providerId;
+    name ??= this.list?.find((p) => p.id === providerId && p.login === "browser")?.name ?? providerId;
     this.setLogin({ providerId, name });
     this.log.info(`sign-in to ${providerId}: started`);
     let error: string | undefined;
+    let done = false;
     try {
       const result = await this.agent.request<Settled>(LOGIN, { providerId });
       this.log.info(`sign-in to ${providerId}: ${result.outcome}${result.message ? ` (${result.message})` : ""}`);
-      if (run !== this.loginRun) return;
+      if (run !== this.loginRun) return false;
       this.list = result.providers;
       if (result.outcome === "failed") error = result.message ?? "Sign-in failed.";
+      done = result.outcome === "done";
     } catch (failure) {
       this.log.warn(`sign-in to ${providerId} failed: ${errorText(failure)}`);
-      if (run !== this.loginRun) return;
+      if (run !== this.loginRun) return false;
       error = errorText(failure);
     }
     this.setLogin(error === undefined ? null : { providerId, name, error });
+    return done;
   }
 
   async answer(promptId: number, answer: LoginAnswer): Promise<void> {

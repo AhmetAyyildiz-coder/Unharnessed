@@ -1,6 +1,6 @@
 //! Filesystem collectors for resource discovery: recursive file collection
 //! under `.gitignore`/`.ignore`/`.fdignore` rules, skill-entry scanning with
-//! the `SKILL.md` stopping rule, prompt/theme auto-discovery, and the
+//! the `SKILL.md` stopping rule, prompt auto-discovery, and the
 //! `.agents/skills` ancestor scan.
 
 use std::path::{Path, PathBuf};
@@ -190,7 +190,6 @@ fn prefix_ignore_pattern(line: &str, prefix: &str) -> Option<String> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FileKind {
     Markdown,
-    Json,
 }
 
 /// Lowercase file-name extension test (a bare `.md` name has no extension and
@@ -206,7 +205,6 @@ impl FileKind {
     fn matches(self, name: &str) -> bool {
         match self {
             FileKind::Markdown => extension_is(name, &["md"]),
-            FileKind::Json => extension_is(name, &["json"]),
         }
     }
 }
@@ -327,11 +325,6 @@ pub(crate) fn collect_auto_prompt_entries(dir: &Path) -> Vec<PathBuf> {
     collect_top_level_files(dir, FileKind::Markdown)
 }
 
-/// Auto-discovery of top-level `.json` theme files (no recursion).
-pub(crate) fn collect_auto_theme_entries(dir: &Path) -> Vec<PathBuf> {
-    collect_top_level_files(dir, FileKind::Json)
-}
-
 fn collect_top_level_files(dir: &Path, kind: FileKind) -> Vec<PathBuf> {
     let mut entries = Vec::new();
     if !dir.exists() {
@@ -364,7 +357,6 @@ pub(crate) fn collect_resource_files(
     match resource_type {
         super::ResourceType::Skills => collect_skill_entries(dir, SkillDiscoveryMode::Pi),
         super::ResourceType::Prompts => collect_files(dir, FileKind::Markdown),
-        super::ResourceType::Themes => collect_files(dir, FileKind::Json),
     }
 }
 

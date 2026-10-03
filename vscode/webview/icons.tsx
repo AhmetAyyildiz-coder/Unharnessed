@@ -34,6 +34,23 @@ export function IconRestart(props: IconProps) {
   );
 }
 
+/** A folder: its tab on the top left. */
+export function IconFolder(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4.5 7.5A1.5 1.5 0 0 1 6 6h3.4a1 1 0 0 1 .7.3l1.6 1.6a1 1 0 0 0 .7.3H18a1.5 1.5 0 0 1 1.5 1.5v7.8A1.5 1.5 0 0 1 18 19H6a1.5 1.5 0 0 1-1.5-1.5z" />
+    </Icon>
+  );
+}
+
+export function IconPlus(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 6.5v11M6.5 12h11" />
+    </Icon>
+  );
+}
+
 export function IconCross(props: IconProps) {
   return (
     <Icon {...props}>
@@ -158,6 +175,17 @@ export function IconBolt(props: IconProps) {
   return (
     <Icon {...props}>
       <path d="M13.5 4L7 13h5l-1.5 7L17 11h-5z" />
+    </Icon>
+  );
+}
+
+/** Two sliders, their knobs set apart: the settings. */
+export function IconSliders(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5 8.5h5M14 8.5h5M5 15.5h9M18 15.5h1" />
+      <circle cx="12" cy="8.5" r="2" />
+      <circle cx="16" cy="15.5" r="2" />
     </Icon>
   );
 }

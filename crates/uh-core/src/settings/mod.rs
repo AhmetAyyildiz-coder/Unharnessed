@@ -8,15 +8,10 @@ pub(crate) mod merge;
 pub(crate) mod storage;
 pub(crate) mod types;
 
-pub use manager::{
-    IdleEviction, SessionArchivePolicy, SettingsError, SettingsManager,
-    DEFAULT_IDLE_EVICTION_MINUTES, DEFAULT_SESSION_ARCHIVE_MAX_AGE_DAYS,
-    DEFAULT_SESSION_ARCHIVE_MAX_SESSIONS,
-};
+pub use manager::{SettingsError, SettingsManager};
 pub use storage::{
     FileSettingsStorage, InMemorySettingsStorage, SettingsScope, SettingsStorage, CONFIG_DIR_NAME,
 };
 pub use types::{
-    AutonomousSettings, CompactionSettings, McpServerConfig, QueueModeSetting, Settings,
-    ThinkingLevelSetting, TransportSetting,
+    CompactionSettings, McpServerConfig, QueueModeSetting, Settings, ThinkingLevelSetting,
 };

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import type { AgentState, HostMessage, LoginState, Provider, Screen, SessionState } from "../src/protocol";
+import type { AgentState, HostMessage, LoginState, Provider, Screen, SessionState, SettingsState } from "../src/protocol";
 import { Providers } from "./Providers";
+import { Settings, type SettingsTab } from "./Settings";
 import { SignIn } from "./SignIn";
 import { Splash } from "./Splash";
 import { Status } from "./Status";
@@ -8,6 +9,7 @@ import { onHostMessage, post } from "./vscode";
 
 type Phase = "boot" | "splash" | "main";
 export type ProviderResult = Extract<HostMessage, { type: "providerResult" }>;
+export type SettingResult = Extract<HostMessage, { type: "settingResult" }>;
 
 export function App() {
   const [phase, setPhase] = useState<Phase>("boot");
@@ -16,7 +18,11 @@ export function App() {
   const [login, setLogin] = useState<LoginState | null>(null);
   const [session, setSession] = useState<SessionState | null>(null);
   const [result, setResult] = useState<ProviderResult | null>(null);
+  const [settings, setSettings] = useState<SettingsState>({ view: null, pending: [], mcp: null, skills: null });
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
+  const [settingResult, setSettingResult] = useState<SettingResult | null>(null);
   const [managing, setManaging] = useState(false);
+  const [tuning, setTuning] = useState(false);
   const splashDone = useCallback(() => setPhase("main"), []);
 
   useEffect(() => {
@@ -27,6 +33,7 @@ export function App() {
           setProviders(message.providers);
           setLogin(message.login);
           setSession(message.session);
+          setSettings(message.settings);
           setPhase(message.splash ? "splash" : "main");
           break;
         case "agent":
@@ -42,6 +49,12 @@ export function App() {
         case "providerResult":
           setResult(message);
           break;
+        case "settings":
+          setSettings(message.settings);
+          break;
+        case "settingResult":
+          setSettingResult(message);
+          break;
       }
     });
     post({ type: "ready" });
@@ -55,6 +68,8 @@ export function App() {
   else if (phase === "main" && agent) {
     if (agent.kind === "ready" && login) screen = "login";
     else if (agent.kind === "ready" && (managing || onboarding)) screen = "providers";
+    // It stays while a restart it asked for runs.
+    else if (tuning && agent.kind !== "failed") screen = "settings";
     else screen = "status";
   }
 
@@ -76,9 +91,28 @@ export function App() {
           onBack={onboarding ? undefined : () => setManaging(false)}
         />
       );
+    case "settings":
+      return (
+        <Settings
+          settings={settings}
+          ready={agent.kind === "ready"}
+          session={session}
+          providers={providers ?? []}
+          result={settingResult}
+          tab={settingsTab}
+          onTab={setSettingsTab}
+          onBack={() => setTuning(false)}
+        />
+      );
     default:
       return (
-        <Status agent={agent} session={session} providers={providers ?? []} onProviders={() => setManaging(true)} />
+        <Status
+          agent={agent}
+          session={session}
+          providers={providers ?? []}
+          onProviders={() => setManaging(true)}
+          onSettings={() => setTuning(true)}
+        />
       );
   }
 }

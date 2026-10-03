@@ -21,6 +21,8 @@ mod remote_source;
 mod service_catalog;
 mod url_checks;
 
+pub use catalog_plugin_views::{McpPluginView, ViewSource};
+pub use catalog_status_views::McpConnectionStatus;
 pub use catalog_views::{
     mcp_credential_field_prompt_label, mcp_paste_credential, McpPasteCredential,
 };
@@ -337,6 +339,48 @@ impl McpManager {
         };
         manager.resolve_integrations();
         manager
+    }
+
+    /// The manager over an agent dir's files: its auth store, the
+    /// `mcpServers` and `mcpCatalogSources` settings of `cwd` (re-read on
+    /// each resolve), its connection records and local catalog. No
+    /// interactive login: hosts with a login UI call `set_begin_login`.
+    #[must_use]
+    pub fn from_settings(cwd: &std::path::Path, agent_dir: &std::path::Path) -> Self {
+        let (servers_cwd, servers_agent_dir) = (cwd.to_path_buf(), agent_dir.to_path_buf());
+        let (catalog_cwd, catalog_agent_dir) = (cwd.to_path_buf(), agent_dir.to_path_buf());
+        Self::new(McpManagerOptions {
+            auth_storage: AuthStorage::create_with_oauth(agent_dir, Arc::new(McpOAuth::new())),
+            get_user_servers: Box::new(move || {
+                let settings =
+                    crate::settings::SettingsManager::create(&servers_cwd, &servers_agent_dir);
+                Some(
+                    settings
+                        .settings()
+                        .mcp_servers
+                        .clone()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|(server, config)| {
+                            serde_json::from_value::<McpServerConfig>(config)
+                                .ok()
+                                .map(|parsed| (server, parsed))
+                        })
+                        .collect(),
+                )
+            }),
+            begin_login: None,
+            agent_dir: Some(agent_dir.to_path_buf()),
+            get_catalog_sources: Some(Box::new(move || {
+                crate::settings::SettingsManager::create(&catalog_cwd, &catalog_agent_dir)
+                    .settings()
+                    .mcp_catalog_sources
+                    .clone()
+                    .unwrap_or_default()
+            })),
+            remote_source: None,
+            probe_override: None,
+        })
     }
 
     /// Re-read settings and re-resolve integrations; call after a reload.

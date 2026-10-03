@@ -1,0 +1,197 @@
+import type * as vscode from "vscode";
+import { errorText, type Agent } from "./agent";
+import type { McpServer, SettingsState, SettingsView, SkillsView } from "./protocol";
+
+// The agent's `_unharnessed/settings/*`, `mcp/*` and `skills/*` extension
+// methods (crates/uh-daemon/src/acp/{settings,mcp_servers,skills}.rs).
+const GET = "_unharnessed/settings/get";
+const SET = "_unharnessed/settings/set";
+const MCP_LIST = "_unharnessed/mcp/list";
+const MCP_LOGOUT = "_unharnessed/mcp/logout";
+const SKILLS_LIST = "_unharnessed/skills/list";
+const SKILLS_SET = "_unharnessed/skills/set";
+const SKILLS_CREATE = "_unharnessed/skills/create";
+const SKILLS_ADD_FOLDER = "_unharnessed/skills/add_folder";
+const SKILLS_REMOVE_FOLDER = "_unharnessed/skills/remove_folder";
+
+/**
+ * The agent's global settings, its MCP servers and its skills, for the
+ * settings screen. They outlive an agent restart, so the screen stays put
+ * while the new process starts; they are read again once it is ready.
+ */
+export class Settings {
+  private view: SettingsView | null = null;
+  private mcp: McpServer[] | null = null;
+  private skills: SkillsView | null = null;
+  /** The restart keys' values when the running process started. */
+  private started: Record<string, unknown> | null = null;
+  /** An MCP sign-in or sign-out since the process started: the agent keeps the ones it started with. */
+  private mcpChanged = false;
+  /** Bumped per agent process, so a late answer never lands on the next one. */
+  private run = 0;
+  private readonly listeners = new Set<() => void>();
+
+  constructor(
+    private readonly agent: Agent,
+    private readonly log: vscode.LogOutputChannel,
+  ) {
+    agent.onChange((state) => {
+      this.run++;
+      this.started = null;
+      this.mcpChanged = false;
+      this.changed();
+      if (state.kind === "ready") void this.refresh();
+    });
+  }
+
+  get current(): SettingsState {
+    return { view: this.view, pending: this.pending(), mcp: this.mcp, skills: this.skills };
+  }
+
+  /** The skill files on the list: the only files the panel may open. */
+  get skillFiles(): string[] {
+    return this.skills?.skills.map((skill) => skill.path) ?? [];
+  }
+
+  onChange(listener: () => void): { dispose(): void } {
+    this.listeners.add(listener);
+    return { dispose: () => this.listeners.delete(listener) };
+  }
+
+  async refresh(): Promise<void> {
+    await Promise.all([this.read(), this.refreshMcp(), this.ask(SKILLS_LIST, {}, "skills: read")]);
+  }
+
+  /** Resolves the error to show under the setting, if any. */
+  async set(key: string, value: unknown): Promise<string | undefined> {
+    const run = this.run;
+    try {
+      const view = await this.agent.request<SettingsView>(SET, { key, value });
+      this.log.info(`settings: ${key} ${value === null ? "reset" : `set to ${JSON.stringify(value)}`}`);
+      if (run !== this.run) return undefined;
+      this.view = view;
+      this.changed();
+      // A server added, changed or removed changes the list.
+      if (key === "mcpServers") void this.refreshMcp();
+      return undefined;
+    } catch (error) {
+      this.log.warn(`settings: ${key} refused: ${errorText(error)}`);
+      return errorText(error);
+    }
+  }
+
+  async refreshMcp(): Promise<void> {
+    const run = this.run;
+    try {
+      const { servers } = await this.agent.request<{ servers: McpServer[] }>(MCP_LIST);
+      if (run !== this.run) return;
+      this.mcp = servers;
+      this.log.info(`mcp: ${servers.map((server) => `${server.id} (${server.status})`).join(", ") || "none"}`);
+      this.changed();
+    } catch (error) {
+      this.log.warn(`mcp: list failed: ${errorText(error)}`);
+    }
+  }
+
+  /** After a sign-in to an MCP server: the list shows it, a restart applies it. */
+  signedIn(id: string): void {
+    this.log.info(`mcp: signed in to ${id}`);
+    this.mcpChanged = true;
+    void this.refreshMcp();
+  }
+
+  async signOut(id: string): Promise<string | undefined> {
+    const run = this.run;
+    try {
+      const { servers } = await this.agent.request<{ servers: McpServer[] }>(MCP_LOGOUT, { id });
+      this.log.info(`mcp: signed out of ${id}`);
+      if (run !== this.run) return undefined;
+      this.mcp = servers;
+      this.mcpChanged = true;
+      this.changed();
+      return undefined;
+    } catch (error) {
+      this.log.warn(`mcp: sign-out of ${id} refused: ${errorText(error)}`);
+      return errorText(error);
+    }
+  }
+
+  setSkill(path: string, enabled: boolean): Promise<string | undefined> {
+    return this.ask(SKILLS_SET, { path, enabled }, `skills: ${path} turned ${enabled ? "on" : "off"}`);
+  }
+
+  /** Resolves the new file, or the error to show. */
+  async createSkill(name: string, description: string): Promise<{ created?: string; error?: string }> {
+    let created: string | undefined;
+    const error = await this.ask(SKILLS_CREATE, { name, description }, `skills: ${name} created`, (answer) => {
+      created = answer.created;
+    });
+    return { created, error };
+  }
+
+  skillFolder(path: string, add: boolean): Promise<string | undefined> {
+    return add
+      ? this.ask(SKILLS_ADD_FOLDER, { path }, `skills: folder ${path} added`)
+      : this.ask(SKILLS_REMOVE_FOLDER, { path }, `skills: folder ${path} removed`);
+  }
+
+  private async read(): Promise<void> {
+    const run = this.run;
+    try {
+      const view = await this.agent.request<SettingsView>(GET);
+      if (run !== this.run) return;
+      this.view = view;
+      this.started ??= pick(view);
+      this.log.info(`settings: read, ${Object.values(view.values).filter((v) => v !== null).length} set`);
+      this.changed();
+    } catch (error) {
+      this.log.warn(`settings: read failed: ${errorText(error)}`);
+    }
+  }
+
+  /** A skills method: every one answers the list. Resolves the error to show, if any. */
+  private async ask(
+    method: string,
+    params: Record<string, unknown>,
+    done: string,
+    then?: (answer: SkillsView & { created?: string }) => void,
+  ): Promise<string | undefined> {
+    const run = this.run;
+    try {
+      const answer = await this.agent.request<SkillsView & { created?: string }>(method, params);
+      const on = answer.skills.filter((skill) => skill.enabled).length;
+      this.log.info(`${done}, ${on} of ${answer.skills.length} on`);
+      then?.(answer);
+      if (run !== this.run) return undefined;
+      const { created: _, ...skills } = answer;
+      this.skills = skills;
+      this.changed();
+      return undefined;
+    } catch (error) {
+      this.log.warn(`${done.split(":")[0]}: ${method} refused: ${errorText(error)}`);
+      return errorText(error);
+    }
+  }
+
+  /** What a restart would apply. */
+  private pending(): string[] {
+    const view = this.view;
+    const started = this.started;
+    const keys =
+      view && started
+        ? view.restart.filter((key) => JSON.stringify(view.values[key]) !== JSON.stringify(started[key]))
+        : [];
+    if (this.skills?.restart) keys.push("skills");
+    if (this.mcpChanged) keys.push("mcp");
+    return keys;
+  }
+
+  private changed(): void {
+    for (const listener of this.listeners) listener();
+  }
+}
+
+/** The restart keys' values. */
+function pick(view: SettingsView): Record<string, unknown> {
+  return Object.fromEntries(view.restart.map((key) => [key, view.values[key]]));
+}

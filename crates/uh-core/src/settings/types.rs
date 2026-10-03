@@ -4,14 +4,6 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum MermaidRenderingMode {
-    Off,
-    Final,
-    Streaming,
-}
-
 /// Thinking levels in wire form ("off" | "minimal" | "low" | "medium" |
 /// "high" | "xhigh" | "max").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,24 +60,6 @@ pub enum QueueModeSetting {
     OneAtATime,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum TransportSetting {
-    Auto,
-    Sse,
-    WebSocket,
-    #[serde(rename = "websocket-cached")]
-    WebSocketCached,
-}
-
-/// `number | "unlimited"` autonomous limit.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum AutonomousLimitSetting {
-    Number(f64),
-    Unlimited(String),
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompactionSettings {
@@ -97,19 +71,7 @@ pub struct CompactionSettings {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BranchSummarySettings {
-    pub reserve_tokens: Option<u64>,
-    pub skip_prompt: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ProviderWaitSettings {
-    pub enabled: Option<bool>,
-    pub base_delay_ms: Option<u64>,
-    pub max_delay_ms: Option<u64>,
-    pub max_attempts: Option<u64>,
-    pub max_wait_ms: Option<u64>,
     /// Park sessions for provider-reported resets beyond the bounded
     /// wait (TS #2375 `pauseUntilReset`; default true).
     pub pause_until_reset: Option<bool>,
@@ -123,7 +85,6 @@ pub struct ProviderWaitSettings {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderRetrySettings {
-    pub timeout_ms: Option<u64>,
     pub max_retry_delay_ms: Option<u64>,
     pub wait_for_usage: Option<ProviderWaitSettings>,
 }
@@ -135,7 +96,7 @@ pub struct ProviderRetrySettings {
 #[serde(rename_all = "camelCase")]
 pub struct RetryFailoverSettings {
     pub enabled: Option<bool>,
-    /// Retries per provider before switching (default 5).
+    /// Retries per provider before switching (default 3).
     pub max_retries: Option<u64>,
     /// First backoff delay, doubling each retry (default 1000ms).
     pub base_delay_ms: Option<u64>,
@@ -155,49 +116,9 @@ pub struct RetrySettings {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TerminalSettings {
-    pub show_images: Option<bool>,
-    pub clear_on_shrink: Option<bool>,
-    pub show_terminal_progress: Option<bool>,
-    pub fullscreen_mouse: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ImageSettings {
     pub auto_resize: Option<bool>,
     pub block_images: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThinkingBudgetsSettings {
-    pub minimal: Option<u64>,
-    pub low: Option<u64>,
-    pub medium: Option<u64>,
-    pub high: Option<u64>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AutonomousSettings {
-    pub max_continuations: Option<AutonomousLimitSetting>,
-    pub max_turns: Option<AutonomousLimitSetting>,
-    pub max_tokens: Option<AutonomousLimitSetting>,
-    pub timeout_ms: Option<AutonomousLimitSetting>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MarkdownSettings {
-    pub code_block_indent: Option<String>,
-    pub mermaid: Option<MermaidRenderingMode>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WarningSettings {
-    pub anthropic_extra_usage: Option<bool>,
 }
 
 /// User-declared MCP server (settings `mcpServers` entry).
@@ -248,42 +169,20 @@ pub enum McpServerConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
-    pub onboarding_shown: Option<bool>,
-    pub onboarding_completed: Option<bool>,
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
-    pub recent_models: Option<Vec<String>>,
     pub auxiliary_model: Option<String>,
     pub default_thinking_level: Option<ThinkingLevelSetting>,
     pub default_service_tier: Option<String>,
-    /// `number | "off" | "none"`; raw JSON because the TS getter validates at
-    /// access time.
-    pub idle_eviction_minutes: Option<serde_json::Value>,
-    /// Session archiving age rule: sessions untouched for this many days are
-    /// moved to the daemon's archive directory. `number | "off" | "none"`; raw
-    /// JSON validated at access time (same grammar as `idleEvictionMinutes`).
-    pub session_archive_max_age_days: Option<serde_json::Value>,
-    /// Session archiving count rule: keep at most this many unarchived
-    /// sessions (newest by mtime win); `0 | "off" | "none"` disables. Raw JSON
-    /// validated at access time.
-    pub session_archive_max_sessions: Option<serde_json::Value>,
-    pub transport: Option<TransportSetting>,
     pub steering_mode: Option<QueueModeSetting>,
     pub follow_up_mode: Option<QueueModeSetting>,
-    pub theme: Option<String>,
     pub compaction: Option<CompactionSettings>,
-    pub branch_summary: Option<BranchSummarySettings>,
     pub retry: Option<RetrySettings>,
-    pub provider_backup_model: Option<String>,
     /// Model ("provider/model-id" or a bare model id) that serves turns
     /// attaching images when the session model does not accept image
     /// input. Default: none - image turns on a text-only model fail with
     /// a configuration hint instead of silently dropping the images.
     pub image_model: Option<String>,
-    pub autonomous: Option<AutonomousSettings>,
-    pub shell_path: Option<String>,
-    pub quiet_startup: Option<bool>,
-    pub shell_command_prefix: Option<String>,
     pub mcp_servers: Option<serde_json::Map<String, serde_json::Value>>,
     /// Extra local MCP service-catalog files (TS `mcpCatalogSources`;
     /// ~-relative allowed), merged after the compiled built-ins, first
@@ -291,12 +190,9 @@ pub struct Settings {
     pub mcp_catalog_sources: Option<Vec<String>>,
     pub skills: Option<Vec<String>>,
     pub prompts: Option<Vec<String>>,
-    pub themes: Option<Vec<String>>,
     pub enable_skill_commands: Option<bool>,
     pub enable_builtin_skills: Option<bool>,
-    pub terminal: Option<TerminalSettings>,
     pub images: Option<ImageSettings>,
-    pub enabled_models: Option<Vec<String>>,
     /// Rust-only daemon-level model allowlist: model patterns (the
     /// `--models` CLI scope grammar) the daemon may resolve to. Enforced at
     /// the daemon's model-resolution seams (`set_model`, RLM child-model
@@ -304,17 +200,6 @@ pub struct Settings {
     /// fails loudly instead of resolving, with no fallback. `None` is
     /// unrestricted (the TS behavior).
     pub allowed_models: Option<Vec<String>>,
-    pub tree_filter_mode: Option<String>,
-    /// `chatDetail` (TS #2709): the conversation-detail level Ctrl+O
-    /// cycles and persists ("overview"/"details"/"all"); `None` reads
-    /// as the `overview` startup level (the collapse mode).
-    pub chat_detail: Option<String>,
-    pub thinking_budgets: Option<ThinkingBudgetsSettings>,
-    pub editor_padding_x: Option<u64>,
-    pub autocomplete_max_visible: Option<u64>,
-    pub show_hardware_cursor: Option<bool>,
-    pub markdown: Option<MarkdownSettings>,
-    pub warnings: Option<WarningSettings>,
     pub session_dir: Option<String>,
     /// Log per-request provider timing phases to the diagnostic log (TS
     /// `requestTiming`; unset means OFF, exactly the TS default).

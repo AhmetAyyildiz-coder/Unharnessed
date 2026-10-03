@@ -11,7 +11,8 @@
 //!   `{ providers, outcome, message? }` (outcome `done`, `failed` or
 //!   `cancelled`; `message` is the status line, or the error to show).
 //! - `_unharnessed/providers/login` `{ providerId }` runs a browser login
-//!   (the subscriptions, Prime Inference) and answers the same shape when it
+//!   (the subscriptions, Prime Inference, and an MCP server's OAuth sign-in
+//!   as `mcp:<server>`) and answers the same shape when it
 //!   settles. Until then each step reaches the client as a
 //!   `_unharnessed/providers/login_update` notification
 //!   `{ providerId, update }`. A prompt update carries a `promptId` the
@@ -227,7 +228,11 @@ impl Providers {
         let providers = self.clone();
         let (id, tx) = (id.clone(), tx.clone());
         tokio::spawn(async move {
-            let Some(row) = providers.row(&provider_id, AuthFlow::TerminalFlow).await else {
+            let row = match mcp_login_row(&provider_id) {
+                Some(row) => Some(row),
+                None => providers.row(&provider_id, AuthFlow::TerminalFlow).await,
+            };
+            let Some(row) = row else {
                 providers.logins.lock().expect("logins lock").running = None;
                 let details = format!("no browser login for provider {provider_id}");
                 let _ = tx.send(invalid_params(&id, &details));
@@ -483,6 +488,22 @@ impl Providers {
         }
         entries
     }
+}
+
+/// An MCP server's sign-in (`mcp:<server>`): the provider rows leave the
+/// MCP servers out, and the flow resolves the server itself (an unknown
+/// server, or one without OAuth, fails it).
+fn mcp_login_row(provider_id: &str) -> Option<ProviderRow> {
+    let server = provider_id.strip_prefix("mcp:")?;
+    Some(ProviderRow {
+        id: provider_id.to_string(),
+        name: server.to_string(),
+        auth_type: AuthType::Oauth,
+        status: None,
+        flow: AuthFlow::TerminalFlow,
+        configured: false,
+        available: true,
+    })
 }
 
 fn string_param(params: &Value, name: &str) -> Result<String, String> {

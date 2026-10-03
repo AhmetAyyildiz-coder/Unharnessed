@@ -547,25 +547,30 @@ fn login_blocking_on_panel(
     panel: crate::auth_panel::AuthPanelHandle,
 ) -> ProviderAuthOutcome {
     if let Some(server) = provider_row.id.strip_prefix("mcp:") {
+        use crate::client_auth::ClientAuthCommands;
         let auth = crate::mcp_login::TerminalMcpAuth::new(cwd, agent_dir);
-        let outcome = tokio::runtime::Builder::new_current_thread()
+        // A cancel drops the flow, its callback listener with it, before
+        // it stores anything.
+        let cancel = panel.cancel_signal();
+        return tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_or_else(
-                |error: std::io::Error| format!("login failed: {error}"),
+                |error: std::io::Error| {
+                    ProviderAuthOutcome::Error(format!("login failed: {error}"))
+                },
                 |runtime| {
-                    runtime.block_on(crate::client_auth::run_mcp_auth_command(
-                        &auth,
-                        &format!("login {server}"),
-                        panel,
-                    ))
+                    runtime.block_on(async {
+                        tokio::select! {
+                            result = auth.login(server, panel) => match result {
+                                Ok(status) => ProviderAuthOutcome::Status(status),
+                                Err(error) => ProviderAuthOutcome::Error(format!("{error:#}")),
+                            },
+                            () = cancel.wait() => ProviderAuthOutcome::Cancelled,
+                        }
+                    })
                 },
             );
-        return if outcome.starts_with("Usage:") {
-            ProviderAuthOutcome::Error(outcome)
-        } else {
-            ProviderAuthOutcome::Status(outcome)
-        };
     }
     // TS `loginProvider`'s prime-inference dispatch: the API-key flow
     // (the browser challenge raced against the paste prompt, the whoami

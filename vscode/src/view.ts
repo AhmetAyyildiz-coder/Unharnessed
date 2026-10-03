@@ -4,6 +4,7 @@ import type { Agent } from "./agent";
 import type { HostMessage, WebviewMessage } from "./protocol";
 import type { Providers } from "./providers";
 import type { Session } from "./session";
+import type { Settings } from "./settings";
 
 /** The panel in the right side bar: hosts the React app from dist/webview. */
 export class ChatViewProvider implements vscode.WebviewViewProvider {
@@ -17,6 +18,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly agent: Agent,
     private readonly providers: Providers,
     private readonly session: Session,
+    private readonly settings: Settings,
     private readonly log: vscode.LogOutputChannel,
   ) {
     agent.onChange((state) => this.post({ type: "agent", agent: state }));
@@ -24,6 +26,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: "providers", providers: providers.providers, login: providers.signIn }),
     );
     session.onChange(() => this.post({ type: "session", session: session.current }));
+    settings.onChange(() => this.post({ type: "settings", settings: settings.current }));
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -48,6 +51,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           providers: this.providers.providers,
           login: this.providers.signIn,
           session: this.session.current,
+          settings: this.settings.current,
         });
         this.splashPlayed = true;
         break;
@@ -72,9 +76,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
         break;
       }
-      case "login":
-        void this.providers.startLogin(message.providerId);
+      case "login": {
+        // Try again after a failed MCP sign-in: the same server, by the same name.
+        const { providerId } = message;
+        if (providerId.startsWith("mcp:")) this.mcpSignIn(providerId.slice(4), this.providers.signIn?.name);
+        else void this.providers.startLogin(providerId);
         break;
+      }
       case "loginAnswer":
         void this.providers.answer(message.promptId, message.answer);
         break;
@@ -92,9 +100,62 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         void this.session.setOption(change);
         break;
       }
+      case "setSetting": {
+        const { key } = message;
+        void this.settings.set(key, message.value).then((error) => {
+          this.post({ type: "settingResult", key, error });
+        });
+        break;
+      }
+      case "mcpSignIn":
+        this.mcpSignIn(message.id, message.label);
+        break;
+      case "mcpSignOut": {
+        const key = `mcp:${message.id}`;
+        void this.settings.signOut(message.id).then((error) => this.post({ type: "settingResult", key, error }));
+        break;
+      }
+      case "setSkill": {
+        const key = `skill:${message.path}`;
+        void this.settings
+          .setSkill(message.path, message.enabled)
+          .then((error) => this.post({ type: "settingResult", key, error }));
+        break;
+      }
+      case "createSkill":
+        void this.settings.createSkill(message.name, message.description).then(({ created, error }) => {
+          this.post({ type: "settingResult", key: "skills/create", error });
+          if (created) void this.open(created);
+        });
+        break;
+      case "skillFolder":
+        void this.settings
+          .skillFolder(message.path, message.add)
+          .then((error) => this.post({ type: "settingResult", key: "skills/folder", error }));
+        break;
+      case "openFile":
+        // Only a skill on the list: the panel never names any other file.
+        if (this.settings.skillFiles.includes(message.path)) void this.open(message.path);
+        break;
       case "copy":
         void vscode.env.clipboard.writeText(message.text);
         break;
+    }
+  }
+
+  /** An MCP server's sign-in runs on the sign-in screen, like a provider's. */
+  private mcpSignIn(id: string, label: string | undefined): void {
+    void this.providers.startLogin(`mcp:${id}`, label).then((done) => {
+      if (done) this.settings.signedIn(id);
+    });
+  }
+
+  private async open(path: string): Promise<void> {
+    try {
+      await vscode.window.showTextDocument(vscode.Uri.file(path), { preview: false });
+      this.log.info(`opened ${path}`);
+    } catch (error) {
+      this.log.warn(`could not open ${path}: ${String(error)}`);
     }
   }
 

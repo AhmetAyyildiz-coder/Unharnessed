@@ -8,46 +8,23 @@ use super::types::Settings;
 /// Known settings keys (the TS Settings interface, camelCase wire form).
 /// Wrong-typed values for these load as unset; unknown keys are preserved.
 const KNOWN_FIELDS: &[&str] = &[
-    "onboardingShown",
-    "onboardingCompleted",
     "defaultProvider",
     "defaultModel",
-    "recentModels",
     "auxiliaryModel",
     "defaultThinkingLevel",
     "defaultServiceTier",
-    "idleEvictionMinutes",
-    "transport",
     "steeringMode",
     "followUpMode",
-    "theme",
     "compaction",
-    "branchSummary",
     "retry",
-    "providerBackupModel",
     "imageModel",
-    "autonomous",
-    "shellPath",
-    "quietStartup",
-    "shellCommandPrefix",
     "mcpServers",
     "skills",
     "prompts",
-    "themes",
     "enableSkillCommands",
     "enableBuiltinSkills",
-    "terminal",
     "images",
-    "enabledModels",
     "allowedModels",
-    "treeFilterMode",
-    "chatDetail",
-    "thinkingBudgets",
-    "editorPaddingX",
-    "autocompleteMaxVisible",
-    "showHardwareCursor",
-    "markdown",
-    "warnings",
     "sessionDir",
     "requestTiming",
 ];
@@ -104,7 +81,7 @@ mod tests {
         let value: Value = serde_json::json!({
             "defaultProvider": 42,
             "steeringMode": "all",
-            "recentModels": "not-an-array",
+            "skills": "not-an-array",
             "unknownKey": { "kept": true }
         });
         let settings = from_value_lenient(&value);
@@ -113,7 +90,7 @@ mod tests {
             settings.steering_mode,
             Some(super::super::types::QueueModeSetting::All)
         );
-        assert_eq!(settings.recent_models, None);
+        assert_eq!(settings.skills, None);
         assert_eq!(
             settings.extra.get("unknownKey"),
             Some(&serde_json::json!({ "kept": true }))
@@ -122,9 +99,9 @@ mod tests {
 
     #[test]
     fn clean_document_strict_parses() {
-        let value: Value = serde_json::json!({ "theme": "prime" });
+        let value: Value = serde_json::json!({ "auxiliaryModel": "openai/gpt-5.4" });
         let settings = from_value_lenient(&value);
-        assert_eq!(settings.theme.as_deref(), Some("prime"));
+        assert_eq!(settings.auxiliary_model.as_deref(), Some("openai/gpt-5.4"));
     }
 
     /// A config that still carries the removed `extensions` resource key

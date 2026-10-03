@@ -1,5 +1,5 @@
 //! Session resource resolution: `ResourceResolver::resolve` produces the
-//! ranked skill/prompt/theme paths sessions consume, from the settings
+//! ranked skill/prompt paths sessions consume, from the settings
 //! arrays and auto-discovery (settings-base directories, `.agents/skills`
 //! ancestor scan, bundled skills). It was the package manager's resolve
 //! step; the package manager itself (the `packages` setting, npm/git
@@ -11,7 +11,8 @@ mod source;
 
 pub use manager::{BundledSkillsDir, ResourceResolver, ResourceResolverOptions};
 pub use resolve::{
-    MetadataSource, PathMetadata, ResolvedPaths, ResolvedResource, ResourceOrigin, ResourceType,
+    is_pattern, MetadataSource, PathMetadata, ResolvedPaths, ResolvedResource, ResourceOrigin,
+    ResourceType,
 };
 pub use source::{parse_git_url, GitSource, SourceScope};
 

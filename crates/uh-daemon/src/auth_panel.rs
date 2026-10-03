@@ -175,7 +175,7 @@ impl FlowCancel {
     }
 
     /// Wait until the flow's cancel signal fires.
-    async fn wait(&self) {
+    pub async fn wait(&self) {
         let mut marked = self.wake.subscribe();
         // A mark that landed before the subscribe is already visible in
         // `cancelled`; a mark after it fires `changed`.

@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 
 use super::super::ResourceResolver;
 use super::discovery::{
-    collect_ancestor_agents_skill_dirs, collect_auto_prompt_entries, collect_auto_theme_entries,
-    collect_skill_entries, SkillDiscoveryMode,
+    collect_ancestor_agents_skill_dirs, collect_auto_prompt_entries, collect_skill_entries,
+    SkillDiscoveryMode,
 };
-use super::patterns::is_enabled_by_overrides;
+use super::patterns::{absolute_overrides, is_enabled_by_overrides};
 use super::{
     resource_type_dir_name, settings_array, MetadataSource, PathMetadata, ResourceAccumulator,
     ResourceOrigin, ResourceType, RESOURCE_TYPES,
@@ -46,8 +46,14 @@ impl ResourceResolver {
         };
         let user_overrides =
             RESOURCE_TYPES.map(|resource_type| settings_array(global, resource_type));
-        let project_overrides =
+        let mut project_overrides =
             RESOURCE_TYPES.map(|resource_type| settings_array(project, resource_type));
+        // A global entry naming a skill by its absolute path (the settings
+        // screen's switch) reaches the project's skills too.
+        project_overrides[0].extend(absolute_overrides(&user_overrides[0]).cloned());
+        // With the home folder as cwd, the project's config dir is the
+        // agent dir: its skills and prompts are the user's, found below.
+        let own_project_dir = !super::manager::same_dir(project_base_dir, global_base_dir);
         let project_dirs = RESOURCE_TYPES
             .map(|resource_type| project_base_dir.join(resource_type_dir_name(resource_type)));
         let user_dirs = RESOURCE_TYPES
@@ -76,7 +82,11 @@ impl ResourceResolver {
             accumulator,
             ResourceType::Skills,
             [
-                collect_skill_entries(&project_dirs[0], SkillDiscoveryMode::Pi),
+                if own_project_dir {
+                    collect_skill_entries(&project_dirs[0], SkillDiscoveryMode::Pi)
+                } else {
+                    Vec::new()
+                },
                 project_agents_skill_dirs
                     .iter()
                     .flat_map(|dir| collect_skill_entries(dir, SkillDiscoveryMode::Agents))
@@ -90,17 +100,13 @@ impl ResourceResolver {
         add_resources(
             accumulator,
             ResourceType::Prompts,
-            collect_auto_prompt_entries(&project_dirs[1]),
+            if own_project_dir {
+                collect_auto_prompt_entries(&project_dirs[1])
+            } else {
+                Vec::new()
+            },
             &project_metadata,
             &project_overrides[1],
-            project_base_dir,
-        );
-        add_resources(
-            accumulator,
-            ResourceType::Themes,
-            collect_auto_theme_entries(&project_dirs[2]),
-            &project_metadata,
-            &project_overrides[2],
             project_base_dir,
         );
 
@@ -160,14 +166,6 @@ impl ResourceResolver {
             collect_auto_prompt_entries(&user_dirs[1]),
             &user_metadata,
             &user_overrides[1],
-            global_base_dir,
-        );
-        add_resources(
-            accumulator,
-            ResourceType::Themes,
-            collect_auto_theme_entries(&user_dirs[2]),
-            &user_metadata,
-            &user_overrides[2],
             global_base_dir,
         );
     }

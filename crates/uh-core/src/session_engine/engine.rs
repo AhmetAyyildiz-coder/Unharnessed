@@ -173,6 +173,18 @@ fn mcp_gating_blocking(
     crate::mcp::McpManager::prompt_gating(user_servers, agent_dir)
 }
 
+/// The built-in skills the settings leave out. Without
+/// `compaction.agentCallable` the `compact.*` handlers are not registered:
+/// the built-in skill that calls them goes too.
+#[must_use]
+pub fn builtin_skill_overrides(compaction: &crate::settings::CompactionSettings) -> Vec<String> {
+    if compaction.agent_callable == Some(false) {
+        vec!["-compact/SKILL.md".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
 /// Assemble a session: load resources, build the system prompt, and start the
 /// loop with persistence wiring.
 ///
@@ -215,6 +227,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         .unwrap_or_else(|| std::sync::Arc::new(std::sync::Mutex::new(built_manager)));
     let mut extra_builtin_skill_overrides = config.extra_builtin_skill_overrides.clone();
     extra_builtin_skill_overrides.extend(mcp_skill_overrides);
+    extra_builtin_skill_overrides.extend(builtin_skill_overrides(&compaction_settings));
     let mut generic_mcp_servers = config.generic_mcp_servers.clone();
     for server in mcp_generic_servers {
         if !generic_mcp_servers.contains(&server) {

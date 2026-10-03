@@ -30,6 +30,7 @@ pub enum McpConnectionStatus {
 }
 
 impl McpConnectionStatus {
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             McpConnectionStatus::Connected => "connected",

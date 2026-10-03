@@ -1,6 +1,6 @@
 import type { AgentState, Provider, SessionState } from "../src/protocol";
 import { Composer } from "./Composer";
-import { IconCross, IconPlug, IconRestart } from "./icons";
+import { IconCross, IconPlug, IconRestart, IconSliders } from "./icons";
 import { post } from "./vscode";
 import { Wordmark } from "./Wordmark";
 
@@ -20,11 +20,13 @@ export function Status({
   session,
   providers,
   onProviders,
+  onSettings,
 }: {
   agent: AgentState;
   session: SessionState | null;
   providers: Provider[];
   onProviders: () => void;
+  onSettings: () => void;
 }) {
   return (
     <div className="screen">
@@ -41,6 +43,17 @@ export function Status({
             onClick={onProviders}
           >
             <IconPlug />
+          </button>
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="Settings"
+            data-tip="Settings"
+            data-tip-side="below"
+            disabled={agent.kind !== "ready"}
+            onClick={onSettings}
+          >
+            <IconSliders />
           </button>
           <button
             className="icon-button"

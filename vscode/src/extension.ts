@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { Agent } from "./agent";
 import { Providers } from "./providers";
 import { Session } from "./session";
+import { Settings } from "./settings";
 import { ChatViewProvider } from "./view";
 
 let agent: Agent | undefined;
@@ -17,12 +18,13 @@ export function activate(context: vscode.ExtensionContext): void {
   // Before `start`: they listen to the agent's notifications.
   const providers = new Providers(agent, log);
   const session = new Session(agent, cwd, log);
+  const settings = new Settings(agent, log);
 
   context.subscriptions.push(
     log,
     vscode.window.registerWebviewViewProvider(
       ChatViewProvider.viewId,
-      new ChatViewProvider(context.extensionUri, agent, providers, session, log),
+      new ChatViewProvider(context.extensionUri, agent, providers, session, settings, log),
     ),
   );
   agent.start();

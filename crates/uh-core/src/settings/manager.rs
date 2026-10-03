@@ -8,15 +8,7 @@ use anyhow::Result;
 use super::load::from_value_lenient;
 use super::merge::{deep_merge, migrate};
 use super::storage::{SettingsScope, SettingsStorage};
-use super::types::{QueueModeSetting, Settings, ThinkingLevelSetting, TransportSetting};
-
-pub const RECENT_MODELS_LIMIT: usize = 20;
-pub const DEFAULT_IDLE_EVICTION_MINUTES: u64 = 90;
-/// Session archiving defaults (roadmap item: the sessions directory must not
-/// grow forever). Age rule mirrors the TS `idleEvictionMinutes` grammar
-/// (`number | "off" | "none"`, malformed falls back to the default).
-pub const DEFAULT_SESSION_ARCHIVE_MAX_AGE_DAYS: u64 = 30;
-pub const DEFAULT_SESSION_ARCHIVE_MAX_SESSIONS: usize = 200;
+use super::types::{QueueModeSetting, Settings, ThinkingLevelSetting};
 
 #[derive(Debug, Clone)]
 pub struct SettingsError {
@@ -201,96 +193,7 @@ impl SettingsManager {
     pub fn set_default_model_and_provider(&mut self, provider: &str, model: &str) -> Result<()> {
         self.global.default_provider = Some(provider.to_string());
         self.global.default_model = Some(model.to_string());
-        self.record_model_use(provider, model);
         self.save_global()
-    }
-
-    /// `markdown.codeBlockIndent` (TS `getCodeBlockIndent`): the string the
-    /// chat markdown renderer indents fenced code blocks by; the default
-    /// matches the TS default, two spaces.
-    #[must_use]
-    pub fn get_code_block_indent(&self) -> String {
-        self.settings()
-            .markdown
-            .as_ref()
-            .and_then(|markdown| markdown.code_block_indent.clone())
-            .unwrap_or_else(|| "  ".to_string())
-    }
-
-    /// `terminal.fullscreenMouse` (TS `getFullscreenMouse`): whether the
-    /// fullscreen transcript surface enables mouse tracking and wheel
-    /// scrolling; the default matches the TS default, true.
-    #[must_use]
-    pub fn get_fullscreen_mouse(&self) -> bool {
-        self.settings()
-            .terminal
-            .as_ref()
-            .and_then(|terminal| terminal.fullscreen_mouse)
-            .unwrap_or(true)
-    }
-
-    /// `terminal.showImages` (TS `getShowImages`): whether image blocks in
-    /// tool results render their type/dimension metadata rows; the
-    /// default matches the TS default, true.
-    #[must_use]
-    pub fn get_show_images(&self) -> bool {
-        self.settings()
-            .terminal
-            .as_ref()
-            .and_then(|terminal| terminal.show_images)
-            .unwrap_or(true)
-    }
-
-    /// `treeFilterMode` (TS `getTreeFilterMode`): the `/tree` selector's
-    /// initial filter; an unset or invalid value falls back to
-    /// `user-only`, like the TS default.
-    #[must_use]
-    pub fn get_tree_filter_mode(&self) -> String {
-        let mode = self.settings().tree_filter_mode.clone().unwrap_or_default();
-        let valid = ["default", "no-tools", "user-only", "labeled-only", "all"];
-        if valid.contains(&mode.as_str()) && !mode.is_empty() {
-            mode
-        } else {
-            "user-only".to_string()
-        }
-    }
-
-    /// `chatDetail` (TS #2709 `getChatDetail`): the conversation-detail
-    /// level the chat starts at; an unset or invalid value falls back to
-    /// `overview` (the collapse mode: every activity item renders as
-    /// `details` does with only the thinking hidden - operator
-    /// directive 2026-09-28).
-    #[must_use]
-    pub fn get_chat_detail(&self) -> String {
-        match self.settings().chat_detail.as_deref() {
-            Some("details") => "details",
-            Some("all") => "all",
-            _ => "overview",
-        }
-        .to_string()
-    }
-
-    /// `branchSummary.skipPrompt` (TS `getBranchSummarySkipPrompt`).
-    #[must_use]
-    pub fn get_branch_summary_skip_prompt(&self) -> bool {
-        self.settings()
-            .branch_summary
-            .as_ref()
-            .and_then(|branch_summary| branch_summary.skip_prompt)
-            .unwrap_or(false)
-    }
-
-    /// Record a model use at the front of `recentModels` (capped at 20).
-    pub fn record_model_use(&mut self, provider: &str, model: &str) {
-        let key = format!("{provider}/{model}");
-        let mut recent: Vec<String> = vec![key];
-        for existing in self.global.recent_models.iter().flatten() {
-            if existing != &recent[0] {
-                recent.push(existing.clone());
-            }
-        }
-        recent.truncate(RECENT_MODELS_LIMIT);
-        self.global.recent_models = Some(recent);
     }
 
     /// `steeringMode` setter.
@@ -310,16 +213,6 @@ impl SettingsManager {
     /// Returns an error when the global settings file cannot be written.
     pub fn set_follow_up_mode(&mut self, mode: QueueModeSetting) -> Result<()> {
         self.global.follow_up_mode = Some(mode);
-        self.save_global()
-    }
-
-    /// `theme` setter.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the global settings file cannot be written.
-    pub fn set_theme(&mut self, theme: String) -> Result<()> {
-        self.global.theme = Some(theme);
         self.save_global()
     }
 
@@ -363,46 +256,6 @@ impl SettingsManager {
         self.save_global()
     }
 
-    /// `transport` setter.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the global settings file cannot be written.
-    pub fn set_transport(&mut self, transport: TransportSetting) -> Result<()> {
-        self.global.transport = Some(transport);
-        self.save_global()
-    }
-
-    /// `onboardingShown` setter.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the global settings file cannot be written.
-    pub fn set_onboarding_shown(&mut self, shown: bool) -> Result<()> {
-        self.global.onboarding_shown = Some(shown);
-        self.save_global()
-    }
-
-    /// `onboardingCompleted` setter.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the global settings file cannot be written.
-    pub fn set_onboarding_completed(&mut self, completed: bool) -> Result<()> {
-        self.global.onboarding_completed = Some(completed);
-        self.save_global()
-    }
-
-    /// TS `getOnboardingShown`: the shown flag with the legacy completed
-    /// flag as fallback; first run is defined by the settings alone.
-    #[must_use]
-    pub fn get_onboarding_shown(&self) -> bool {
-        self.merged
-            .onboarding_shown
-            .or(self.merged.onboarding_completed)
-            .unwrap_or(false)
-    }
-
     /// TS `getCompactionEnabled`: the auto-compaction toggle, on until the
     /// user opts out (the merged view, like every TS settings getter).
     #[must_use]
@@ -414,7 +267,7 @@ impl SettingsManager {
             .unwrap_or(true)
     }
 
-    /// Replace one resource-path array (`skills`/`prompts`/`themes`) in the
+    /// Replace one resource-path array (`skills`/`prompts`) in the
     /// global settings file (TS `setSkillPaths` & friends).
     pub fn set_global_resource_array(&mut self, field: &str, values: Vec<String>) {
         let array: Vec<serde_json::Value> =
@@ -422,7 +275,6 @@ impl SettingsManager {
         match field {
             "skills" => self.global.skills = Some(strings(&array)),
             "prompts" => self.global.prompts = Some(strings(&array)),
-            "themes" => self.global.themes = Some(strings(&array)),
             _ => return,
         }
         self.persist_scope_field(
@@ -441,7 +293,6 @@ impl SettingsManager {
         match field {
             "skills" => self.project.skills = Some(strings(&array)),
             "prompts" => self.project.prompts = Some(strings(&array)),
-            "themes" => self.project.themes = Some(strings(&array)),
             _ => return,
         }
         self.persist_scope_field(
@@ -500,6 +351,53 @@ impl SettingsManager {
         }
     }
 
+    /// Set one value at `path` (`["compaction", "enabled"]`) in the global
+    /// settings file, or remove it with `None` (the key then reads its
+    /// default; parents left empty go too). The rest of the file, unknown
+    /// keys included, is kept as it is on disk, less its `null`s (unset
+    /// keys). The settings screen's write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the global file failed to parse (it is never
+    /// overwritten then), is no longer a JSON object, or cannot be written.
+    pub fn set_global_value(
+        &mut self,
+        path: &[&str],
+        value: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        let (last, parents) = path
+            .split_last()
+            .ok_or_else(|| anyhow::anyhow!("empty settings path"))?;
+        if let Some(message) = &self.global_load_error {
+            anyhow::bail!("the settings file failed to parse: {message}");
+        }
+        let mut refused: Option<String> = None;
+        self.storage
+            .with_lock(SettingsScope::Global, &mut |current| {
+                let mut document = match current.as_deref().map(serde_json::from_str) {
+                    None => serde_json::Map::new(),
+                    Some(Ok(serde_json::Value::Object(map))) => map,
+                    Some(_) => {
+                        refused = Some("the settings file is not a JSON object".to_string());
+                        return None;
+                    }
+                };
+                migrate(&mut document);
+                match value {
+                    Some(value) => insert_path(&mut document, parents, last, value),
+                    None => remove_path(&mut document, parents, last),
+                }
+                // A `null` is an unset key: the file only holds what is set.
+                serde_json::to_string_pretty(&without_nulls(serde_json::Value::Object(document)))
+                    .ok()
+            })?;
+        if let Some(message) = refused {
+            anyhow::bail!(message);
+        }
+        self.reload()
+    }
+
     // -- getters with TS semantics ------------------------------------------
 
     #[must_use]
@@ -519,8 +417,8 @@ impl SettingsManager {
 
     /// TS `getImageModel`: the "provider/model-id" (or bare id) reference
     /// that serves turns attaching images on session models without image
-    /// input. Same shape as `providerBackupModel`: malformed values behave
-    /// as unset and the image-turn refusal names the setting instead.
+    /// input. Malformed values behave as unset and the image-turn refusal
+    /// names the setting instead.
     #[must_use]
     pub fn get_image_model(&self) -> Option<String> {
         self.merged
@@ -535,8 +433,8 @@ impl SettingsManager {
     /// model resolution (`set_model`, RLM child-model resolution, the
     /// worker startup chain) — a model outside the allowlist fails loudly,
     /// never a fallback. Rust-only guardrail (no TS equivalent); `None` is
-    /// unrestricted. A daemon policy like `idleEvictionMinutes`: read from
-    /// the global scope only, so a project cannot weaken a box-level pin.
+    /// unrestricted. Read from the global scope only, so a project cannot
+    /// weaken a box-level pin.
     /// A list that trims to empty behaves as unset.
     #[must_use]
     pub fn get_allowed_models(&self) -> Option<Vec<String>> {
@@ -589,11 +487,6 @@ impl SettingsManager {
             .unwrap_or(ServiceTier::Default)
     }
 
-    #[must_use]
-    pub fn get_recent_models(&self) -> Vec<String> {
-        self.merged.recent_models.clone().unwrap_or_default()
-    }
-
     /// The steering queue's delivery mode (TS `steeringMode`): `all`
     /// batches every queued steering message into ONE co-delivered turn
     /// at the next turn boundary; `one-at-a-time` delivers one per turn.
@@ -609,11 +502,6 @@ impl SettingsManager {
         self.merged
             .follow_up_mode
             .unwrap_or(QueueModeSetting::OneAtATime)
-    }
-
-    #[must_use]
-    pub fn get_theme(&self) -> Option<&str> {
-        self.merged.theme.as_deref()
     }
 
     #[must_use]
@@ -729,61 +617,6 @@ impl SettingsManager {
         }
     }
 
-    /// `number | "off" | "none"` -> finite minutes or Off; malformed falls
-    /// back to the default (90).
-    #[must_use]
-    pub fn get_idle_eviction(&self) -> IdleEviction {
-        match &self.global.idle_eviction_minutes {
-            Some(serde_json::Value::String(text)) if text == "off" || text == "none" => {
-                IdleEviction::Off
-            }
-            Some(serde_json::Value::Number(number)) => {
-                if let Some(minutes) = number.as_u64() {
-                    if minutes > 0 {
-                        return IdleEviction::Minutes(minutes);
-                    }
-                }
-                IdleEviction::Minutes(DEFAULT_IDLE_EVICTION_MINUTES)
-            }
-            _ => IdleEviction::Minutes(DEFAULT_IDLE_EVICTION_MINUTES),
-        }
-    }
-
-    /// Resolved session-archiving policy: which sessions the daemon's archive
-    /// sweep moves out of the sessions directory. Both rules are independent —
-    /// a session is archived when EITHER fires. `None` on a field disables
-    /// that rule.
-    #[must_use]
-    pub fn get_session_archive_policy(&self) -> SessionArchivePolicy {
-        let max_age_days = match &self.global.session_archive_max_age_days {
-            Some(serde_json::Value::String(text)) if text == "off" || text == "none" => None,
-            Some(serde_json::Value::Number(number)) => Some(
-                number
-                    .as_u64()
-                    .filter(|days| *days > 0)
-                    .unwrap_or(DEFAULT_SESSION_ARCHIVE_MAX_AGE_DAYS),
-            ),
-            _ => Some(DEFAULT_SESSION_ARCHIVE_MAX_AGE_DAYS),
-        };
-        let max_sessions = match &self.global.session_archive_max_sessions {
-            Some(serde_json::Value::String(text)) if text == "off" || text == "none" => None,
-            Some(serde_json::Value::Number(number)) => number
-                .as_u64()
-                .filter(|count| *count > 0)
-                .map(|count| count as usize),
-            _ => Some(DEFAULT_SESSION_ARCHIVE_MAX_SESSIONS),
-        };
-        SessionArchivePolicy {
-            max_age_days,
-            max_sessions,
-        }
-    }
-
-    #[must_use]
-    pub fn get_transport(&self) -> TransportSetting {
-        self.merged.transport.unwrap_or(TransportSetting::Auto)
-    }
-
     /// `requestTiming`: unset means OFF — the per-request timing timeline
     /// is opt-in, exactly the TS default (`getRequestTiming`).
     #[must_use]
@@ -809,7 +642,10 @@ impl SettingsManager {
     /// Write the global scope back (project scope is host-written, not
     /// user-set in this port), then re-derive the effective settings.
     fn save_global(&mut self) -> Result<()> {
-        let content = serde_json::to_string_pretty(&self.global)?;
+        // Unset fields serialize as `null`; the file only holds what is set
+        // (the TS `JSON.stringify` drops `undefined`).
+        let content =
+            serde_json::to_string_pretty(&without_nulls(serde_json::to_value(&self.global)?))?;
         self.storage
             .with_lock(SettingsScope::Global, &mut |current| {
                 let _ = current;
@@ -820,20 +656,66 @@ impl SettingsManager {
     }
 }
 
-/// Resolved `idleEvictionMinutes`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IdleEviction {
-    Minutes(u64),
-    Off,
+/// The value with every `null` object member removed, at any depth.
+fn without_nulls(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .filter(|(_, value)| !value.is_null())
+                .map(|(key, value)| (key, without_nulls(value)))
+                .collect(),
+        ),
+        other => other,
+    }
 }
 
-/// Resolved session-archiving settings: the age rule (archive sessions
-/// untouched for `max_age_days` days) and the count rule (keep the newest
-/// `max_sessions` sessions). Each field is `None` when its rule is off.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SessionArchivePolicy {
-    pub max_age_days: Option<u64>,
-    pub max_sessions: Option<usize>,
+/// Set `parents.last` in the document; a parent that is missing or not an
+/// object becomes an empty object first.
+fn insert_path(
+    document: &mut serde_json::Map<String, serde_json::Value>,
+    parents: &[&str],
+    last: &str,
+    value: &serde_json::Value,
+) {
+    match parents.split_first() {
+        None => {
+            document.insert(last.to_string(), value.clone());
+        }
+        Some((first, rest)) => {
+            let entry = document
+                .entry((*first).to_string())
+                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+            if !entry.is_object() {
+                *entry = serde_json::Value::Object(serde_json::Map::new());
+            }
+            if let serde_json::Value::Object(child) = entry {
+                insert_path(child, rest, last, value);
+            }
+        }
+    }
+}
+
+/// Remove `parents.last` from the document, then each parent the removal
+/// left empty.
+fn remove_path(
+    document: &mut serde_json::Map<String, serde_json::Value>,
+    parents: &[&str],
+    last: &str,
+) {
+    match parents.split_first() {
+        None => {
+            document.remove(last);
+        }
+        Some((first, rest)) => {
+            let Some(serde_json::Value::Object(child)) = document.get_mut(*first) else {
+                return;
+            };
+            remove_path(child, rest, last);
+            if child.is_empty() {
+                document.remove(*first);
+            }
+        }
+    }
 }
 
 fn strings(array: &[serde_json::Value]) -> Vec<String> {
@@ -899,7 +781,6 @@ fn load_scope(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::types::MarkdownSettings;
 
     #[test]
     fn in_memory_loads_merges_and_saves() {
@@ -909,60 +790,8 @@ mod tests {
             .unwrap();
         assert_eq!(manager.get_default_provider(), Some("prime-inference"));
         assert_eq!(manager.get_default_model(), Some("z-ai/glm-5.3"));
-        assert_eq!(
-            manager.get_recent_models(),
-            vec!["prime-inference/z-ai/glm-5.3".to_string()]
-        );
         manager.reload().unwrap();
         assert_eq!(manager.get_default_model(), Some("z-ai/glm-5.3"));
-    }
-
-    #[test]
-    fn code_block_indent_reads_markdown_settings_with_ts_default() {
-        // `markdown.codeBlockIndent` (TS getCodeBlockIndent): absent -> the
-        // TS default two spaces; set -> the configured string.
-        let manager = SettingsManager::in_memory(&Settings::default());
-        assert_eq!(manager.get_code_block_indent(), "  ");
-
-        let settings = Settings {
-            markdown: Some(MarkdownSettings {
-                code_block_indent: Some("    ".to_string()),
-                mermaid: None,
-            }),
-            ..Settings::default()
-        };
-        let manager = SettingsManager::in_memory(&settings);
-        assert_eq!(manager.get_code_block_indent(), "    ");
-    }
-
-    /// TS #2709: the Ctrl+O level persists as the global `chatDetail`
-    /// setting — a later run reads it back — and anything but the three
-    /// TS levels reads as the `overview` startup default (the collapse
-    /// mode; operator directive 2026-09-28).
-    #[test]
-    fn chat_detail_persists_the_chosen_level_with_the_startup_fallback() {
-        let mut manager = SettingsManager::in_memory(&Settings::default());
-        assert_eq!(manager.get_chat_detail(), "overview");
-        manager.set_chat_detail("all").unwrap();
-        assert_eq!(manager.get_chat_detail(), "all");
-        manager.reload().unwrap();
-        assert_eq!(
-            manager.get_chat_detail(),
-            "all",
-            "the saved level survives a reload (a later chat re-reads it)"
-        );
-        manager.set_chat_detail("details").unwrap();
-        assert_eq!(
-            manager.get_chat_detail(),
-            "details",
-            "a saved details level reads back exactly (the Ctrl+O thinking reveal persists)"
-        );
-        manager.set_chat_detail("verbose").unwrap();
-        assert_eq!(
-            manager.get_chat_detail(),
-            "overview",
-            "an invalid value falls back to the startup default"
-        );
     }
 
     /// The steering default is "all" (every queued steer co-delivers as
@@ -1002,30 +831,12 @@ mod tests {
             Arc::new(super::super::storage::InMemorySettingsStorage::default());
         storage
             .with_lock(SettingsScope::Global, &mut |_| {
-                Some(r#"{ "defaultProvider": 42, "theme": "prime" }"#.into())
+                Some(r#"{ "defaultProvider": 42, "auxiliaryModel": "openai/gpt-5.4" }"#.into())
             })
             .unwrap();
         let manager = SettingsManager::from_storage(storage);
         assert_eq!(manager.get_default_provider(), None);
-        assert_eq!(manager.get_theme(), Some("prime"));
-    }
-
-    #[test]
-    fn idle_eviction_semantics() {
-        let mut manager = SettingsManager::in_memory(&Settings::default());
-        assert_eq!(
-            manager.get_idle_eviction(),
-            IdleEviction::Minutes(DEFAULT_IDLE_EVICTION_MINUTES)
-        );
-        manager.global.idle_eviction_minutes = Some(serde_json::json!("off"));
-        assert_eq!(manager.get_idle_eviction(), IdleEviction::Off);
-        manager.global.idle_eviction_minutes = Some(serde_json::json!(0));
-        assert_eq!(
-            manager.get_idle_eviction(),
-            IdleEviction::Minutes(DEFAULT_IDLE_EVICTION_MINUTES)
-        );
-        manager.global.idle_eviction_minutes = Some(serde_json::json!(45));
-        assert_eq!(manager.get_idle_eviction(), IdleEviction::Minutes(45));
+        assert_eq!(manager.get_auxiliary_model(), Some("openai/gpt-5.4"));
     }
 
     #[test]
@@ -1040,36 +851,6 @@ mod tests {
         assert!(!manager.get_compaction_enabled());
         manager.reload().unwrap();
         assert!(!manager.get_compaction_enabled());
-    }
-
-    #[test]
-    fn session_archive_policy_semantics() {
-        // Absent keys: both rules on with their defaults.
-        let mut manager = SettingsManager::in_memory(&Settings::default());
-        assert_eq!(
-            manager.get_session_archive_policy(),
-            SessionArchivePolicy {
-                max_age_days: Some(DEFAULT_SESSION_ARCHIVE_MAX_AGE_DAYS),
-                max_sessions: Some(DEFAULT_SESSION_ARCHIVE_MAX_SESSIONS),
-            }
-        );
-        // "off"/"none" disable a rule; malformed values fall back to the
-        // default (the `idleEvictionMinutes` grammar).
-        manager.global.session_archive_max_age_days = Some(serde_json::json!("off"));
-        assert_eq!(manager.get_session_archive_policy().max_age_days, None);
-        manager.global.session_archive_max_age_days = Some(serde_json::json!(0));
-        assert_eq!(
-            manager.get_session_archive_policy().max_age_days,
-            Some(DEFAULT_SESSION_ARCHIVE_MAX_AGE_DAYS)
-        );
-        manager.global.session_archive_max_age_days = Some(serde_json::json!(14));
-        assert_eq!(manager.get_session_archive_policy().max_age_days, Some(14));
-        manager.global.session_archive_max_sessions = Some(serde_json::json!("none"));
-        assert_eq!(manager.get_session_archive_policy().max_sessions, None);
-        manager.global.session_archive_max_sessions = Some(serde_json::json!(0));
-        assert_eq!(manager.get_session_archive_policy().max_sessions, None);
-        manager.global.session_archive_max_sessions = Some(serde_json::json!(50));
-        assert_eq!(manager.get_session_archive_policy().max_sessions, Some(50));
     }
 
     /// TS `getImageModel`: the `imageModel` reference reads trimmed, and

@@ -83,7 +83,7 @@ pub(crate) fn find_source_info(
 
 /// Auto-discovered and package skill resources that point at a directory
 /// resolve to its `SKILL.md` when present.
-fn map_skill_path(resource: &ResolvedResource) -> PathBuf {
+pub(crate) fn map_skill_path(resource: &ResolvedResource) -> PathBuf {
     let is_mappable = resource.metadata.source == MetadataSource::Auto
         || resource.metadata.origin == crate::resource_paths::ResourceOrigin::Package;
     if !is_mappable {
@@ -181,7 +181,6 @@ pub(crate) fn resolve_session_resources(
     let mut source_infos: SourceInfoIndex = Vec::new();
     index_source_infos(&mut source_infos, &resolved.skills);
     index_source_infos(&mut source_infos, &resolved.prompts);
-    index_source_infos(&mut source_infos, &resolved.themes);
 
     let enabled_prompts = as_strings(&enabled_paths(&resolved.prompts));
     let enabled_skills: Vec<String> = resolved

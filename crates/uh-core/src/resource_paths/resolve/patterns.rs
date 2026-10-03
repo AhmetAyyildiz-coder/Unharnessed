@@ -13,7 +13,8 @@ use globset::GlobBuilder;
 
 /// True when the entry is a pattern rather than a plain path: `!`/`+`/`-`
 /// override prefixes or glob metacharacters.
-pub(crate) fn is_pattern(entry: &str) -> bool {
+#[must_use]
+pub fn is_pattern(entry: &str) -> bool {
     entry.starts_with('!')
         || entry.starts_with('+')
         || entry.starts_with('-')
@@ -24,6 +25,17 @@ pub(crate) fn is_pattern(entry: &str) -> bool {
 /// True when the entry is one of the `!`/`+`/`-` override forms.
 pub(crate) fn is_override_pattern(entry: &str) -> bool {
     entry.starts_with('!') || entry.starts_with('+') || entry.starts_with('-')
+}
+
+/// The `+`/`-` entries that name a path by its absolute path: they mean
+/// that one skill wherever it is found.
+pub(crate) fn absolute_overrides(entries: &[String]) -> impl Iterator<Item = &String> {
+    entries.iter().filter(|entry| {
+        entry
+            .strip_prefix('+')
+            .or_else(|| entry.strip_prefix('-'))
+            .is_some_and(|path| Path::new(path).is_absolute())
+    })
 }
 
 /// Split entries into plain paths and patterns.

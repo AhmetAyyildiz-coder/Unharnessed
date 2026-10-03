@@ -13,6 +13,12 @@ use super::{
     ResolvedPaths, ResourceAccumulator, ResourceType, RESOURCE_TYPES,
 };
 
+/// The same directory, links resolved (as given when one does not exist).
+pub(crate) fn same_dir(a: &Path, b: &Path) -> bool {
+    let real = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    real(a) == real(b)
+}
+
 /// Files or directory trees behind a list of paths: files pass through,
 /// directories are collected per resource kind; missing paths are skipped.
 pub(crate) fn collect_files_from_paths(
@@ -38,12 +44,18 @@ impl ResourceResolver {
     /// then auto-discovery.
     #[must_use]
     pub fn resolve(&self) -> ResolvedPaths {
-        let global = self.settings().global_settings().clone();
-        let project = self.settings().project_settings().clone();
-        let mut accumulator = ResourceAccumulator::default();
-
         let global_base_dir = self.agent_dir().to_path_buf();
         let project_base_dir = self.cwd().join(super::super::CONFIG_DIR_NAME);
+        let global = self.settings().global_settings().clone();
+        // With the home folder as cwd, the project's config dir is the agent
+        // dir itself: no project of its own, its skills and settings are the
+        // user's.
+        let project = if same_dir(&project_base_dir, &global_base_dir) {
+            crate::settings::Settings::default()
+        } else {
+            self.settings().project_settings().clone()
+        };
+        let mut accumulator = ResourceAccumulator::default();
 
         for resource_type in RESOURCE_TYPES {
             let project_entries = settings_array(&project, resource_type);
