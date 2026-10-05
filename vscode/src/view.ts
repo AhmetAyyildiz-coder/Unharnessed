@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
 import type { Agent } from "./agent";
+import type { Chat } from "./chat";
 import type { HostMessage, WebviewMessage } from "./protocol";
 import type { Providers } from "./providers";
 import type { Session } from "./session";
@@ -19,6 +20,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly providers: Providers,
     private readonly session: Session,
     private readonly settings: Settings,
+    private readonly chat: Chat,
     private readonly log: vscode.LogOutputChannel,
   ) {
     agent.onChange((state) => this.post({ type: "agent", agent: state }));
@@ -27,6 +29,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     );
     session.onChange(() => this.post({ type: "session", session: session.current }));
     settings.onChange(() => this.post({ type: "settings", settings: settings.current }));
+    chat.onPost((message) => this.post(message));
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -40,7 +43,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.view = view;
   }
 
-  private receive(message: WebviewMessage): void {
+  receive(message: WebviewMessage): void {
     switch (message.type) {
       case "ready":
         this.log.info("webview ready");
@@ -52,6 +55,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           login: this.providers.signIn,
           session: this.session.current,
           settings: this.settings.current,
+          chat: this.chat.current,
         });
         this.splashPlayed = true;
         break;
@@ -139,6 +143,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       case "copy":
         void vscode.env.clipboard.writeText(message.text);
+        break;
+      case "send":
+        this.chat.send(message.text, message.images);
+        break;
+      case "cancel":
+        this.chat.cancel();
+        break;
+      case "unqueue":
+        this.chat.unqueue(message.id);
+        break;
+      case "newChat":
+        this.chat.newChat();
+        break;
+      case "openLink":
+        // Web pages only: a message never opens anything else.
+        if (/^https?:\/\//i.test(message.url)) void vscode.env.openExternal(vscode.Uri.parse(message.url));
         break;
     }
   }

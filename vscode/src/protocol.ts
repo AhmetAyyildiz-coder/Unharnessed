@@ -166,6 +166,88 @@ export type SettingsState = {
   skills: SkillsView | null;
 };
 
+/** An image attached to a message: what the agent gets, and a small copy to show. */
+export type Attachment = {
+  /** Base64, without the `data:` prefix. */
+  data: string;
+  mimeType: string;
+  /** A small JPEG data URL. */
+  thumb: string;
+  name: string;
+};
+
+/** What the transcript keeps of an attachment. */
+export type Thumb = Pick<Attachment, "thumb" | "name">;
+
+/** One slash command, typed as `/name` at the start of a message. */
+export type ChatCommand = {
+  name: string;
+  description: string;
+  /** What to type after the name. */
+  hint?: string;
+  /** `command`: the agent runs it (`/compact`); `prompt`: a prompt template; `panel`: the panel's own (`/new`). */
+  kind: "command" | "prompt" | "skill" | "panel";
+};
+
+/** What a turn shows, in the order the agent did it. */
+export type TurnItem =
+  /**
+   * The model's reasoning: when it started (`Date.now()`), and `ms`, how long
+   * it took, once it is over. Some providers send little or none of its text.
+   */
+  | { kind: "thought"; text: string; started: number; ms?: number }
+  | { kind: "text"; text: string }
+  | {
+      kind: "tool";
+      id: string;
+      /** `Python cell`, or the tool's name. */
+      title: string;
+      status: "running" | "done" | "failed";
+      /** The cell's code, or the tool's input as JSON. */
+      input: string;
+      output?: string;
+      /** Images the cell loaded into the context, diffs it showed. */
+      images?: number;
+      diffs?: number;
+    }
+  /** A command's answer, a compaction, a goal's change. */
+  | { kind: "notice"; tone: "info" | "warning" | "error"; text: string };
+
+export type TurnHead = {
+  kind: "turn";
+  id: number;
+  /** What the user sent; absent on a turn the agent started on its own. */
+  prompt?: { text: string; images: Thumb[] };
+  /** What woke the agent, on its own turns: a background command ended, a usage limit reset, a goal's pause ended. */
+  wake?: "bash" | "quota" | "goal";
+  state: "running" | "done" | "cancelled" | "failed";
+  error?: string;
+};
+
+/** A turn, or the line where the agent restarted: it remembers nothing above it. */
+export type EntryHead = TurnHead | { kind: "restart"; id: number };
+export type ChatEntry = (TurnHead & { items: TurnItem[] }) | { kind: "restart"; id: number };
+
+/** A message waiting for the running turn to end. */
+export type QueuedMessage = { id: number; text: string; images: Thumb[] };
+
+export type ChatState = {
+  entries: ChatEntry[];
+  /** A turn runs: one the panel sent, or one the agent started. */
+  busy: boolean;
+  queue: QueuedMessage[];
+  commands: ChatCommand[];
+};
+
+/** What changed since the last post: entries without their items, then the items by entry id and index. */
+export type ChatPatch = {
+  heads: EntryHead[];
+  items: [entry: number, at: number, item: TurnItem][];
+  busy: boolean;
+  queue: QueuedMessage[];
+  commands?: ChatCommand[];
+};
+
 export type HostMessage =
   /** Answer to `ready`; `splash` is true once per window. */
   | {
@@ -176,7 +258,12 @@ export type HostMessage =
       login: LoginState | null;
       session: SessionState | null;
       settings: SettingsState;
+      chat: ChatState;
     }
+  | { type: "chat"; chat: ChatState }
+  | { type: "chatPatch"; patch: ChatPatch }
+  /** The waiting messages, back in the message box after a stop. */
+  | { type: "chatDraft"; text: string; images: Attachment[] }
   | { type: "agent"; agent: AgentState }
   /** `null` while the agent is not running. */
   | { type: "session"; session: SessionState | null }
@@ -217,6 +304,15 @@ export type WebviewMessage =
   | { type: "skillFolder"; path: string; add: boolean }
   /** Open a skill's file in the editor. */
   | { type: "openFile"; path: string }
-  | { type: "copy"; text: string };
+  | { type: "copy"; text: string }
+  /** Sent now, or queued while a turn runs. */
+  | { type: "send"; text: string; images: Attachment[] }
+  /** Stop the running turn; the waiting messages come back to the box. */
+  | { type: "cancel" }
+  | { type: "unqueue"; id: number }
+  /** A new conversation: the agent restarts. */
+  | { type: "newChat" }
+  /** A link in a message: web pages open in the browser. */
+  | { type: "openLink"; url: string };
 
 export type Screen = "splash" | "status" | "providers" | "login" | "settings";

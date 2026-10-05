@@ -18,6 +18,7 @@
 //! write queue, so responses and `session/update` notifications interleave
 //! exactly in publication order. The process exits when stdin closes.
 
+mod commands;
 mod compaction_arms;
 mod config_options;
 mod events;
@@ -51,7 +52,8 @@ use meta::UnharnessedSessionMeta;
 use producer::UpdateProducer;
 use session::AcpSession;
 use types::{
-    initialize_result, session_id_params, AcpStopReason, AcpStopReasonResponse, NewSessionParams,
+    initialize_result, session_id_params, AcpSessionUpdate, AcpStopReason, AcpStopReasonResponse,
+    NewSessionParams,
 };
 
 use config_options::ProviderTargetSlot;
@@ -540,6 +542,13 @@ async fn handle_session_new(
             drop(state);
             let _ = tx.send(jsonrpc::response(&id, &result));
             producer.commit_session_new_response().await;
+            // The slash commands the prompt takes, once per session.
+            let commands = AcpSessionUpdate::AvailableCommandsUpdate {
+                available_commands: commands::available_commands(&mode.engine),
+            };
+            producer
+                .publish(&commands, 0, meta::UnharnessedEventPhase::Event, None)
+                .await;
         }
     }
 }

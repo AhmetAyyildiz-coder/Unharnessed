@@ -188,6 +188,30 @@ pub enum AcpSessionUpdate {
         #[serde(rename = "configOptions")]
         config_options: Vec<super::config_options::SessionConfigOption>,
     },
+    /// The slash commands the session takes (`commands.rs`).
+    #[serde(rename = "available_commands_update")]
+    AvailableCommandsUpdate {
+        #[serde(rename = "availableCommands")]
+        available_commands: Vec<AvailableCommand>,
+    },
+}
+
+/// One slash command, typed as `/<name>` at the start of a prompt.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AvailableCommand {
+    pub name: String,
+    pub description: String,
+    /// What to type after the name, when it takes something.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<AvailableCommandInput>,
+    /// `{ "unharnessed": { "kind": "command" | "prompt" | "skill" } }`.
+    #[serde(rename = "_meta")]
+    pub meta: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AvailableCommandInput {
+    pub hint: String,
 }
 
 impl AcpSessionUpdate {

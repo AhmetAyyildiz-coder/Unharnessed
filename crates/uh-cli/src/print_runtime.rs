@@ -1329,6 +1329,12 @@ async fn build_faux_engine_with(
         .get("contextWindow")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(100_000);
+    // The script paces the stream like a model writing (the shared
+    // script contract): a client sees each delta arrive on its own.
+    let tokens_per_second = script
+        .get("tokensPerSecond")
+        .and_then(serde_json::Value::as_f64)
+        .filter(|rate| *rate > 0.0);
     // The stable faux identity (`api: "faux"`, `provider: "faux"`) the
     // daemon's scripted engine registers under: verification fixtures can
     // declare faux-provider models in models.json, and the ACP pickers'
@@ -1347,6 +1353,7 @@ async fn build_faux_engine_with(
                 context_window: Some(context_window),
                 max_tokens: Some(4_096),
             }]),
+            tokens_per_second,
             ..Default::default()
         });
     registration.set_responses(response_steps);

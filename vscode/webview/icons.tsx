@@ -189,3 +189,49 @@ export function IconSliders(props: IconProps) {
     </Icon>
   );
 }
+
+/** A soft square, for stop. */
+export function IconStop(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="7.5" y="7.5" width="9" height="9" rx="2" />
+    </Icon>
+  );
+}
+
+/** A speech bubble with a plus: a new conversation. */
+export function IconNewChat(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 5.5h12a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-7.5L7 19.5v-3H6A1.5 1.5 0 0 1 4.5 15V7A1.5 1.5 0 0 1 6 5.5z" />
+      <path d="M12 8.5v5M9.5 11h5" />
+    </Icon>
+  );
+}
+
+/** A prompt: a chevron and a line, for a cell the agent runs. */
+export function IconCell(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 8l4 4-4 4M12.5 16.5H18" />
+    </Icon>
+  );
+}
+
+/** A paper clip: attach an image. */
+export function IconClip(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M15.5 8.5l-6 6a1.77 1.77 0 0 0 2.5 2.5l6.5-6.5a3.54 3.54 0 0 0-5-5L7 12a5.3 5.3 0 0 0 7.5 7.5L19 15" />
+    </Icon>
+  );
+}
+
+/** An arrow pointing down, to the latest message. */
+export function IconArrowDown(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 6v12.5M6.5 13L12 18.5l5.5-5.5" />
+    </Icon>
+  );
+}

@@ -26,7 +26,7 @@ use super::internal_error;
 use super::meta::{self, UnharnessedAutonomousMeta, UnharnessedEventPhase, UnharnessedOutcome};
 use super::session::{self, AcpSession, TurnBoundary};
 use super::stop_reason_response;
-use super::types::PromptParams;
+use super::types::{AcpSessionUpdate, PromptParams};
 use super::{events, jsonrpc, producer, AcpModeState, AcpStopReason, ConnectionState};
 
 /// The `_meta.autonomous` accounting for a completion update: shared with
@@ -120,6 +120,16 @@ async fn admit_session_prompt(
             return true;
         }
     };
+    if let Some(refusal) = image_refusal(mode, &admitted_prompt.images) {
+        session.producer().finish_prompt(turn_id).await;
+        let _ = tx.send(jsonrpc::error_response(
+            id,
+            jsonrpc::INVALID_PARAMS,
+            "Invalid params",
+            Some(&serde_json::json!({ "details": refusal })),
+        ));
+        return true;
+    }
 
     // The turn runs as its own task so the reader loop can keep serving
     // session/cancel and session/close while it settles.
@@ -137,6 +147,45 @@ async fn admit_session_prompt(
     )));
     entry.prompt_is_wake = false;
     true
+}
+
+/// The base64 payload an image may carry under `images.autoResize`: the
+/// CLI's `@file` limit, under the providers' 5 MB.
+const MAX_IMAGE_BASE64_BYTES: usize = 4_500_000;
+
+/// Why the prompt's images cannot go, under the image settings read now
+/// (they act on the next prompt, like the other live settings):
+/// `images.blockImages` refuses them all; under `images.autoResize` an
+/// image past the limit is refused, the agent having nothing to shrink it
+/// with (the client shrinks it first).
+fn image_refusal(mode: &AcpModeState, images: &[super::types::ImageBlock]) -> Option<String> {
+    if images.is_empty() {
+        return None;
+    }
+    let settings = uh_core::settings::SettingsManager::create(
+        mode.actual_cwd.as_path(),
+        mode.agent_dir.as_path(),
+    );
+    if settings.get_block_images() {
+        return Some(
+            "Images are blocked: turn off \"Block images\" in the settings to send them."
+                .to_string(),
+        );
+    }
+    let largest = images.iter().map(|image| image.data.len()).max()?;
+    if settings.get_image_auto_resize() && largest > MAX_IMAGE_BASE64_BYTES {
+        return Some(format!(
+            "An image is {:.1} MB once encoded, over the {:.1} MB limit: shrink it, or turn off \"Shrink large images\" in the settings to send it as it is.",
+            megabytes(largest),
+            megabytes(MAX_IMAGE_BASE64_BYTES)
+        ));
+    }
+    None
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn megabytes(bytes: usize) -> f64 {
+    bytes as f64 / 1_000_000.0
 }
 
 async fn wake_turn_running(state: &Arc<Mutex<ConnectionState>>) -> bool {
@@ -255,6 +304,33 @@ async fn run_prompt_turn(
     mode: AcpModeState,
     tx: producer::FrameSink,
 ) {
+    // What started the turn comes first in it: a client tells its own
+    // prompt from a wake by it.
+    let turn_start = meta::UnharnessedTurnStartMeta {
+        origin: match &start {
+            TurnStart::Prompt { .. } => "prompt",
+            TurnStart::Wake(_) => "wake",
+        }
+        .to_string(),
+        wake: match &start {
+            TurnStart::Prompt { .. } => None,
+            TurnStart::Wake(wake) => Some(wake.kind().to_string()),
+        },
+    };
+    session
+        .producer()
+        .publish(
+            &AcpSessionUpdate::SessionInfoUpdate {
+                meta: meta::unharnessed_meta(&meta::UnharnessedSessionMeta {
+                    turn_start: Some(turn_start),
+                    ..Default::default()
+                }),
+            },
+            turn_id,
+            UnharnessedEventPhase::Event,
+            None,
+        )
+        .await;
     let boundary = TurnBoundary::capture(mode.engine.session.agent()).await;
     // The pre-turn compaction arms (TS `_runPreTurnCompaction`,
     // `beforeModelSelection`): a stale overflow from the previous run
@@ -320,6 +396,11 @@ async fn run_prompt_turn(
         Ok(PromptOutcome::SessionCommand(command)) => {
             match run_session_command_segment(&mode, &session, &command, &mut turn_failure).await {
                 Ok(ran) => ran_model_turn = ran,
+                Err(_) if session.cancel_requested() => {
+                    cancelled_before_start(&state, &session, id.as_ref(), &session_id, turn_id, tx)
+                        .await;
+                    return;
+                }
                 Err(error) => {
                     // Command execution could not start (no resolved model):
                     // an admission-style error boundary, never an invented
@@ -342,6 +423,10 @@ async fn run_prompt_turn(
         }
         Ok(PromptOutcome::Prompt) => {
             ran_model_turn = true;
+        }
+        Err(_) if session.cancel_requested() => {
+            cancelled_before_start(&state, &session, id.as_ref(), &session_id, turn_id, tx).await;
+            return;
         }
         Err(error) => {
             // Failed prompt admission gets one correlated error boundary; it
@@ -574,6 +659,19 @@ async fn run_prompt_turn(
     .await;
 }
 
+/// A stop that landed before the turn got going (the admission saw the
+/// aborted agent): the turn is cancelled, not failed.
+async fn cancelled_before_start(
+    state: &Arc<Mutex<ConnectionState>>,
+    session: &Arc<AcpSession>,
+    id: Option<&Value>,
+    session_id: &str,
+    turn_id: u64,
+    tx: producer::FrameSink,
+) {
+    settle_turn(state, session, id, session_id, turn_id, None, None, tx).await;
+}
+
 /// Execute one session command and publish its namespaced events:
 /// compaction outcomes, plus any goal state change. A goal
 /// start/resume schedules its continuation context as the turn's model
@@ -627,6 +725,7 @@ async fn run_session_command_segment(
     if let Some(event) = compaction_event {
         publish_engine_event(session, &event).await;
     }
+    publish_command_output(session, command.name, &execution).await;
     if command.name == "compact" && execution.compaction.is_some() {
         // TS `compact()`'s `didCompact` + active-goal finally arm: a
         // successful manual compact with an active goal mints the owed
@@ -669,6 +768,52 @@ async fn run_goal_continuation_segment(
     }
     mode.engine.session.agent().wait_for_idle().await;
     Ok(true)
+}
+
+/// Publish what a session command answered: its shown result rows (the
+/// `/goal` status, a refusal), then a skipped compaction's reason.
+async fn publish_command_output(
+    session: &Arc<AcpSession>,
+    name: &str,
+    execution: &uh_core::session_engine::session_commands::SessionCommandExecution,
+) {
+    let rows = execution
+        .messages
+        .iter()
+        .filter(|row| {
+            row.display
+                && row.custom_type
+                    == uh_types::slash_commands::SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE
+        })
+        .map(|row| {
+            let severity = row
+                .details
+                .as_ref()
+                .and_then(|details| details.get("severity"))
+                .and_then(Value::as_str)
+                .unwrap_or("info");
+            (row.content.text(), severity)
+        });
+    let skipped = execution
+        .compaction_skipped
+        .map(|reason| (reason.to_string(), "warning"));
+    let turn_id = session.producer().active_prompt_turn().await;
+    for (text, severity) in rows.chain(skipped) {
+        let update = AcpSessionUpdate::SessionInfoUpdate {
+            meta: meta::unharnessed_meta(&meta::UnharnessedSessionMeta {
+                command: Some(meta::UnharnessedCommandMeta {
+                    name: name.to_string(),
+                    text,
+                    severity: severity.to_string(),
+                }),
+                ..Default::default()
+            }),
+        };
+        session
+            .producer()
+            .publish(&update, turn_id, UnharnessedEventPhase::Event, None)
+            .await;
+    }
 }
 
 /// Publish one adapter event through the session producer at the active
@@ -809,6 +954,8 @@ async fn clear_prompt_slot(state: &Arc<Mutex<ConnectionState>>, session_id: &str
         if entry.session.id == session_id {
             entry.prompt_task = None;
             entry.prompt_is_wake = false;
+            // A cancel stops the turn it was sent during, not the next.
+            entry.session.clear_cancel();
             entry.session.poke_wakes();
         }
     }

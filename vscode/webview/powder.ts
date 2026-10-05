@@ -1,5 +1,7 @@
 // The press: a pressed control gives a little, springs
-// back, and a puff of cyan dust leaves from under the pointer.
+// back, and a puff of cyan dust leaves from under the pointer. A control
+// that is only words (the reasoning's "Thought for 6s") opts out with
+// `data-no-press`.
 import { reducedMotion } from "./motion";
 
 const SPRING = "cubic-bezier(0.34, 1.56, 0.64, 1)";
@@ -9,7 +11,7 @@ const GRAINS = 9;
 const pressing = new WeakMap<Element, Animation>();
 
 document.addEventListener("pointerdown", (event) => {
-  const control = (event.target as Element | null)?.closest<HTMLElement>("button:not(:disabled)");
+  const control = (event.target as Element | null)?.closest<HTMLElement>("button:not(:disabled):not([data-no-press])");
   if (!control || event.button !== 0) return;
   // Wide rows barely give; small pills and discs give more.
   const depth = control.offsetWidth > 120 ? 0.985 : 0.92;

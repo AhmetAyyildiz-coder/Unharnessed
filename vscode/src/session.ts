@@ -29,7 +29,7 @@ type ModelMeta = {
 /**
  * The agent session the panel works in: opened as soon as the agent is
  * ready, one per agent process. It holds the pickers (model, reasoning
- * effort, fast mode); the chat will run in it too.
+ * effort, fast mode); the chat (chat.ts) runs in it.
  */
 export class Session {
   private state: SessionState | null = null;
@@ -54,6 +54,11 @@ export class Session {
 
   get current(): SessionState | null {
     return this.state;
+  }
+
+  /** The open session's id, for the chat. */
+  get sessionId(): string | undefined {
+    return this.state?.kind === "open" ? this.id : undefined;
   }
 
   onChange(listener: () => void): { dispose(): void } {

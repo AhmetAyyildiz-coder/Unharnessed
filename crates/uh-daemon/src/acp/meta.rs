@@ -84,6 +84,45 @@ pub struct UnharnessedSessionMeta {
     pub compaction: Option<UnharnessedCompactionMeta>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autonomous: Option<UnharnessedAutonomousMeta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_start: Option<UnharnessedTurnStartMeta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<UnharnessedCommandMeta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<UnharnessedThinkingMeta>,
+}
+
+/// A reasoning block of the streaming assistant message opened or closed.
+/// Its text, when the provider sends any, comes as `agent_thought_chunk`s
+/// with the same `messageId`, between the two.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnharnessedThinkingMeta {
+    /// `start` or `end`.
+    pub state: String,
+    pub message_id: String,
+}
+
+/// What started a prompt turn, published first in it: the client's
+/// `session/prompt`, or a wake the agent runs on its own.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnharnessedTurnStartMeta {
+    /// `prompt` or `wake`.
+    pub origin: String,
+    /// What woke the agent: `bash` (a detached `bash()` finished), `quota`
+    /// (a provider usage limit reset), `goal` (a goal backoff passed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wake: Option<String>,
+}
+
+/// What a session command answered (the `/goal` status, `/autonomous
+/// status`, a refusal): its result rows, in order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnharnessedCommandMeta {
+    pub name: String,
+    pub text: String,
+    /// `info`, `warning` or `error`.
+    pub severity: String,
 }
 
 /// A goal's live state, surfaced after `/goal` commands and driver turns.

@@ -123,6 +123,11 @@ impl AcpSession {
         self.cancel_requested.store(true, Ordering::SeqCst);
     }
 
+    /// The cancelled turn has settled: the next prompt or wake runs.
+    pub fn clear_cancel(&self) {
+        self.cancel_requested.store(false, Ordering::SeqCst);
+    }
+
     /// Consume the goal-budget crossing the latest turn's usage armed
     /// (the settle loop's budget-steer read; TS `_shouldStopAfterTurn`'s
     /// budget arm).
@@ -354,6 +359,12 @@ fn project_event(event: &AgentEvent) -> Vec<AcpEngineEvent> {
                     thinking: true,
                     delta: delta.clone(),
                 }]
+            }
+            AssistantMessageEvent::ThinkingStart { .. } => {
+                vec![AcpEngineEvent::Thinking { started: true }]
+            }
+            AssistantMessageEvent::ThinkingEnd { .. } => {
+                vec![AcpEngineEvent::Thinking { started: false }]
             }
             _ => Vec::new(),
         },

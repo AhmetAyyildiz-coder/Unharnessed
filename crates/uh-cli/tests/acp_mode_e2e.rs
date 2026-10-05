@@ -257,9 +257,20 @@ fn acp_prompt_stream_completion_envelope_and_stop_reason_match_ts() {
         Some("result".to_string()),
         None,
     );
+    // Before the TS sequence: the session's command list (published once
+    // after `session/new`), then the turn's origin.
+    let tags: Vec<&str> = shapes.iter().map(|(tag, _, _, _)| tag.as_str()).collect();
     assert_eq!(
-        shapes.first().map(|(tag, _, _, _)| tag.clone()),
-        Some("agent_message_chunk".to_string())
+        tags[..3],
+        [
+            "available_commands_update",
+            "session_info_update",
+            "agent_message_chunk"
+        ]
+    );
+    assert_eq!(
+        updates[1]["params"]["update"]["_meta"]["unharnessed"]["turnStart"],
+        json!({ "origin": "prompt" })
     );
     assert!(shapes.contains(&boundary), "shapes: {shapes:?}");
     assert!(shapes.contains(&completion), "shapes: {shapes:?}");
@@ -320,9 +331,10 @@ fn acp_prompt_chunk_carries_the_assistant_message_id() {
         chunk["params"]["update"]["content"],
         json!({ "type": "text", "text": "ACP-OK" })
     );
+    // The session's command list and the turn's origin are published first.
     assert_eq!(
         chunk["params"]["update"]["_meta"]["unharnessed"],
-        json!({ "promptTurnId": 1, "eventSequence": 1, "phase": "event" })
+        json!({ "promptTurnId": 1, "eventSequence": 3, "phase": "event" })
     );
 }
 
@@ -461,7 +473,13 @@ fn acp_cancel_without_an_active_turn_is_a_noop() {
     // The no-op cancel answers nothing; the session still closes cleanly.
     let close = client.request("session/close", &json!({ "sessionId": session_id }));
     let (close_response, notifications) = client.wait_response(close, TIMEOUT);
-    assert!(notifications.is_empty(), "a no-op cancel publishes nothing");
+    // Only the session's command list, published after `session/new`.
+    assert!(
+        notifications
+            .iter()
+            .all(|n| n["params"]["update"]["sessionUpdate"] == "available_commands_update"),
+        "a no-op cancel publishes nothing: {notifications:?}"
+    );
     assert_eq!(close_response["result"], json!({}));
 }
 

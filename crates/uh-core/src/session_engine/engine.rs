@@ -98,6 +98,8 @@ pub struct SessionEngineConfig {
 pub struct SessionEngine {
     pub session: AgentSession,
     pub skills: Vec<crate::skills::Skill>,
+    /// `enableSkillCommands`: `/skill:<name>` expands into the skill.
+    pub skill_commands: bool,
     /// Skill-loading diagnostics (TS `getSkills().diagnostics`; the
     /// connection resource snapshot surfaces them).
     pub skill_diagnostics: Vec<crate::skills::ResourceDiagnostic>,
@@ -219,6 +221,9 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // snapshot is fixed for the session anyway — while the `UNHARNESSED_REQUEST_TIMING`
     // env half stays live inside the wrappers' per-request check.
     let request_timing_settings = settings.get_request_timing();
+    // `enableSkillCommands`: whether `/skill:<name>` expands (read once,
+    // like the skills it expands against).
+    let skill_commands = settings.get_enable_skill_commands();
     let (mcp_skill_overrides, mcp_generic_servers, built_manager) =
         mcp_gating(&settings, config.agent_dir.clone()).await?;
     let mcp_manager = config
@@ -588,8 +593,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     session.set_kernel_state_probe(Some(kernel_state_probe));
     // The skill inventory `/skill:<name>` submissions expand against (TS
     // reads the resource loader at expansion time; the session snapshots
-    // the engine's loaded list).
-    session.set_skills(resources.skills.clone());
+    // the engine's loaded list). None while `enableSkillCommands` is off:
+    // the text then reaches the model as typed.
+    session.set_skills(if skill_commands {
+        resources.skills.clone()
+    } else {
+        Vec::new()
+    });
     // The embedding's image-model routing seam (the headless surfaces
     // install theirs; the daemon worker's turn dispatch owns routing).
     session.set_image_model_router(config.image_model_router.clone());
@@ -645,6 +655,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     Ok(SessionEngine {
         session,
         skills: resources.skills,
+        skill_commands,
         skill_diagnostics: resources.skill_diagnostics,
         prompt_templates: resources.prompts,
         agents_files: resources.agents_files,
@@ -708,6 +719,9 @@ impl SessionEngine {
     /// receives). Non-skill inputs pass through unchanged; the admitted
     /// turn's own expansion is idempotent over the block.
     pub fn expand_skill_submission(&self, text: &str) -> String {
+        if !self.skill_commands {
+            return text.to_string();
+        }
         crate::skills::expand_skill_command(text, &self.skills).0
     }
 

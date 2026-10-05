@@ -1,9 +1,11 @@
 import { homedir } from "node:os";
 import * as vscode from "vscode";
 import { Agent } from "./agent";
+import { Chat } from "./chat";
 import { Providers } from "./providers";
 import { Session } from "./session";
 import { Settings } from "./settings";
+import type { WebviewMessage } from "./protocol";
 import { ChatViewProvider } from "./view";
 
 let agent: Agent | undefined;
@@ -19,14 +21,16 @@ export function activate(context: vscode.ExtensionContext): void {
   const providers = new Providers(agent, log);
   const session = new Session(agent, cwd, log);
   const settings = new Settings(agent, log);
+  const chat = new Chat(agent, session, log);
+  const view = new ChatViewProvider(context.extensionUri, agent, providers, session, settings, chat, log);
 
-  context.subscriptions.push(
-    log,
-    vscode.window.registerWebviewViewProvider(
-      ChatViewProvider.viewId,
-      new ChatViewProvider(context.extensionUri, agent, providers, session, settings, log),
-    ),
-  );
+  context.subscriptions.push(log, vscode.window.registerWebviewViewProvider(ChatViewProvider.viewId, view));
+  // The E2E drives the panel's messages from its suite (test/e2e/suite.cjs).
+  if (process.env.UNHARNESSED_E2E_LOGS) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand("unharnessed.e2e.post", (message: WebviewMessage) => view.receive(message)),
+    );
+  }
   agent.start();
 }
 

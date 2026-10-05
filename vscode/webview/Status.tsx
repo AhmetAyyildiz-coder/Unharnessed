@@ -1,6 +1,7 @@
-import type { AgentState, Provider, SessionState } from "../src/protocol";
-import { Composer } from "./Composer";
-import { IconCross, IconPlug, IconRestart, IconSliders } from "./icons";
+import type { AgentState, ChatState, Provider, SessionState } from "../src/protocol";
+import { Transcript } from "./Chat";
+import { Composer, type Draft, type ImageSettings } from "./Composer";
+import { IconCross, IconNewChat, IconPlug, IconRestart, IconSliders } from "./icons";
 import { post } from "./vscode";
 import { Wordmark } from "./Wordmark";
 
@@ -14,20 +15,29 @@ const LABELS: Record<AgentState["kind"], string> = {
 
 const restart = () => post({ type: "restartAgent" });
 
-/** Home, where the chat will be: the agent's state, and the message box with the model pickers. */
+/** Home: the conversation, the agent's state while it has none, and the message box. */
 export function Status({
   agent,
   session,
   providers,
+  chat,
+  images,
+  draft,
+  onDraft,
   onProviders,
   onSettings,
 }: {
   agent: AgentState;
   session: SessionState | null;
   providers: Provider[];
+  chat: ChatState;
+  images: ImageSettings;
+  draft: Draft;
+  onDraft: (update: (draft: Draft) => Draft) => void;
   onProviders: () => void;
   onSettings: () => void;
 }) {
+  const empty = chat.entries.length === 0;
   return (
     <div className="screen">
       <header className="topbar">
@@ -58,25 +68,36 @@ export function Status({
           <button
             className="icon-button"
             type="button"
-            aria-label="Restart agent"
-            data-tip="Restart agent"
+            aria-label="New conversation"
+            data-tip="New conversation"
             data-tip-side="below"
             data-tip-align="end"
             disabled={agent.kind === "starting"}
-            onClick={restart}
+            onClick={() => post({ type: "newChat" })}
           >
-            <IconRestart />
+            <IconNewChat />
           </button>
         </div>
       </header>
-      <main className="content">
-        <div className={`agent-line is-${agent.kind}`}>
-          {agent.kind === "failed" ? <IconCross className="agent-mark" /> : <span className="agent-mark" />}
-          <span>{LABELS[agent.kind]}</span>
-        </div>
+      <Transcript chat={chat}>
+        {(empty || agent.kind !== "ready") && (
+          <div className={`agent-line is-${agent.kind}`}>
+            {agent.kind === "failed" ? <IconCross className="agent-mark" /> : <span className="agent-mark" />}
+            <span>{LABELS[agent.kind]}</span>
+          </div>
+        )}
         {agent.kind === "failed" && <Failure agent={agent} />}
-      </main>
-      {agent.kind === "ready" && <Composer session={session} providers={providers} />}
+      </Transcript>
+      {agent.kind === "ready" && (
+        <Composer
+          session={session}
+          providers={providers}
+          chat={chat}
+          images={images}
+          draft={draft}
+          onDraft={onDraft}
+        />
+      )}
     </div>
   );
 }

@@ -59,6 +59,11 @@ pub enum AcpEngineEvent {
         thinking: bool,
         delta: String,
     },
+    /// A reasoning block opened (`started`) or closed in the streaming
+    /// assistant message, whether or not the provider sends its text.
+    Thinking {
+        started: bool,
+    },
     MessageEnd {
         role: String,
     },
@@ -92,6 +97,9 @@ pub enum AcpEngineEvent {
 /// - Assistant reasoning deltas become `agent_thought_chunk` and visible
 ///   text deltas become `agent_message_chunk`, so a client can render or
 ///   hide them separately.
+/// - A reasoning block's start and end become a `session_info_update`
+///   (`_meta.unharnessed.thinking`): a provider can reason for a long
+///   while before it sends any of the text, or send none.
 /// - Tool calls become `tool_call` / `tool_call_update` pairs keyed by the
 ///   loop's tool-call id.
 /// - Everything else has no ACP representation and maps to nothing.
@@ -121,6 +129,15 @@ pub fn acp_updates_for_event(
                 message_id: state.message_started().to_string(),
                 content: TextBlock::new(delta.clone()),
             }]
+        }
+        AcpEngineEvent::Thinking { started } => {
+            vec![session_info_update(&UnharnessedSessionMeta {
+                thinking: Some(super::meta::UnharnessedThinkingMeta {
+                    state: if *started { "start" } else { "end" }.to_string(),
+                    message_id: state.message_started().to_string(),
+                }),
+                ..Default::default()
+            })]
         }
         AcpEngineEvent::MessageEnd { role } if role == "assistant" => {
             state.active_assistant_message_id = None;

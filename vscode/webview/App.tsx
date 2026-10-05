@@ -1,11 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
-import type { AgentState, HostMessage, LoginState, Provider, Screen, SessionState, SettingsState } from "../src/protocol";
+import type {
+  AgentState,
+  ChatState,
+  HostMessage,
+  LoginState,
+  Provider,
+  Screen,
+  SessionState,
+  SettingsState,
+} from "../src/protocol";
+import { applyPatch, EMPTY_CHAT } from "./Chat";
+import type { Draft, ImageSettings } from "./Composer";
 import { Providers } from "./Providers";
 import { Settings, type SettingsTab } from "./Settings";
 import { SignIn } from "./SignIn";
 import { Splash } from "./Splash";
 import { Status } from "./Status";
-import { onHostMessage, post } from "./vscode";
+import { onHostMessage, post, saveDraft, savedDraft } from "./vscode";
 
 type Phase = "boot" | "splash" | "main";
 export type ProviderResult = Extract<HostMessage, { type: "providerResult" }>;
@@ -21,9 +32,12 @@ export function App() {
   const [settings, setSettings] = useState<SettingsState>({ view: null, pending: [], mcp: null, skills: null });
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [settingResult, setSettingResult] = useState<SettingResult | null>(null);
+  const [chat, setChat] = useState<ChatState>(EMPTY_CHAT);
+  const [draft, setDraft] = useState<Draft>(() => ({ text: savedDraft(), images: [] }));
   const [managing, setManaging] = useState(false);
   const [tuning, setTuning] = useState(false);
   const splashDone = useCallback(() => setPhase("main"), []);
+  useEffect(() => saveDraft(draft.text), [draft.text]);
 
   useEffect(() => {
     const off = onHostMessage((message) => {
@@ -34,8 +48,24 @@ export function App() {
           setLogin(message.login);
           setSession(message.session);
           setSettings(message.settings);
+          setChat(message.chat);
           setPhase(message.splash ? "splash" : "main");
           break;
+        case "chat":
+          setChat(message.chat);
+          break;
+        case "chatPatch":
+          setChat((chat) => applyPatch(chat, message.patch));
+          break;
+        case "chatDraft": {
+          // The waiting messages come first: they were written before.
+          const { text, images } = message;
+          setDraft((draft) => ({
+            text: [text, draft.text].filter(Boolean).join("\n\n"),
+            images: [...images, ...draft.images],
+          }));
+          break;
+        }
         case "agent":
           setAgent(message.agent);
           break;
@@ -110,9 +140,23 @@ export function App() {
           agent={agent}
           session={session}
           providers={providers ?? []}
+          chat={chat}
+          images={imageSettings(settings)}
+          draft={draft}
+          onDraft={setDraft}
           onProviders={() => setManaging(true)}
           onSettings={() => setTuning(true)}
         />
       );
   }
+}
+
+/** The image settings as the agent applies them: the file's value, else the agent's default. */
+function imageSettings({ view }: SettingsState): ImageSettings {
+  const value = (key: string) => view?.values[key] ?? view?.defaults[key] ?? null;
+  return {
+    block: value("images.blockImages") === true,
+    resize: value("images.autoResize") !== false,
+    imageModel: typeof value("imageModel") === "string" ? (value("imageModel") as string) : null,
+  };
 }

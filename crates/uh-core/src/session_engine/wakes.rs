@@ -35,6 +35,18 @@ pub enum Wake {
     Marker(&'static str),
 }
 
+impl Wake {
+    /// What woke the session: `bash`, `quota` or `goal`.
+    #[must_use]
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Wake::BashDone(_) => "bash",
+            Wake::Marker(text) if *text == QUOTA_RESUME_MARKER_TEXT => "quota",
+            Wake::Marker(_) => "goal",
+        }
+    }
+}
+
 /// The session's pending wakes; the `bash.*` host handlers and the retry
 /// chain's quota park feed it, the host drains it.
 #[derive(Default)]
