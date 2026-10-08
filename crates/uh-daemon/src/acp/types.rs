@@ -1,13 +1,12 @@
 //! ACP wire types: the method surface, `session/update` payload shapes,
 //! and prompt-block parsing.
 //!
-//! The served surface is exactly what the TS product serves: `initialize`,
-//! `session/new`, `session/prompt`, `session/close` (requests),
-//! `session/cancel` (notification), `session/set_config_option` (the
-//! model/effort pickers, TS #2455), and the outgoing `session/update`
-//! notification. ACP-spec methods the TS product does not serve
-//! (`session/load`, `session/read`, `session/clone`, cwd adoption) are not
-//! invented here.
+//! The served surface: `initialize`, `session/new`, `session/prompt`,
+//! `session/close` (requests), `session/cancel` (notification),
+//! `session/set_config_option` (the model/effort pickers, TS #2455),
+//! `session/list` and `session/load` (the saved conversations,
+//! `history.rs`), and the outgoing `session/update` notification.
+//! `session/resume`, `session/fork` and cwd adoption are not served.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -49,11 +48,16 @@ pub struct McpCapabilities {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionCapabilities {
     pub close: CloseCapability,
+    pub list: ListCapability,
 }
 
 /// `{}`: present means `session/close` is served.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CloseCapability {}
+
+/// `{}`: present means `session/list` is served.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ListCapability {}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -138,6 +142,14 @@ pub struct AcpStopReasonResponse {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "sessionUpdate")]
 pub enum AcpSessionUpdate {
+    /// One block of a prompt the user sent: text or an image
+    /// (`session/load` replays them).
+    #[serde(rename = "user_message_chunk")]
+    UserMessageChunk {
+        #[serde(rename = "messageId")]
+        message_id: String,
+        content: Value,
+    },
     /// A streaming chunk of the assistant's visible answer.
     #[serde(rename = "agent_message_chunk")]
     AgentMessageChunk {
@@ -204,7 +216,8 @@ pub struct AvailableCommand {
     /// What to type after the name, when it takes something.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<AvailableCommandInput>,
-    /// `{ "unharnessed": { "kind": "command" | "prompt" | "skill" } }`.
+    /// `{ "unharnessed": { "kind": "command" | "prompt" | "skill" } }`; a
+    /// skill's also says its `source`.
     #[serde(rename = "_meta")]
     pub meta: Value,
 }
@@ -413,7 +426,7 @@ pub fn initialize_result(product_version: &str) -> InitializeResult {
     InitializeResult {
         protocol_version: 1,
         agent_capabilities: AgentCapabilities {
-            load_session: false,
+            load_session: true,
             prompt_capabilities: PromptCapabilities {
                 image: true,
                 embedded_context: true,
@@ -421,6 +434,7 @@ pub fn initialize_result(product_version: &str) -> InitializeResult {
             mcp_capabilities: Some(McpCapabilities { http: true }),
             session_capabilities: SessionCapabilities {
                 close: CloseCapability::default(),
+                list: ListCapability::default(),
             },
         },
         agent_info: AgentInfo {
@@ -445,10 +459,10 @@ mod tests {
             json!({
                 "protocolVersion": 1,
                 "agentCapabilities": {
-                    "loadSession": false,
+                    "loadSession": true,
                     "promptCapabilities": { "image": true, "embeddedContext": true },
                     "mcpCapabilities": { "http": true },
-                    "sessionCapabilities": { "close": {} },
+                    "sessionCapabilities": { "close": {}, "list": {} },
                 },
                 "agentInfo": { "name": "unharnessed", "title": "Unharnessed", "version": "9.9.9" },
                 "_meta": { "unharnessed": {} },

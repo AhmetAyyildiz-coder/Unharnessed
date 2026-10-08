@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentState,
   ChatState,
+  HistoryState,
   HostMessage,
   LoginState,
   Provider,
@@ -11,6 +12,7 @@ import type {
 } from "../src/protocol";
 import { applyPatch, EMPTY_CHAT } from "./Chat";
 import type { Draft, ImageSettings } from "./Composer";
+import { PathsContext, toPaths, type Paths } from "./mentions";
 import { Providers } from "./Providers";
 import { Settings, type SettingsTab } from "./Settings";
 import { SignIn } from "./SignIn";
@@ -20,6 +22,8 @@ import { onHostMessage, post, saveDraft, savedDraft } from "./vscode";
 
 type Phase = "boot" | "splash" | "main";
 export type ProviderResult = Extract<HostMessage, { type: "providerResult" }>;
+type LocalScan = Extract<HostMessage, { type: "localScan" }>;
+type LocalProbe = Extract<HostMessage, { type: "localProbe" }>;
 export type SettingResult = Extract<HostMessage, { type: "settingResult" }>;
 
 export function App() {
@@ -29,11 +33,21 @@ export function App() {
   const [login, setLogin] = useState<LoginState | null>(null);
   const [session, setSession] = useState<SessionState | null>(null);
   const [result, setResult] = useState<ProviderResult | null>(null);
+  const [localScan, setLocalScan] = useState<LocalScan | null>(null);
+  const [localProbe, setLocalProbe] = useState<LocalProbe | null>(null);
   const [settings, setSettings] = useState<SettingsState>({ view: null, pending: [], mcp: null, skills: null });
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [settingResult, setSettingResult] = useState<SettingResult | null>(null);
   const [chat, setChat] = useState<ChatState>(EMPTY_CHAT);
+  const [history, setHistory] = useState<HistoryState>({ chats: null });
+  const [paths, setPaths] = useState<Paths | null>(null);
   const [draft, setDraft] = useState<Draft>(() => ({ text: savedDraft(), images: [] }));
+  /** A sent prompt being changed in the message box, and the draft it pushed out, back once the edit ends. */
+  const [editing, setEditing] = useState<{ id: number; saved: Draft } | null>(null);
+  const draftNow = useRef(draft);
+  useEffect(() => {
+    draftNow.current = draft;
+  }, [draft]);
   const [managing, setManaging] = useState(false);
   const [tuning, setTuning] = useState(false);
   const splashDone = useCallback(() => setPhase("main"), []);
@@ -49,6 +63,7 @@ export function App() {
           setSession(message.session);
           setSettings(message.settings);
           setChat(message.chat);
+          setHistory(message.history);
           setPhase(message.splash ? "splash" : "main");
           break;
         case "chat":
@@ -57,6 +72,9 @@ export function App() {
         case "chatPatch":
           setChat((chat) => applyPatch(chat, message.patch));
           break;
+        case "history":
+          setHistory(message.history);
+          break;
         case "chatDraft": {
           // The waiting messages come first: they were written before.
           const { text, images } = message;
@@ -64,6 +82,12 @@ export function App() {
             text: [text, draft.text].filter(Boolean).join("\n\n"),
             images: [...images, ...draft.images],
           }));
+          break;
+        }
+        case "chatEdit": {
+          const { id, text, images } = message;
+          setEditing((editing) => ({ id, saved: editing?.saved ?? draftNow.current }));
+          setDraft({ text, images });
           break;
         }
         case "agent":
@@ -79,17 +103,36 @@ export function App() {
         case "providerResult":
           setResult(message);
           break;
+        case "localScan":
+          setLocalScan(message);
+          break;
+        case "localProbe":
+          setLocalProbe(message);
+          break;
         case "settings":
           setSettings(message.settings);
           break;
         case "settingResult":
           setSettingResult(message);
           break;
+        case "files":
+          setPaths(toPaths(message.files, message.open));
+          break;
       }
     });
     post({ type: "ready" });
     return off;
   }, []);
+
+  const endEdit = () => {
+    if (editing) setDraft(editing.saved);
+    setEditing(null);
+  };
+  // The edited turn left (a new conversation, an agent that restarted): the text stays, as a new message.
+  useEffect(() => {
+    const turn = editing && chat.entries.find((entry) => entry.id === editing.id);
+    if (editing && (turn?.kind !== "turn" || turn.rewindTo === undefined)) setEditing(null);
+  }, [chat.entries, editing]);
 
   // Nothing connected yet: the providers screen is the way in.
   const onboarding = providers !== null && !providers.some((p) => p.connected);
@@ -118,6 +161,7 @@ export function App() {
         <Providers
           providers={providers ?? []}
           result={result}
+          local={{ scan: localScan, probe: localProbe }}
           onBack={onboarding ? undefined : () => setManaging(false)}
         />
       );
@@ -136,17 +180,22 @@ export function App() {
       );
     default:
       return (
-        <Status
-          agent={agent}
-          session={session}
-          providers={providers ?? []}
-          chat={chat}
-          images={imageSettings(settings)}
-          draft={draft}
-          onDraft={setDraft}
-          onProviders={() => setManaging(true)}
-          onSettings={() => setTuning(true)}
-        />
+        <PathsContext.Provider value={paths}>
+          <Status
+            agent={agent}
+            session={session}
+            providers={providers ?? []}
+            chat={chat}
+            images={imageSettings(settings)}
+            draft={draft}
+            onDraft={setDraft}
+            editing={editing?.id ?? null}
+            onEditEnd={endEdit}
+            onProviders={() => setManaging(true)}
+            onSettings={() => setTuning(true)}
+            history={history}
+          />
+        </PathsContext.Provider>
       );
   }
 }

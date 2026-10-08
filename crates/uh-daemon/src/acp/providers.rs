@@ -25,8 +25,17 @@
 //! - `_unharnessed/providers/login_open` opens the running login's sign-in
 //!   page in the browser of the agent's machine. Nothing opens it unasked;
 //!   a client on another machine than the agent opens the URL itself.
+//! - The local model servers ([`uh_core::models::local`]):
+//!   `_unharnessed/providers/local_scan` answers `{ servers }`, those
+//!   running at their usual addresses; `_unharnessed/providers/local_probe`
+//!   `{ baseUrl, apiKey? }` answers `{ server }` or `{ error: { kind,
+//!   message } }`; `_unharnessed/providers/local_save` (a `SaveServer`) and
+//!   `_unharnessed/providers/local_remove` `{ providerId }` write
+//!   models.json and answer as `set_api_key`. A local server's row carries
+//!   `local: { baseUrl, models }`.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -41,6 +50,8 @@ use crate::provider_auth::{
     AuthFlow, AuthStatusStyle, AuthType, ProviderAuthCommands, ProviderAuthOutcome, ProviderRow,
 };
 
+use uh_core::models::local;
+
 use super::jsonrpc;
 use super::producer::FrameSink;
 
@@ -52,12 +63,18 @@ pub(super) const LOGIN_ANSWER: &str = "_unharnessed/providers/login_answer";
 pub(super) const LOGIN_OPEN: &str = "_unharnessed/providers/login_open";
 pub(super) const LOGIN_CANCEL: &str = "_unharnessed/providers/login_cancel";
 const LOGIN_UPDATE: &str = "_unharnessed/providers/login_update";
+const LOCAL_SCAN: &str = "_unharnessed/providers/local_scan";
+const LOCAL_PROBE: &str = "_unharnessed/providers/local_probe";
+const LOCAL_SAVE: &str = "_unharnessed/providers/local_save";
+const LOCAL_REMOVE: &str = "_unharnessed/providers/local_remove";
 
 /// The provider surface of one connection: the composition root's flows and
 /// the running login, if any.
 #[derive(Clone)]
 pub(super) struct Providers {
     auth: Arc<dyn ProviderAuthCommands>,
+    /// Where models.json is, with the local servers.
+    agent_dir: Arc<PathBuf>,
     logins: Arc<Mutex<Logins>>,
     /// Signalled when a login, an API key or a logout changed the stored
     /// credentials: the model pickers follow.
@@ -130,12 +147,23 @@ struct ProviderEntry {
     /// The Anthropic subscription warning, on the row that uses it.
     #[serde(skip_serializing_if = "Option::is_none")]
     warning: Option<String>,
+    /// A local server's address and models, from models.json.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local: Option<LocalEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalEntry {
+    base_url: String,
+    models: Vec<String>,
 }
 
 impl Providers {
-    pub(super) fn new(auth: Arc<dyn ProviderAuthCommands>) -> Self {
+    pub(super) fn new(auth: Arc<dyn ProviderAuthCommands>, agent_dir: PathBuf) -> Self {
         Providers {
             auth,
+            agent_dir: Arc::new(agent_dir),
             logins: Arc::new(Mutex::new(Logins::default())),
             auth_changes: Arc::new(tokio::sync::Notify::new()),
         }
@@ -168,6 +196,10 @@ impl Providers {
             }
             LOGIN_ANSWER => self.answer(params).map(|()| json!({})),
             LOGIN_OPEN => self.open_url().map(|()| json!({})),
+            LOCAL_SCAN => Ok(json!({ "servers": local::scan().await })),
+            LOCAL_PROBE => local_probe(params).await,
+            LOCAL_SAVE => self.local_save(params).await,
+            LOCAL_REMOVE => self.local_remove(params).await,
             _ => return false,
         };
         let _ = tx.send(match reply {
@@ -208,6 +240,35 @@ impl Providers {
             .ok_or_else(|| format!("no stored credential for provider {provider_id}"))?;
         let outcome = self.auth.logout(&row).await;
         Ok(self.settled(outcome).await)
+    }
+
+    async fn local_save(&self, params: &Value) -> Result<Value, String> {
+        let request: local::SaveServer =
+            serde_json::from_value(params.clone()).map_err(|error| error.to_string())?;
+        let models_json = self.agent_dir.join("models.json");
+        let saved = tokio::task::spawn_blocking(move || {
+            let id = local::save_server(&models_json, &request)?;
+            let count = request.models.len();
+            Ok(format!(
+                "{count} model{} of {id} in the model menu",
+                if count == 1 { "" } else { "s" }
+            ))
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+        Ok(self.settled(local_outcome(saved)).await)
+    }
+
+    async fn local_remove(&self, params: &Value) -> Result<Value, String> {
+        let provider_id = string_param(params, "providerId")?;
+        let models_json = self.agent_dir.join("models.json");
+        let removed = tokio::task::spawn_blocking(move || {
+            local::remove_server(&models_json, &provider_id)?;
+            Ok(format!("{provider_id} removed"))
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+        Ok(self.settled(local_outcome(removed)).await)
     }
 
     fn start_login(&self, id: &Value, params: &Value, tx: &FrameSink) -> Result<(), String> {
@@ -436,18 +497,26 @@ impl Providers {
 
     /// The login rows (connected first), with what removes or explains them.
     async fn entries(&self) -> Vec<ProviderEntry> {
-        let (rows, stored, warning) = tokio::join!(
+        let models_json = self.agent_dir.join("models.json");
+        let servers = tokio::task::spawn_blocking(move || local::local_providers(&models_json));
+        let (rows, stored, warning, servers) = tokio::join!(
             self.auth.login_options(),
             self.auth.logout_options(),
             self.auth.anthropic_subscription_warning(),
+            servers,
         );
+        let servers = servers.unwrap_or_default();
         let mut entries: Vec<ProviderEntry> = rows
             .iter()
             .map(|row| {
-                let connected = matches!(
-                    row.status.as_ref().map(|status| status.style),
-                    Some(AuthStatusStyle::Success)
-                );
+                let server = servers.iter().find(|server| server.id == row.id);
+                // A local server's key is in models.json, which the agent's
+                // auth status does not read: its models are in the pickers.
+                let connected = server.is_some()
+                    || matches!(
+                        row.status.as_ref().map(|status| status.style),
+                        Some(AuthStatusStyle::Success)
+                    );
                 let removable = stored.iter().any(|credential| {
                     credential.id == row.id && credential.auth_type == row.auth_type
                 });
@@ -458,7 +527,7 @@ impl Providers {
                 });
                 ProviderEntry {
                     id: row.id.clone(),
-                    name: row.name.clone(),
+                    name: server.map_or_else(|| row.name.clone(), |server| server.name.clone()),
                     method: match row.auth_type {
                         AuthType::Oauth => Method::Subscription,
                         AuthType::ApiKey => Method::ApiKey,
@@ -471,6 +540,10 @@ impl Providers {
                     removable,
                     note,
                     warning: None,
+                    local: server.map(|server| LocalEntry {
+                        base_url: server.base_url.clone(),
+                        models: server.models.clone(),
+                    }),
                 }
             })
             .collect();
@@ -487,6 +560,24 @@ impl Providers {
             }
         }
         entries
+    }
+}
+
+/// `local_probe`: the server, or why it could not be read, as a result
+/// the client shows.
+async fn local_probe(params: &Value) -> Result<Value, String> {
+    let base_url = string_param(params, "baseUrl")?;
+    let api_key = params.get("apiKey").and_then(Value::as_str);
+    Ok(match local::probe(&base_url, api_key).await {
+        Ok(server) => json!({ "server": server }),
+        Err(error) => json!({ "error": error }),
+    })
+}
+
+fn local_outcome(written: Result<String, String>) -> ProviderAuthOutcome {
+    match written {
+        Ok(message) => ProviderAuthOutcome::Status(message),
+        Err(message) => ProviderAuthOutcome::Error(message),
     }
 }
 

@@ -43,6 +43,34 @@ export function IconFolder(props: IconProps) {
   );
 }
 
+/** Two corners closing in on the middle: the context compacted. */
+export function IconCompact(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5 10h5V5M19 14h-5v5" />
+    </Icon>
+  );
+}
+
+/** An open book: a skill, what the agent reads to know how. */
+export function IconBook(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 7.5c-1.75-1.4-4.25-1.9-7-1.6v11.6c2.75-.3 5.25.2 7 1.6 1.75-1.4 4.25-1.9 7-1.6V5.9c-2.75-.3-5.25.2-7 1.6zM12 7.5v11.6" />
+    </Icon>
+  );
+}
+
+/** A screen on its foot: this machine. */
+export function IconComputer(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="4" y="5" width="16" height="11" rx="2.5" />
+      <path d="M12 16v3.5M8.5 19.5h7" />
+    </Icon>
+  );
+}
+
 export function IconPlus(props: IconProps) {
   return (
     <Icon {...props}>
@@ -150,6 +178,16 @@ export function IconSend(props: IconProps) {
   );
 }
 
+/** A pencil, its tip down on the left: change what was written. */
+export function IconPencil(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5.5 18.5l.9-3.6L15.6 5.7a1.7 1.7 0 0 1 2.4 2.4L8.8 17.3z" />
+      <path d="M14 7.3l2.4 2.4" />
+    </Icon>
+  );
+}
+
 /** A capital T: the model reads text. */
 export function IconText(props: IconProps) {
   return (
@@ -218,20 +256,57 @@ export function IconCell(props: IconProps) {
   );
 }
 
-/** A paper clip: attach an image. */
-export function IconClip(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M15.5 8.5l-6 6a1.77 1.77 0 0 0 2.5 2.5l6.5-6.5a3.54 3.54 0 0 0-5-5L7 12a5.3 5.3 0 0 0 7.5 7.5L19 15" />
-    </Icon>
-  );
-}
-
 /** An arrow pointing down, to the latest message. */
 export function IconArrowDown(props: IconProps) {
   return (
     <Icon {...props}>
       <path d="M12 6v12.5M6.5 13L12 18.5l5.5-5.5" />
+    </Icon>
+  );
+}
+
+/** A clock whose rim turns back, arrowhead at the gap: the conversations before. */
+export function IconHistory(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5.5 12A6.5 6.5 0 1 0 7.4 7.4" />
+      <path d="M7.92 4.45L7.4 7.4L10.35 6.88" />
+      <path d="M12 9v3l2 1.5" />
+    </Icon>
+  );
+}
+
+/** A bin under its lid: delete. */
+export function IconTrash(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5.5 7.5h13M10 7.5V6h4v1.5" />
+      <path d="M7.5 7.5l.75 10.5h7.5l.75-10.5" />
+    </Icon>
+  );
+}
+
+const CLOTH_UP = "M6 4.5C10 2.5 13 6.5 18.5 4.5V12C13 14 10 10 6 12Z";
+const CLOTH_DOWN = "M6 4.5C10 6.5 13 2.5 18.5 4.5V12C13 10 10 14 6 12Z";
+
+/** A flag on its pole, its cloth waving slowly: a goal under way. The `hoist` group goes up the pole. */
+export function IconFlag(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 21V3.5" />
+      <g className="hoist">
+        <path className="cloth" d={CLOTH_UP}>
+          <animate
+            attributeName="d"
+            values={`${CLOTH_UP};${CLOTH_DOWN};${CLOTH_UP}`}
+            calcMode="spline"
+            keyTimes="0;0.5;1"
+            keySplines="0.45 0 0.55 1;0.45 0 0.55 1"
+            dur="2.6s"
+            repeatCount="indefinite"
+          />
+        </path>
+      </g>
     </Icon>
   );
 }

@@ -1,7 +1,7 @@
 import { useState, type ReactNode, type SubmitEvent } from "react";
 import type { McpServer } from "../src/protocol";
-import { IconChevron, IconPlus } from "./icons";
-import { McpLogo, ServiceLogo } from "./logos";
+import { IconChevron, IconPlus, IconSearch } from "./icons";
+import { McpLogo, ServiceAvatar } from "./logos";
 import { Switch, useSettled, type Actions, type Write } from "./Settings";
 import { post } from "./vscode";
 
@@ -12,9 +12,10 @@ type ServerConfig = Record<string, unknown>;
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 /**
- * The MCP servers: yours (the `mcpServers` setting), then the services the
- * agent knows. The agent calls their tools from its Python kernel; it keeps
- * the servers and sign-ins it started with.
+ * The MCP servers: yours (the `mcpServers` setting and the services you
+ * added), then the Marketplace, Prime's catalog of services to add in one
+ * click. The agent calls their tools from its Python kernel; it keeps the
+ * servers and sign-ins it started with.
  */
 export function McpTab({
   servers,
@@ -44,7 +45,11 @@ export function McpTab({
       .filter((server) => server.source === "user" && !(server.id in config) && !(server.id in saved))
       .map((server) => server.id),
   ];
-  const services = servers.filter((server) => server.source === "catalog");
+  // A catalog service is yours once signed in, or its token stored.
+  const services = servers.filter((server) => server.source === "catalog" && server.signedIn);
+  const market = servers
+    .filter((server) => server.source === "catalog" && !server.signedIn)
+    .sort((a, b) => a.label.localeCompare(b.label));
   const toggle = (id: string) => setOpen((current) => (current === id ? null : id));
   const save = (previous: string | null, id: string, next: ServerConfig) => {
     const map = { ...config };
@@ -87,6 +92,16 @@ export function McpTab({
               onSignOut={() => signOut(id)}
             />
           ))}
+          {services.map((server) => (
+            <Service
+              key={server.id}
+              server={server}
+              open={open === server.id}
+              actions={actions}
+              onToggle={() => toggle(server.id)}
+              onSignOut={() => signOut(server.id)}
+            />
+          ))}
           <li className="row">
             <button
               className={`row-body is-button${open === "+" ? " is-open" : ""}`}
@@ -113,24 +128,186 @@ export function McpTab({
         </ul>
         {open === null && actions.errors.mcpServers && <p className="error">{actions.errors.mcpServers}</p>}
       </section>
-      {services.length > 0 && (
-        <section className="section">
-          <h2 className="section-label">Services</h2>
-          <ul className="list">
-            {services.map((server) => (
-              <Service
-                key={server.id}
-                server={server}
-                open={open === server.id}
-                actions={actions}
-                onToggle={() => toggle(server.id)}
-                onSignOut={() => signOut(server.id)}
-              />
-            ))}
-          </ul>
-        </section>
-      )}
+      <Marketplace
+        services={market}
+        none={!servers.some((server) => server.source === "catalog")}
+        open={open}
+        actions={actions}
+        onToggle={toggle}
+        onClose={() => setOpen(null)}
+      />
     </>
+  );
+}
+
+/**
+ * Prime's catalog, the services not added yet, A to Z. Add signs in to one
+ * at once; a service connected by a token opens its field first.
+ */
+function Marketplace({
+  services,
+  none,
+  open,
+  actions,
+  onToggle,
+  onClose,
+}: {
+  services: McpServer[];
+  /** No catalog at all: it could not be read. */
+  none: boolean;
+  /** The open row, as `market:<id>`. */
+  open: string | null;
+  actions: Actions;
+  onToggle: (key: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const words = query.trim().toLowerCase();
+  const shown = services.filter((service) => !words || found(service, words));
+  return (
+    <section className="section">
+      <h2 className="section-label">Marketplace</h2>
+      {none ? (
+        <p className="note section-help">The Marketplace could not be read. It is tried again within the hour.</p>
+      ) : (
+        <>
+          <label className="search">
+            <IconSearch />
+            <input
+              className="input"
+              type="search"
+              placeholder={`Search ${services.length} services`}
+              aria-label="Search the Marketplace"
+              spellCheck={false}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+          {shown.length > 0 ? (
+            <ul className="list">
+              {shown.map((service) => (
+                <MarketService
+                  key={service.id}
+                  service={service}
+                  open={open === `market:${service.id}`}
+                  actions={actions}
+                  onToggle={() => onToggle(`market:${service.id}`)}
+                  onClose={onClose}
+                />
+              ))}
+            </ul>
+          ) : (
+            <p className="note section-help">{words ? "No service matches." : "Every service is added."}</p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Whether the service answers to the words: its name, other names, category or publisher. */
+function found(service: McpServer, words: string): boolean {
+  return [service.label, service.id, ...(service.aliases ?? []), service.category, service.publisher].some(
+    (text) => text?.toLowerCase().includes(words),
+  );
+}
+
+function MarketService({
+  service,
+  open,
+  actions,
+  onToggle,
+  onClose,
+}: {
+  service: McpServer;
+  open: boolean;
+  actions: Actions;
+  onToggle: () => void;
+  onClose: () => void;
+}) {
+  const key = `mcp:${service.id}`;
+  const busy = key in actions.drafts;
+  // Nothing to add it by: what it needs instead.
+  const blocked = !service.signIn && !service.token;
+  const add = () => {
+    if (service.token) onToggle();
+    // The sign-in screen takes over until it is done.
+    else post({ type: "mcpSignIn", id: service.id, label: service.label });
+  };
+  return (
+    <li className="row">
+      <div className="row-line">
+        <div className={open ? "row-body is-open" : "row-body"}>
+          <ServiceAvatar className="badge" service={service.id} name={service.label} />
+          <span className="row-main">
+            <span className="row-name">{service.label}</span>
+            {blocked && <span className="row-meta">{service.hint ?? "Cannot be added"}</span>}
+          </span>
+          {open && <IconChevron className="row-end" />}
+        </div>
+        {!open && (
+          <button className="button row-add" type="button" disabled={!actions.ready || blocked || busy} onClick={add}>
+            Add
+          </button>
+        )}
+      </div>
+      {open && service.token && (
+        <TokenForm service={service} label={service.token} actions={actions} onDone={onClose} />
+      )}
+    </li>
+  );
+}
+
+/** The token a Marketplace service is added by; it is checked with the service first. */
+function TokenForm({
+  service,
+  label,
+  actions,
+  onDone,
+}: {
+  service: McpServer;
+  label: string;
+  actions: Actions;
+  onDone: () => void;
+}) {
+  const [token, setToken] = useState("");
+  const key = `mcp:${service.id}`;
+  const busy = key in actions.drafts;
+  // Once taken, the service is yours: its row leaves the Marketplace.
+  const sent = useSettled(key, actions, onDone);
+  const submit = (event: SubmitEvent) => {
+    event.preventDefault();
+    const trimmed = token.trim();
+    if (!trimmed || busy) return;
+    sent();
+    actions.act(key, true, { type: "mcpSetToken", id: service.id, token: trimmed });
+  };
+  return (
+    <form className="row-form" onSubmit={submit} onKeyDown={(event) => event.key === "Escape" && onDone()}>
+      <label className="form-field">
+        <span className="form-label">{label}</span>
+        <input
+          className="input is-secret"
+          type="password"
+          aria-label={label}
+          autoComplete="off"
+          spellCheck={false}
+          autoFocus
+          disabled={busy}
+          value={token}
+          onChange={(event) => setToken(event.target.value)}
+        />
+      </label>
+      {actions.errors[key] && <p className="error">{actions.errors[key]}</p>}
+      <div className="actions">
+        <button className="button" type="submit" disabled={!token.trim() || busy || !actions.ready}>
+          {busy ? "Adding" : "Add"}
+        </button>
+        <button className="button is-quiet" type="button" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -299,9 +476,7 @@ function Service({
         aria-expanded={open}
         onClick={onToggle}
       >
-        <span className={usable(server) ? "badge is-on" : "badge"}>
-          <ServiceLogo service={server.id} name={server.label} />
-        </span>
+        <ServiceAvatar className={usable(server) ? "badge is-on" : "badge"} service={server.id} name={server.label} />
         <span className="row-main">
           <span className="row-name">{server.label}</span>
           <span className="row-meta">{status(server)}</span>

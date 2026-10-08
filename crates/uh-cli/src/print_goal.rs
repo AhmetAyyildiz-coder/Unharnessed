@@ -75,9 +75,6 @@ pub(crate) enum NaturalContinuation {
     /// Queued session input owns the boundary (the armed budget steer): no
     /// turn mints, the run ends so the queue drains.
     QueuedInput,
-    /// A pending requested compaction consumes the stop: no mint, the
-    /// boundary consumes the request.
-    RequestedCompaction,
     /// A threshold compaction is due: the loop stops (any owed mint is held
     /// for the post-compaction admission), the boundary compacts.
     ThresholdDue,
@@ -554,12 +551,6 @@ impl PrintGoalSurface {
         // ends the run so the queue drains it.
         if self.queued.lock().await.is_some() {
             return NaturalContinuation::QueuedInput;
-        }
-        // A pending requested compaction consumes the stop (TS
-        // `_shouldStopForThresholdCompaction`'s first arm): no mint,
-        // the boundary consumes the request.
-        if engine.turn_boundary.compaction_scheduled().await {
-            return NaturalContinuation::RequestedCompaction;
         }
         // The threshold arm: the crossing turn mints BEFORE the loop
         // stops (the mint's `goal_update` and queue frame land between

@@ -61,14 +61,13 @@ else
     echo "FAIL  json mode lines parse"; FAILED=1
 fi
 
-# 3. The kernel's runtime API: bash, goal, compact, mcp. Each expected
+# 3. The kernel's runtime API: bash, goal, mcp. Each expected
 # string only exists once the call ran (smoke-42, the returned dict keys).
 run runtime_api --mode json --session-dir "$OUT/sessions" --model "$MODEL" \
-    'In ONE ipython cell run exactly: r = await bash("echo smoke-$((6*7))"); print("bash:", r.exit_code, r.output.strip()); print("goal:", sorted(await goal.get())); print("compact:", sorted(await compact.status())); print("mcp:", type(await mcp.list_connections()).__name__). Then reply DONE.'
+    'In ONE ipython cell run exactly: r = await bash("echo smoke-$((6*7))"); print("bash:", r.exit_code, r.output.strip()); print("goal:", sorted(await goal.get())); print("mcp:", type(await mcp.list_connections()).__name__). Then reply DONE.'
 rc=$?
 kernel_check "bash() in the kernel" $rc json "$OUT/runtime_api.out" 'bash: 0 smoke-42'
 kernel_check "goal.get()" $rc json "$OUT/runtime_api.out" "'remaining_tokens'"
-kernel_check "compact.status()" $rc json "$OUT/runtime_api.out" "'context_window'"
 kernel_check "mcp.list_connections()" $rc json "$OUT/runtime_api.out" 'mcp: list'
 
 # 4. A kernel variable survives a session resume (kernel state snapshot):

@@ -16,13 +16,18 @@ const SECRET_PARAMS: Record<string, string> = {
   "_unharnessed/providers/login_answer": "answer",
 };
 
+/** A saved conversation: its session id, and the file the agent resumes. */
+export type SavedSession = { id: string; path: string };
+
 /**
  * One `unharnessed --mode acp` process and its ACP connection. The state
  * moves starting → ready → failed (crash), and back to starting on restart.
+ * A process starts on a new conversation, or on a saved one (`--resume`).
  */
 export class Agent {
   private state: AgentState;
   private proc: ChildProcessWithoutNullStreams | undefined;
+  private saved: SavedSession | undefined;
   private connection: acp.ClientConnection | undefined;
   private stderr: string[] = [];
   private restarting: Promise<void> | undefined;
@@ -40,6 +45,11 @@ export class Agent {
 
   get current(): AgentState {
     return this.state;
+  }
+
+  /** The saved conversation the running process was started on, if any. */
+  get resumed(): SavedSession | undefined {
+    return this.saved;
   }
 
   onChange(listener: (state: AgentState) => void): { dispose(): void } {
@@ -69,12 +79,15 @@ export class Agent {
     });
   }
 
-  start(): void {
+  /** On a new conversation, or on `saved`. */
+  start(saved?: SavedSession): void {
     this.stderr = [];
+    this.saved = saved;
     this.set({ kind: "starting" });
-    this.log.info(`starting agent: ${this.binary} --mode acp (cwd ${this.cwd})`);
+    const args = ["--mode", "acp", ...(saved ? ["--resume", saved.path] : [])];
+    this.log.info(`starting agent: ${this.binary} ${args.join(" ")} (cwd ${this.cwd})`);
 
-    const proc = spawn(this.binary, ["--mode", "acp"], { cwd: this.cwd, stdio: "pipe" });
+    const proc = spawn(this.binary, args, { cwd: this.cwd, stdio: "pipe" });
     this.proc = proc;
     // ENOENT / EACCES arrive here, without an exit event.
     proc.on("error", (error) => this.fail(proc, error.message));
@@ -104,10 +117,10 @@ export class Agent {
     });
   }
 
-  /** A second call while one is stopping the agent joins it. */
-  restart(): Promise<void> {
+  /** On a new conversation, or on `saved`. A second call while one is stopping the agent joins it. */
+  restart(saved?: SavedSession): Promise<void> {
     this.restarting ??= this.stop()
-      .then(() => this.start())
+      .then(() => this.start(saved))
       .finally(() => (this.restarting = undefined));
     return this.restarting;
   }

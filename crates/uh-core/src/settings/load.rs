@@ -24,6 +24,7 @@ const KNOWN_FIELDS: &[&str] = &[
     "enableSkillCommands",
     "enableBuiltinSkills",
     "images",
+    "modelInstructions",
     "allowedModels",
     "sessionDir",
     "requestTiming",

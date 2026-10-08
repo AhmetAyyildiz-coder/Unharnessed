@@ -28,8 +28,10 @@ type ModelMeta = {
 
 /**
  * The agent session the panel works in: opened as soon as the agent is
- * ready, one per agent process. It holds the pickers (model, reasoning
- * effort, fast mode); the chat (chat.ts) runs in it.
+ * ready, one per agent process: a new one, or the saved one the process
+ * was started on, whose conversation the agent replays first
+ * (`session/load`). It holds the pickers (model, reasoning effort, fast
+ * mode); the chat (chat.ts) runs in it.
  */
 export class Session {
   private state: SessionState | null = null;
@@ -59,6 +61,11 @@ export class Session {
   /** The open session's id, for the chat. */
   get sessionId(): string | undefined {
     return this.state?.kind === "open" ? this.id : undefined;
+  }
+
+  /** The session whose updates are the chat's: the open one, or the one being loaded. */
+  get updatesFrom(): string | undefined {
+    return this.id;
   }
 
   onChange(listener: () => void): { dispose(): void } {
@@ -92,19 +99,26 @@ export class Session {
 
   private async open(): Promise<void> {
     const run = this.run;
+    const saved = this.agent.resumed;
+    const params = { cwd: this.cwd, mcpServers: [] };
     try {
-      const result = await this.agent.request<{ sessionId: string; configOptions?: ConfigOption[] }>("session/new", {
-        cwd: this.cwd,
-        mcpServers: [],
-      });
+      let result: { sessionId?: string; configOptions?: ConfigOption[] };
+      if (saved) {
+        // Its updates (the conversation) come before the answer.
+        this.id = saved.id;
+        result = await this.agent.request("session/load", { ...params, sessionId: saved.id });
+      } else {
+        result = await this.agent.request("session/new", params);
+      }
       if (run !== this.run) return;
-      this.id = result.sessionId;
+      this.id = saved?.id ?? result.sessionId;
       const config = readConfig(result.configOptions ?? []);
-      this.log.info(`session: opened, ${describe(config)}`);
+      this.log.info(`session: ${saved ? `loaded ${saved.id}` : "opened"}, ${describe(config)}`);
       this.set({ kind: "open", config });
     } catch (error) {
       if (run !== this.run) return;
-      this.log.warn(`session: not opened: ${errorText(error)}`);
+      this.id = undefined;
+      this.log.warn(`session: not ${saved ? "loaded" : "opened"}: ${errorText(error)}`);
       this.set({ kind: "failed", error: errorText(error) });
     }
   }

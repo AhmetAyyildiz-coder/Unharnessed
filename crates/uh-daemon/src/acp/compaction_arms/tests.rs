@@ -1,5 +1,5 @@
 //! The compaction-arms unit battery: the threshold arm, the overflow
-//! attempts, the requested arm, and the abort slot.
+//! attempts, and the abort slot.
 use super::*;
 use crate::FAUX_TEST_LOCK;
 
@@ -107,6 +107,7 @@ async fn acp_test_bed(
         AcpSession::new(
             session_id.clone(),
             engine.clone(),
+            std::sync::Arc::new(Mutex::new(None)),
             producer.clone(),
             autonomous,
             driver,
@@ -430,100 +431,6 @@ async fn overflow_retry_that_overflows_again_reports_once() {
     assert_eq!(
         serde_json::to_value(&rows[0].content).unwrap(),
         json!("Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.")
-    );
-}
-
-/// The requested arm on the ACP turn path: a scheduled `compact.run`
-/// request is consumed at the next admitted prompt's pre-turn boundary
-/// (TS `_runPreTurnCompaction` runs the requested arm too), publishes
-/// the compaction meta, and stops the turn loop on purpose (the run
-/// still settles `end_turn`); the request is taken regardless of
-/// outcome.
-#[tokio::test]
-async fn requested_arm_consumes_the_scheduled_compaction() {
-    let _faux = FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut bed = acp_test_bed(
-        json!({
-            "responses": [
-                { "text": "seed reply" },
-                { "text": "turn two reply" },
-                { "text": "the requested summary" },
-                { "text": "turn three reply" },
-            ]
-        }),
-        1,
-        10,
-    )
-    .await;
-    let (response, _) = bed
-        .prompt(format!("seed turn {}", "x".repeat(48_000)))
-        .await;
-    assert_eq!(response["result"]["stopReason"], "end_turn");
-    let (response, _) = bed.prompt(format!("turn two {}", "x".repeat(2_000))).await;
-    assert_eq!(response["result"]["stopReason"], "end_turn");
-    // Schedule a requested compaction (the `compact.run` write path):
-    // the next prompt's pre-turn boundary consumes it. The session
-    // carries two settled turns, so the keep-recent cut leaves the
-    // first turn summarizable.
-    bed.engine
-        .turn_boundary
-        .schedule_compaction(Some("keep the checklist".to_string()))
-        .await;
-    let (response, notifications) = bed.prompt("turn three".to_string()).await;
-    assert_eq!(response["result"]["stopReason"], "end_turn");
-    let metas = AcpTestBed::compaction_metas(&notifications);
-    assert_eq!(metas.len(), 1, "one compaction meta: {metas:?}");
-    assert_eq!(metas[0]["summary"], "the requested summary");
-    assert!(!bed.engine.turn_boundary.compaction_scheduled().await);
-    assert!(
-        bed.entries()
-            .await
-            .iter()
-            .any(|entry| matches!(entry, uh_types::session::FileEntry::Compaction { .. })),
-        "the requested compaction persisted"
-    );
-}
-
-/// A skipped requested compaction still consumes the request and
-/// publishes the empty payload (the TS `compaction_end` with
-/// `result: undefined`), plus the durable disclosure row with the
-/// requested-skip message.
-#[tokio::test]
-async fn requested_arm_skip_publishes_the_empty_payload() {
-    let _faux = FAUX_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    // `keepRecentTokens` beyond the whole session: the cut keeps
-    // everything, so the compaction skips as too short.
-    let mut bed = acp_test_bed(
-        json!({ "responses": [{ "text": "seed reply" }, { "text": "turn two reply" }] }),
-        1,
-        100_000,
-    )
-    .await;
-    let (response, _) = bed.prompt("seed turn".to_string()).await;
-    assert_eq!(response["result"]["stopReason"], "end_turn");
-    bed.engine.turn_boundary.schedule_compaction(None).await;
-    let (response, notifications) = bed.prompt("turn two".to_string()).await;
-    assert_eq!(response["result"]["stopReason"], "end_turn");
-    let metas = AcpTestBed::compaction_metas(&notifications);
-    assert_eq!(metas.len(), 1, "the skip is observable: {metas:?}");
-    assert_eq!(metas[0], json!({}));
-    assert!(!bed.engine.turn_boundary.compaction_scheduled().await);
-    let entries = bed.entries().await;
-    let row = entries
-        .iter()
-        .filter_map(|entry| match entry {
-            uh_types::session::FileEntry::CustomMessage { payload, .. } => Some(payload),
-            _ => None,
-        })
-        .find(|payload| payload.custom_type == "compaction_outcome")
-        .expect("the disclosure row persisted");
-    assert_eq!(
-        serde_json::to_value(&row.content).unwrap(),
-        json!("Requested compaction skipped: Session is too short to compact — try again once it grows")
     );
 }
 

@@ -13,7 +13,11 @@
 //! and write the global settings file (`settings.rs`), the
 //! `_unharnessed/mcp/*` ones list the MCP servers and remove their
 //! sign-ins (`mcp_servers.rs`), and the `_unharnessed/skills/*` ones list
-//! the skills and turn them on or off (`skills.rs`). Every frame leaves
+//! the skills and turn them on or off (`skills.rs`). `session/list` lists
+//! the saved conversations, `session/load` replays the one this process
+//! resumed, and `_unharnessed/sessions/delete` deletes one (`history.rs`);
+//! `_unharnessed/session/rewind` takes the conversation back to before a
+//! prompt, to send it again changed (`rewind.rs`). Every frame leaves
 //! through one ordered
 //! write queue, so responses and `session/update` notifications interleave
 //! exactly in publication order. The process exits when stdin closes.
@@ -23,6 +27,7 @@ mod compaction_arms;
 mod config_options;
 mod events;
 mod goal_continuation;
+mod history;
 mod in_process_config;
 mod jsonrpc;
 mod mcp;
@@ -31,10 +36,12 @@ mod meta;
 mod producer;
 mod prompt;
 mod providers;
+mod rewind;
 mod session;
 mod settings;
 mod skills;
 mod types;
+mod usage;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -223,7 +230,8 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
     // its own when a detached `bash()` finishes, a goal backoff passes or
     // a quota park resets while no prompt runs.
     let wake_watcher = tokio::spawn(watch_wakes(state.clone(), mode.clone(), tx.clone()));
-    let providers = providers::Providers::new(options.provider_auth.clone());
+    let providers =
+        providers::Providers::new(options.provider_auth.clone(), options.agent_dir.clone());
     let models_watcher = tokio::spawn(watch_models(
         state.clone(),
         mode.clone(),
@@ -313,16 +321,23 @@ async fn watch_models(
                 true
             }
         };
-        let credentials = tokio::task::spawn_blocking({
+        let (credentials, openrouter) = tokio::task::spawn_blocking({
             let agent_dir = Arc::clone(&mode.agent_dir);
-            move || uh_core::models::prime_credentials_for_dir(&agent_dir)
+            move || {
+                (
+                    uh_core::models::prime_credentials_for_dir(&agent_dir),
+                    uh_core::models::openrouter_signed_in(&agent_dir),
+                )
+            }
         })
         .await
-        .ok()
-        .flatten();
+        .unwrap_or_default();
         catalog
             .refresh_with_credentials(forced, credentials.as_ref())
             .await;
+        if openrouter {
+            catalog.refresh_openrouter(forced).await;
+        }
         in_process_config::refresh_after_auth_change(&state, &mode).await;
     }
 }
@@ -402,6 +417,7 @@ async fn handle_request(
             &tx,
         )
         .await
+        || history::handle_request(&id, &method, &params, &mode.engine, agent_dir, &tx).await
     {
         return;
     }
@@ -410,6 +426,10 @@ async fn handle_request(
         "session/new" => {
             handle_session_new(id, params, state, mode, tx).await;
         }
+        "session/load" => {
+            handle_session_load(id, params, state, mode, tx).await;
+        }
+        "session/list" => handle_session_list(&id, &params, &mode, &tx).await,
         "session/prompt" => {
             prompt::handle_session_prompt(id, params, state, mode, tx).await;
         }
@@ -419,6 +439,7 @@ async fn handle_request(
         "session/close" => {
             handle_session_close(id, params, state, mode, tx).await;
         }
+        rewind::REWIND => rewind::handle_rewind(id, params, state, mode, tx).await,
         other => {
             let _ = tx.send(jsonrpc::error_response(
                 &id,
@@ -519,7 +540,7 @@ async fn handle_session_new(
         state.session_new_in_flight = true;
     }
 
-    let result = session_new(&id, params, &mode, tx.clone()).await;
+    let result = session_new(&id, params, &mode, tx.clone(), None).await;
     match result {
         // An admission failure has already queued its own error response;
         // only the in-flight flag is left to clear.
@@ -536,6 +557,7 @@ async fn handle_session_new(
             // response is queued on the sink, so no held update can
             // precede the admission response.
             let producer = Arc::clone(entry.session.producer());
+            let usage = Arc::clone(&entry.session.usage);
             let mut state = state.lock().await;
             state.session_new_in_flight = false;
             state.session = Some(entry);
@@ -549,19 +571,126 @@ async fn handle_session_new(
             producer
                 .publish(&commands, 0, meta::UnharnessedEventPhase::Event, None)
                 .await;
+            usage.changed().await;
         }
     }
 }
 
-/// Admit one session. On failure the error response has already been
-/// queued; on success the admission response is returned UNSENT: the
-/// caller installs the entry, queues the response, then opens the
-/// producer gate, in that order.
+/// `session/load`: admit the session this process was started on
+/// (`--resume`) under its own id, replay its conversation, then answer
+/// like `session/new`. The replay goes before the answer (ACP), so the
+/// producer gate opens first.
+async fn handle_session_load(
+    id: Value,
+    params: Value,
+    state: Arc<Mutex<ConnectionState>>,
+    mode: AcpModeState,
+    tx: producer::FrameSink,
+) {
+    {
+        let mut state = state.lock().await;
+        if state.session.is_some() || state.session_new_in_flight || state.session_close_in_flight {
+            let _ = tx.send(internal_error(
+                &id,
+                "unharnessed ACP mode hosts one session per connection; start another unharnessed process for a second session",
+            ));
+            return;
+        }
+        state.session_new_in_flight = true;
+    }
+    let requested = session_id_params(&params);
+    let (held, file, leaf) = {
+        let session = mode.engine.session.shared_persistence();
+        let session = session.lock().await;
+        (
+            session.get_session_id().to_string(),
+            session.get_session_file().map(Path::to_path_buf),
+            session.get_leaf_id().map(str::to_string),
+        )
+    };
+    if requested != held {
+        let _ = tx.send(internal_error(
+            &id,
+            &format!("This process holds session {held}: start unharnessed with --resume <its file> to load {requested}."),
+        ));
+        state.lock().await.session_new_in_flight = false;
+        return;
+    }
+    let Ok((entry, result)) = session_new(&id, params, &mode, tx.clone(), Some(held)).await else {
+        state.lock().await.session_new_in_flight = false;
+        return;
+    };
+    let producer = Arc::clone(entry.session.producer());
+    let usage = Arc::clone(&entry.session.usage);
+    let loaded = Arc::clone(&entry.session);
+    {
+        let mut state = state.lock().await;
+        state.session_new_in_flight = false;
+        state.session = Some(entry);
+    }
+    producer.commit_session_new_response().await;
+    let entries = match file {
+        Some(file) => tokio::task::spawn_blocking(move || {
+            uh_core::session::manager::load_entries_from_file(&file, false)
+        })
+        .await
+        .unwrap_or_default(),
+        None => Vec::new(),
+    };
+    for turn in history::replay(&entries, leaf.as_deref()) {
+        let turn_id = producer.begin_prompt().await;
+        for update in &turn {
+            producer
+                .publish(update, turn_id, meta::UnharnessedEventPhase::Event, None)
+                .await;
+        }
+        producer.finish_prompt(turn_id).await;
+    }
+    let _ = tx.send(jsonrpc::response(&id, &result));
+    let commands = AcpSessionUpdate::AvailableCommandsUpdate {
+        available_commands: commands::available_commands(&mode.engine),
+    };
+    producer
+        .publish(&commands, 0, meta::UnharnessedEventPhase::Event, None)
+        .await;
+    usage.changed().await;
+    loaded.publish_loaded_goal().await;
+}
+
+/// `session/list`: the saved conversations (`history.rs`), in the
+/// sessions folder this process writes to.
+async fn handle_session_list(
+    id: &Value,
+    params: &Value,
+    mode: &AcpModeState,
+    tx: &producer::FrameSink,
+) {
+    let cwd = params.get("cwd").and_then(Value::as_str).map(PathBuf::from);
+    let (session_dir, current) = {
+        let session = mode.engine.session.shared_persistence();
+        let session = session.lock().await;
+        (
+            session.get_session_dir().to_path_buf(),
+            session.get_session_id().to_string(),
+        )
+    };
+    let sessions =
+        tokio::task::spawn_blocking(move || history::list(&session_dir, cwd.as_deref(), &current))
+            .await
+            .unwrap_or_default();
+    let _ = tx.send(jsonrpc::response(id, &json!({ "sessions": sessions })));
+}
+
+/// Admit one session, under `session_id` (a loaded one) or a new id. On
+/// failure the error response has already been queued; on success the
+/// admission response is returned UNSENT: the caller installs the entry,
+/// queues the response, then opens the producer gate, in that order.
 async fn session_new(
     id: &Value,
     params: Value,
     mode: &AcpModeState,
     tx: producer::FrameSink,
+    session_id: Option<String>,
 ) -> std::result::Result<(SessionEntry, Value), ()> {
     let params = NewSessionParams::parse(&params);
     // MCP admission precedes everything else in the session identity: a
@@ -594,7 +723,7 @@ async fn session_new(
     // not block admission (TS `entry.models = []` on a discovery failure).
     let config = admit_session_config(mode).await;
 
-    let session_id = uuid::Uuid::new_v4().to_string();
+    let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let producer = UpdateProducer::new(session_id.clone(), tx.clone());
     // Autonomous state is session-scoped, like the TS session it backs.
     let autonomous = Arc::new(tokio::sync::Mutex::new(create_autonomous_runtime_state(
@@ -608,6 +737,7 @@ async fn session_new(
         AcpSession::new(
             session_id.clone(),
             mode.engine.clone(),
+            mode.model.clone(),
             producer.clone(),
             autonomous,
             driver,

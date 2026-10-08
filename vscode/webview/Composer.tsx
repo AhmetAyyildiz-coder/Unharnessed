@@ -1,12 +1,13 @@
 import {
+  useContext,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
-  type ReactNode,
-  type RefObject,
 } from "react";
 import type {
   Attachment,
@@ -18,23 +19,31 @@ import type {
   SessionConfig,
   SessionState,
 } from "../src/protocol";
+import { mentions, mentionText } from "../src/mentions";
 import { attach, IMAGE_TYPES } from "./attachments";
-import { IconBolt, IconCheck, IconChevronDown, IconClip, IconCross, IconSend, IconStop } from "./icons";
+import { EffortPicker } from "./Effort";
+import { FileIcon } from "./FileIcon";
+import { GoalHead, goalPhase, GoalPill, useGoalLight } from "./Goal";
+import {
+  IconBolt,
+  IconBook,
+  IconChevronDown,
+  IconCompact,
+  IconCross,
+  IconFlag,
+  IconPencil,
+  IconPlus,
+  IconSend,
+  IconStop,
+  IconText,
+} from "./icons";
 import { ProviderLogo } from "./logos";
-import { ModelList, providerName } from "./models";
+import { findPaths, knows, MentionText, nameOf, PathsContext, type Paths } from "./mentions";
+import { isLocal, ModelList, providerName } from "./models";
+import { PickMenu } from "./PickMenu";
+import { Popover } from "./Popover";
+import { UsageRing } from "./Usage";
 import { post } from "./vscode";
-
-const EFFORT_LABELS: Record<string, string> = {
-  off: "Off",
-  minimal: "Minimal",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra high",
-  max: "Max",
-};
-
-const effortLabel = (level: string) => EFFORT_LABELS[level] ?? level;
 
 const PLACEHOLDER = "Ask Unharnessed";
 
@@ -57,12 +66,37 @@ const GROUPS: [string, ChatCommand["kind"][]][] = [
   ["Skills", ["skill"]],
 ];
 
+/** The commands the `/` menu offers, with the prompts and skills; the others (`/new`, `/autonomous`) run typed. */
+const OFFERED = ["compact", "goal"];
+
+/** What is written after a command or a skill, in words: the agent's own hints are syntax (`[instructions]`). */
+const ARGUMENT = "instructions";
+
+/** What a command does, said plainly: the agent's own descriptions are terse. */
+const ABOUT: Record<string, string> = {
+  compact:
+    "Summarizes the conversation so far, to free room in the context. Instructions, if you write some, say what the summary should keep.",
+  goal: "Gives the agent a goal it keeps working on, turn after turn, until it is reached. Pause, play or end it from the message box.",
+};
+
+/** What an entry is, when it says nothing itself. */
+const KINDS: Record<ChatCommand["kind"], string> = {
+  panel: "A command of the panel.",
+  command: "A command of the agent.",
+  prompt: "A prompt template: its text goes as your message.",
+  skill: "A skill: instructions the agent follows for this kind of task.",
+};
+
 /**
  * The message box at the bottom of home: what is being written and the
  * images it carries, the messages waiting for the running turn, and the
  * session's pickers (the model, its reasoning effort, its fast mode).
  * Enter sends; while a turn runs the message waits, and stop ends the turn.
- * A `/` at the start opens the commands, prompts and skills.
+ * While there is a goal, its line tops the box, and its timer with pause and
+ * play stands in for stop.
+ * A `/` at the start opens the commands, prompts and skills. While turn
+ * `editing`'s prompt is in it, sending it goes in place of that prompt;
+ * `onEditEnd` ends the edit, sent or given up.
  */
 export function Composer({
   session,
@@ -71,6 +105,8 @@ export function Composer({
   images,
   draft,
   onDraft,
+  editing,
+  onEditEnd,
 }: {
   session: SessionState | null;
   providers: Provider[];
@@ -78,21 +114,32 @@ export function Composer({
   images: ImageSettings;
   draft: Draft;
   onDraft: (update: (draft: Draft) => Draft) => void;
+  editing: number | null;
+  onEditEnd: () => void;
 }) {
   const [menu, setMenu] = useState<Menu | null>(null);
   /** Bumped when the empty box takes focus: the placeholder streams in again. */
   const [stream, setStream] = useState(0);
   const [notes, setNotes] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
-  /** The text the `/` menu was dismissed on: it stays shut until the text changes. */
+  /** The text the `/` or `@` menu was dismissed on: it stays shut until the text changes. */
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [highlight, setHighlight] = useState(0);
+  const [caret, setCaret] = useState(0);
+  /** Where the caret goes once the text set with it is in the box. */
+  const placeCaret = useRef<number | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const shell = useRef<HTMLDivElement>(null);
+  const glow = useRef<HTMLDivElement>(null);
+  const mirror = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLInputElement>(null);
+  const paths = useContext(PathsContext);
   const config = session?.kind === "open" ? session.config : null;
   const toggle = (next: Menu) => setMenu((open) => (open === next ? null : next));
   const close = () => setMenu(null);
   const hasContent = draft.text.trim() !== "" || draft.images.length > 0;
+  const phase = goalPhase(chat.goal);
+  const lit = useGoalLight(shell, glow, phase);
 
   // A menu whose picker left (a model switch drops the effort) closes.
   useEffect(() => {
@@ -100,11 +147,46 @@ export function Composer({
     if (menu === "effort" && !config?.effort) setMenu(null);
   }, [menu, config]);
 
-  const commands = slashCommands(draft.text, chat.commands);
-  const slashOpen = commands !== null && dismissed !== draft.text && menu === null;
-  useEffect(() => setHighlight(0), [draft.text]);
+  const slash = slashCommands(draft.text, chat.commands);
+  // While a command's text is written, an `@` in it opens the files.
+  const word = slash === null || slash.arg !== null ? mentionQuery(draft.text, caret) : null;
+  /** What a dismissal holds for: the text; while a command's text is written, the command. */
+  const shutKey =
+    word === null && slash?.arg != null ? draft.text.slice(0, draft.text.length - slash.arg.length) : draft.text;
+  const shut = dismissed === shutKey || menu !== null;
+  const slashOpen = slash !== null && word === null && !shut;
+  const atOpen = word !== null && !shut;
+  const found = useMemo(() => (atOpen && paths ? findPaths(paths, word.query) : []), [atOpen, paths, word?.query]);
+  useEffect(() => setHighlight(0), [draft.text, word?.start]);
+  // A `/` typed again opens the menu again.
+  useEffect(() => setDismissed((was) => (was === shutKey ? was : null)), [shutKey]);
+
+  // The folder's files: for the pills under the mentions, then fresh each time the `@` menu opens.
+  useEffect(() => post({ type: "listFiles" }), []);
+  useEffect(() => {
+    if (atOpen) post({ type: "listFiles" });
+  }, [atOpen]);
+
+  useLayoutEffect(() => {
+    if (placeCaret.current === null) return;
+    input.current?.setSelectionRange(placeCaret.current, placeCaret.current);
+    setCaret(placeCaret.current);
+    placeCaret.current = null;
+  }, [draft.text]);
+
+  // A prompt to edit comes in: the caret waits at its end.
+  useEffect(() => {
+    const box = input.current;
+    if (editing === null || !box) return;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  }, [editing]);
 
   const setText = (text: string) => onDraft((current) => ({ ...current, text }));
+  const edit = (text: string, caretAt: number) => {
+    placeCaret.current = caretAt;
+    setText(text);
+  };
 
   const addFiles = (files: File[]) => {
     const found = files.filter((file) => IMAGE_TYPES.includes(file.type) || file.type.startsWith("image/"));
@@ -128,39 +210,69 @@ export function Composer({
 
   const submit = () => {
     if (!hasContent) return;
-    post({ type: "send", text: draft.text.trim(), images: draft.images });
-    onDraft(() => ({ text: "", images: [] }));
+    post({ type: "send", text: draft.text.trim(), images: draft.images, edit: editing ?? undefined });
+    if (editing === null) onDraft(() => ({ text: "", images: [] }));
+    else onEditEnd();
     setNotes([]);
   };
 
   const pick = (command: ChatCommand) => {
-    setText(`/${command.name} `);
+    setText(`/${slashName(command)} `);
+    input.current?.focus();
+  };
+
+  /** The `@` word under the caret becomes the mention of `path`, two spaces after it: its pill covers the first. */
+  const pickPath = (path: string) => {
+    if (!word) return;
+    const before = draft.text.slice(0, word.start);
+    const inserted = `${mentionText(path)}  `;
+    edit(before + inserted + draft.text.slice(word.end).replace(/^ +/, ""), before.length + inserted.length);
     input.current?.focus();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing) return;
-    if (slashOpen && commands.length > 0) {
+    // While a command's text is written, its row stays alone: Enter sends.
+    const listing = slashOpen && slash.arg === null;
+    const count = listing ? slash.commands.length : atOpen ? found.length : 0;
+    if (count > 0) {
       const move = { ArrowDown: 1, ArrowUp: -1 }[event.key];
       if (move) {
         event.preventDefault();
-        setHighlight((at) => (at + move + commands.length) % commands.length);
+        setHighlight((at) => (at + move + count) % count);
         return;
       }
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
-        pick(commands[Math.min(highlight, commands.length - 1)]);
+        const chosen = Math.min(highlight, count - 1);
+        if (listing) pick(slash.commands[chosen]);
+        else pickPath(found[chosen]);
         return;
       }
-      if (event.key === "Escape") {
+    }
+    if ((slashOpen || atOpen) && event.key === "Escape") {
+      event.preventDefault();
+      setDismissed(shutKey);
+      return;
+    }
+    // A mention goes whole: one backspace right after it.
+    if (event.key === "Backspace" && !event.altKey && !event.metaKey && !event.ctrlKey) {
+      const { selectionStart, selectionEnd } = event.currentTarget;
+      const mention =
+        selectionStart === selectionEnd && mentions(draft.text, knows(paths)).find((m) => m.end === selectionStart);
+      if (mention) {
         event.preventDefault();
-        setDismissed(draft.text);
+        edit(draft.text.slice(0, mention.start) + draft.text.slice(mention.end), mention.start);
         return;
       }
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       submit();
+    }
+    if (event.key === "Escape" && editing !== null) {
+      event.preventDefault();
+      onEditEnd();
     }
   };
 
@@ -188,7 +300,9 @@ export function Composer({
     <>
       {chat.queue.length > 0 && <Queue queue={chat.queue} />}
       <div
+        ref={shell}
         className={dragging ? "composer-shell is-dragging" : "composer-shell"}
+        data-goal={phase ?? undefined}
         onDragOver={(event) => {
           if (!event.dataTransfer.types.includes("Files")) return;
           event.preventDefault();
@@ -197,19 +311,47 @@ export function Composer({
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
       >
-        <div className="composer-glow" aria-hidden="true" />
+        <div className="composer-glow" ref={glow} aria-hidden="true" />
         <div className="composer">
           {menu === "model" && config?.model && (
             <ModelMenu model={config.model} providers={providers} onClose={close} />
           )}
           {slashOpen && (
             <SlashMenu
-              commands={commands}
+              slash={slash}
               highlight={highlight}
               onHighlight={setHighlight}
-              onPick={pick}
-              onClose={() => setDismissed(draft.text)}
+              onPick={(command) => (slash.arg === null ? pick(command) : input.current?.focus())}
+              onClose={() => setDismissed(shutKey)}
             />
+          )}
+          {atOpen && (
+            <FileMenu
+              paths={paths}
+              found={found}
+              query={word.query}
+              highlight={highlight}
+              onHighlight={setHighlight}
+              onPick={pickPath}
+              onClose={() => setDismissed(shutKey)}
+            />
+          )}
+          <GoalHead goal={chat.goal} lit={lit} />
+          {editing !== null && (
+            <div className="composer-editing">
+              <IconPencil />
+              <span>Editing an earlier message</span>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Stop editing"
+                data-tip="Stop editing"
+                data-tip-align="end"
+                onClick={onEditEnd}
+              >
+                <IconCross />
+              </button>
+            </div>
           )}
           {draft.images.length > 0 && (
             <Attachments
@@ -218,6 +360,10 @@ export function Composer({
             />
           )}
           <div className="composer-field">
+            {/* Under the text, a pill under each mention; it scrolls with the box. */}
+            <div className="composer-mirror" ref={mirror} aria-hidden="true">
+              <MentionText text={draft.text.endsWith("\n") ? `${draft.text} ` : draft.text} />
+            </div>
             <textarea
               ref={input}
               className="composer-input"
@@ -225,7 +371,14 @@ export function Composer({
               aria-label={PLACEHOLDER}
               spellCheck={false}
               value={draft.text}
-              onChange={(event) => setText(event.target.value)}
+              onChange={(event) => {
+                setText(event.target.value);
+                setCaret(event.target.selectionStart);
+              }}
+              onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+              onScroll={(event) => {
+                if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop;
+              }}
               onFocus={() => draft.text === "" && setStream((n) => n + 1)}
               onKeyDown={onKeyDown}
               onPaste={onPaste}
@@ -264,7 +417,7 @@ export function Composer({
               disabled={images.block}
               onClick={() => picker.current?.click()}
             >
-              <IconClip />
+              <IconPlus />
             </button>
             <ModelButton
               session={session}
@@ -282,7 +435,10 @@ export function Composer({
             )}
             {config && config.fast !== null && <FastToggle on={config.fast} />}
             <span className="composer-spacer" />
-            {chat.busy && (
+            {config && chat.usage && <UsageRing usage={chat.usage} empty={chat.entries.length === 0} />}
+            {chat.goal && phase && <GoalPill goal={chat.goal} phase={phase} lit={lit} />}
+            {/* While the goal runs, its pause stops the turn. */}
+            {chat.busy && phase !== "running" && (
               <button
                 className="send is-stop"
                 type="button"
@@ -315,81 +471,167 @@ export function Composer({
 }
 
 /**
- * The commands matching a `/` at the start of the text, before any space;
- * `null` when the text is not one. Names starting with what is typed come first.
+ * What the `/` menu shows: the commands matching a `/` at the start of the
+ * text, names starting with what is typed first; once a space follows a
+ * command's name, that command alone and `arg`, what is written for it.
  */
-function slashCommands(text: string, commands: ChatCommand[]): ChatCommand[] | null {
+type Slash = { commands: ChatCommand[]; arg: string | null };
+
+/** The `/` menu for `text`; `null` when the text opens none. */
+function slashCommands(text: string, commands: ChatCommand[]): Slash | null {
+  const offered = (command: ChatCommand) =>
+    command.kind === "prompt" || command.kind === "skill" || OFFERED.includes(command.name);
+  const written = /^\/(\S+)\s([\s\S]*)$/.exec(text);
+  if (written) {
+    const name = written[1].toLowerCase();
+    const command = commands.find((c) => offered(c) && slashName(c).toLowerCase() === name);
+    return command ? { commands: [command], arg: written[2] } : null;
+  }
   const match = /^\/(\S*)$/.exec(text);
   if (!match) return null;
   const query = match[1].toLowerCase();
-  const found = commands.filter((command) => command.name.toLowerCase().includes(query));
-  const starts = (command: ChatCommand) => (command.name.toLowerCase().startsWith(query) ? 0 : 1);
-  return GROUPS.flatMap(([, kinds]) =>
+  const found = commands.filter((command) => offered(command) && slashName(command).toLowerCase().includes(query));
+  const starts = (command: ChatCommand) => (slashName(command).toLowerCase().startsWith(query) ? 0 : 1);
+  const sorted = GROUPS.flatMap(([, kinds]) =>
     found.filter((command) => kinds.includes(command.kind)).sort((a, b) => starts(a) - starts(b)),
   );
+  return { commands: sorted, arg: null };
 }
 
-/** The commands, prompts and skills a `/` opens; the highlighted one is picked with Enter or Tab. */
+/** What is typed for `command`: a skill goes by its name, the extension adds the agent's `skill:`. */
+function slashName(command: ChatCommand): string {
+  return command.kind === "skill" ? command.name.replace(/^skill:/, "") : command.name;
+}
+
+/**
+ * The `@` word the caret is in, from its `@` to its end, and what is typed
+ * of it up to the caret; `null` when the caret is in none.
+ */
+function mentionQuery(text: string, caret: number): { start: number; end: number; query: string } | null {
+  const match = /(?:^|\s)@([^\s"]*)$/.exec(text.slice(0, caret));
+  if (!match) return null;
+  const rest = /^\S*/.exec(text.slice(caret))?.[0] ?? "";
+  return { start: caret - match[1].length - 1, end: caret + rest.length, query: match[1] };
+}
+
+/**
+ * The commands, prompts and skills a `/` opens; the highlighted one is
+ * picked with Enter or Tab. Picked, it stays, what is written for it in its
+ * quotes as it is typed.
+ */
 function SlashMenu({
-  commands,
+  slash: { commands, arg },
   highlight,
   onHighlight,
   onPick,
   onClose,
 }: {
-  commands: ChatCommand[];
+  slash: Slash;
   highlight: number;
   onHighlight: (at: number) => void;
   onPick: (command: ChatCommand) => void;
   onClose: () => void;
 }) {
-  const list = useRef<HTMLUListElement>(null);
-  useEffect(() => {
-    list.current?.querySelector(`[data-at="${highlight}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [highlight]);
-  if (commands.length === 0) {
-    return (
-      <Popover className="menu" trigger="slash" onClose={onClose}>
-        <p className="menu-empty">No command, prompt or skill by that name.</p>
-      </Popover>
+  const written = arg?.replace(/\s+/g, " ").trim();
+  const picks = commands.map((command) => {
+    // A template says what it takes itself.
+    const blank = command.kind === "prompt" ? command.hint : `"${ARGUMENT}"`;
+    const hint = written ? (
+      <span className="pick-hint">
+        "<span className="pick-written">{written}</span>"
+      </span>
+    ) : (
+      blank && <span className="pick-hint">{blank}</span>
     );
-  }
-  let at = 0;
+    return {
+      key: command.name,
+      group: GROUPS.find(([, kinds]) => kinds.includes(command.kind))?.[0],
+      icon: iconOf(command),
+      name: (
+        <>
+          {command.kind === "command" ? capitalized(command.name) : slashName(command)}
+          {hint}
+        </>
+      ),
+      detail: (
+        <p className="pick-explain">
+          {(command.kind === "command" && ABOUT[command.name]) || command.description || KINDS[command.kind]}
+        </p>
+      ),
+    };
+  });
   return (
-    <Popover className="menu" trigger="slash" onClose={onClose}>
-      <ul className="menu-list slash-list" role="listbox" aria-label="Commands" ref={list}>
-        {GROUPS.map(([title, kinds]) => {
-          const rows = commands.filter((command) => kinds.includes(command.kind));
-          if (rows.length === 0) return null;
-          return (
-            <li key={title} role="presentation">
-              <p className="menu-title">{title}</p>
-              <ul className="menu-list" role="presentation">
-                {rows.map((command) => {
-                  const index = at++;
-                  return (
-                    <li key={command.name} role="option" aria-selected={index === highlight} data-at={index}>
-                      <button
-                        className={index === highlight ? "menu-row slash-row is-active" : "menu-row slash-row"}
-                        type="button"
-                        onMouseEnter={() => onHighlight(index)}
-                        onClick={() => onPick(command)}
-                      >
-                        <span className="slash-name">
-                          /{command.name}
-                          {command.hint && <span className="slash-hint">{command.hint}</span>}
-                        </span>
-                        <span className="slash-description">{command.description}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </li>
-          );
-        })}
-      </ul>
-    </Popover>
+    <PickMenu
+      className="slash-menu"
+      trigger="slash"
+      label="Commands"
+      picks={picks}
+      empty="No command, prompt or skill by that name."
+      highlight={highlight}
+      onHighlight={onHighlight}
+      onPick={(at) => onPick(commands[at])}
+      onClose={onClose}
+    />
+  );
+}
+
+const capitalized = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
+
+/** The goal's flag as the box has it, in cyan; a mark for the others. */
+function iconOf(command: ChatCommand) {
+  if (command.name === "goal") return <IconFlag className="pick-goal" />;
+  if (command.name === "compact") return <IconCompact />;
+  return command.kind === "skill" ? <IconBook /> : <IconText />;
+}
+
+/** The folder's files and folders an `@` opens: a file's name, then where it is. */
+function FileMenu({
+  paths,
+  found,
+  query,
+  highlight,
+  onHighlight,
+  onPick,
+  onClose,
+}: {
+  paths: Paths | null;
+  found: string[];
+  query: string;
+  highlight: number;
+  onHighlight: (at: number) => void;
+  onPick: (path: string) => void;
+  onClose: () => void;
+}) {
+  const open = new Set(paths?.open);
+  const grouped = query === "" && open.size > 0;
+  const picks = found.map((path) => {
+    const name = nameOf(path);
+    return {
+      key: path,
+      group: grouped ? (open.has(path) ? "Open" : "Workspace") : undefined,
+      icon: <FileIcon path={path} />,
+      name,
+      about: path.slice(0, path.length - name.length),
+    };
+  });
+  const empty =
+    paths === null
+      ? "Listing the folder's files…"
+      : paths.entries.length === 0
+        ? "Open a folder to mention its files."
+        : "No file by that name.";
+  return (
+    <PickMenu
+      className="file-menu"
+      trigger="mention"
+      label="Files"
+      picks={picks}
+      empty={empty}
+      highlight={highlight}
+      onHighlight={onHighlight}
+      onPick={(at) => onPick(found[at])}
+      onClose={onClose}
+    />
   );
 }
 
@@ -453,22 +695,6 @@ function Placeholder({ streaming }: { streaming: boolean }) {
   );
 }
 
-/** The reasoning effort as rising bars, one per level, lit up to `at`. */
-function Gauge({ count, at }: { count: number; at: number }) {
-  return (
-    <span className="gauge" aria-hidden="true">
-      {Array.from({ length: count }, (_, i) => (
-        <span
-          key={i}
-          className={i <= at ? "gauge-bar is-lit" : "gauge-bar"}
-          // From a quarter of the height for the lowest level to full for the highest.
-          style={{ height: `${count > 1 ? 25 + (75 * i) / (count - 1) : 100}%` }}
-        />
-      ))}
-    </span>
-  );
-}
-
 function ModelButton({
   session,
   providers,
@@ -502,62 +728,16 @@ function ModelButton({
       data-menu-trigger="model"
       onClick={onClick}
     >
-      {current && <ProviderLogo provider={current.provider} name={providerName(providers, current.provider)} />}
+      {current && (
+        <ProviderLogo
+          provider={current.provider}
+          name={providerName(providers, current.provider)}
+          local={isLocal(providers, current.provider)}
+        />
+      )}
       <span className="chip-label">{current?.name ?? model.current}</span>
       <IconChevronDown className="chip-chevron" />
     </button>
-  );
-}
-
-function EffortPicker({
-  effort,
-  open,
-  onToggle,
-  onClose,
-}: {
-  effort: NonNullable<SessionConfig["effort"]>;
-  open: boolean;
-  onToggle: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="picker">
-      {open && (
-        <Popover className="menu is-compact" trigger="effort" onClose={onClose}>
-          <p className="menu-title">Reasoning effort</p>
-          <ul className="menu-list" role="listbox" aria-label="Reasoning effort">
-            {effort.levels.map((level) => (
-              <li key={level} role="option" aria-selected={level === effort.current}>
-                <button
-                  className="menu-row"
-                  type="button"
-                  onClick={() => {
-                    set({ configId: "thought_level", value: level });
-                    onClose();
-                  }}
-                >
-                  <Gauge count={effort.levels.length} at={effort.levels.indexOf(level)} />
-                  <span className="menu-row-name">{effortLabel(level)}</span>
-                  {level === effort.current && <IconCheck className="menu-check" />}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </Popover>
-      )}
-      <button
-        className={open ? "chip is-open" : "chip"}
-        type="button"
-        data-tip="Reasoning effort"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        data-menu-trigger="effort"
-        onClick={onToggle}
-      >
-        <Gauge count={effort.levels.length} at={effort.levels.indexOf(effort.current)} />
-        <span className="chip-label">{effortLabel(effort.current)}</span>
-      </button>
-    </div>
   );
 }
 
@@ -600,47 +780,4 @@ function ModelMenu({
       />
     </Popover>
   );
-}
-
-/** A menu above the composer; closes on Escape or a press outside it and its trigger. */
-function Popover({
-  className,
-  trigger,
-  onClose,
-  children,
-}: {
-  className: string;
-  trigger: Menu;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useDismiss(ref, trigger, onClose);
-  return (
-    <div className={className} ref={ref}>
-      {children}
-    </div>
-  );
-}
-
-function useDismiss(ref: RefObject<HTMLElement | null>, trigger: Menu, onClose: () => void) {
-  const close = useRef(onClose);
-  close.current = onClose;
-  useEffect(() => {
-    const onPointer = (event: PointerEvent) => {
-      const target = event.target as Element | null;
-      if (ref.current?.contains(target)) return;
-      if (target?.closest(`[data-menu-trigger="${trigger}"]`)) return;
-      close.current();
-    };
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") close.current();
-    };
-    document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [ref, trigger]);
 }

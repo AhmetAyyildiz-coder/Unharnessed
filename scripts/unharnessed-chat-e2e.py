@@ -5,18 +5,25 @@ cell and its output), each reasoning block's start and end, what started
 each turn (the prompt, or a wake the agent runs on its own), a cancelled
 turn, the slash commands the session advertises (session commands, prompt
 templates, `/skill:<name>` and `enableSkillCommands`), what `/goal` and
-`/compact` answer, and the image settings (`images.blockImages`,
-`images.autoResize`) on the images a prompt carries.
+`/compact` answer, the image settings (`images.blockImages`,
+`images.autoResize`) on the images a prompt carries, the saved
+conversations (`session/list`, `session/load` after `--resume`, and
+`_unharnessed/sessions/delete`), what the conversation has used
+(`_meta.unharnessed.usage`: the context, the compaction's threshold, the
+cost, a compaction at work), and an OpenRouter reasoning that streams as
+one block.
 
 usage: scripts/unharnessed-chat-e2e.py <out-dir>
 
-The model is the faux provider (UNHARNESSED_FAUX_SCRIPT): nothing reaches
-the network. Each scenario runs in its own agent dir and HOME
+The model is the faux provider (UNHARNESSED_FAUX_SCRIPT), or for the
+OpenRouter scenario a stand-in on 127.0.0.1 that streams as OpenRouter
+does: nothing reaches the network. Each scenario runs in its own agent dir and HOME
 (<out-dir>/<name>/) and writes <out-dir>/<name>.out: the command, then
 every frame sent (>) and received (<) with the seconds since start. The
 kernel venv lives in <out-dir>. Provider keys and tokens from the caller's
 environment are dropped. UNHARNESSED_BIN picks the binary (default
-target/debug/unharnessed). Exits non-zero when a check fails.
+target/debug/unharnessed); UNHARNESSED_E2E_ONLY runs the scenario of that
+name alone. Exits non-zero when a check fails.
 """
 import base64
 import itertools
@@ -27,6 +34,7 @@ import subprocess
 import sys
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +49,8 @@ ENV = {
 ENV.update(UNHARNESSED_KERNEL_VENV=str(OUT / "kernel-venv"), UNHARNESSED_OFFLINE="1", DO_NOT_TRACK="1")
 FAILED = []
 SET = "_unharnessed/settings/set"
+# The usage scenario's model price, dollars per million tokens.
+PRICE = {"input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75}
 # A 1x1 PNG.
 PIXEL = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
 
@@ -56,16 +66,21 @@ def call(code):
 
 
 class Agent:
-    """One `unharnessed --mode acp` process on a faux script, in its own
-    agent dir and HOME, with one session open."""
+    """One `unharnessed --mode acp` process on a faux script (none when
+    `responses` is None), in its own agent dir and HOME, with one session open: a new one, the one it
+    `load`s, or none when `session` is false. `home` names an earlier
+    process's dir to share its agent dir and HOME; `work` is the folder it
+    runs in there; `args` go after `--mode acp`."""
 
-    def __init__(self, name, responses, settings=None, files=None, script=None):
-        base = OUT / name
+    def __init__(self, name, responses, settings=None, files=None, script=None, home=None, work="work", args=(),
+                 load=None, session=True):
+        base = OUT / (home or name)
         # A fresh agent dir: nothing from an earlier run.
-        shutil.rmtree(base, ignore_errors=True)
+        if home is None:
+            shutil.rmtree(base, ignore_errors=True)
         self.agent_dir = base / "agent"
         home = base / "home"
-        self.work = base / "work"
+        self.work = base / work
         for folder in (self.agent_dir, home, self.work):
             folder.mkdir(parents=True, exist_ok=True)
         if settings is not None:
@@ -74,15 +89,15 @@ class Agent:
             target = base / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text)
-        faux = json.dumps(dict(script or {}, responses=responses))
-        extra = {"UNHARNESSED_CODING_AGENT_DIR": str(self.agent_dir), "HOME": str(home),
-                 "UNHARNESSED_FAUX_SCRIPT": faux}
+        extra = {"UNHARNESSED_CODING_AGENT_DIR": str(self.agent_dir), "HOME": str(home)}
+        if responses is not None:
+            extra["UNHARNESSED_FAUX_SCRIPT"] = json.dumps(dict(script or {}, responses=responses))
         self.out = open(OUT / f"{name}.out", "w")
         command = " ".join(f"{key}='{value}'" for key, value in extra.items())
-        self.out.write(f"$ {command} unharnessed --mode acp\n")
+        self.out.write(f"$ cd {self.work} && {command} unharnessed --mode acp {' '.join(args)}\n")
         self.child = subprocess.Popen(
-            [BIN, "--mode", "acp"], cwd=self.work, text=True, env=dict(ENV, **extra),
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(base / "stderr.log", "w"))
+            [BIN, "--mode", "acp", *args], cwd=self.work, text=True, env=dict(ENV, **extra),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(base / f"stderr-{name}.log", "w"))
         self.start = time.time()
         self.lock = threading.Lock()
         self.frames = []
@@ -90,9 +105,14 @@ class Agent:
         self.arrived = threading.Condition(self.lock)
         self.ids = itertools.count(1)
         threading.Thread(target=self._read, daemon=True).start()
-        self.request("initialize", {"protocolVersion": 1, "clientCapabilities": {}})
-        answer = self.request("session/new", {"cwd": str(self.work), "mcpServers": []})
-        self.session_id = answer["result"]["sessionId"]
+        self.initialized = self.request("initialize", {"protocolVersion": 1, "clientCapabilities": {}})
+        self.session_id = None
+        if load:
+            self.loaded = self.request("session/load", {"sessionId": load, "cwd": str(self.work), "mcpServers": []})
+            self.session_id = load
+        elif session:
+            answer = self.request("session/new", {"cwd": str(self.work), "mcpServers": []})
+            self.session_id = answer["result"]["sessionId"]
 
     def _log(self, arrow, frame):
         self.out.write(f"{time.time() - self.start:6.2f} {arrow} {json.dumps(frame)}\n")
@@ -165,7 +185,8 @@ class Agent:
         return "".join(path.read_text() for path in self.agent_dir.rglob("*.jsonl"))
 
     def close(self):
-        self.request("session/close", {"sessionId": self.session_id})
+        if self.session_id:
+            self.request("session/close", {"sessionId": self.session_id})
         self.child.stdin.close()
         code = self.child.wait(timeout=60)
         self.out.close()
@@ -263,6 +284,67 @@ def scenario_thinking():
           [sorted(set(kinds)) for kinds in ids.values()] == [["end", "start", "text", "thought"],
                                                              ["end", "start", "text"]], ids)
     check("thinking: the agent exits cleanly", agent.close() == 0)
+
+
+def scenario_openrouter_thinking():
+    # OpenRouter sends each piece of reasoning twice in one delta: as text
+    # (`reasoning`) and structured (`reasoning_details`), which the agent
+    # keeps as a second block. The panel opens a reasoning on each start:
+    # the first words used to land in one block and the rest in another.
+    words = ["Count", " the r's", " in strawberry."]
+    chunks = [{"choices": [{"index": 0, "delta": {
+        "role": "assistant", "content": "", "reasoning": word,
+        "reasoning_details": [{"type": "reasoning.text", "text": word, "format": "unknown", "index": 0}]}}]}
+        for word in words]
+    chunks.append({"choices": [{"index": 0, "delta": {"content": "3"}}]})
+    chunks.append({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                   "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}})
+    body = "".join(f"data: {json.dumps(dict(chunk, id='gen-e2e', model='z-ai/glm-4.6'))}\n\n" for chunk in chunks)
+    body = (body + "data: [DONE]\n\n").encode()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    catalog = json.loads((ROOT / "crates/uh-models/tests/fixtures/catalog.v1.json").read_text())
+    cache = {"url": "https://raw.githubusercontent.com/PrimeIntellect-ai/prime-agent-catalog/main/models/catalog.v1.json",
+             "scope": "public", "fetchedAt": int(time.time() * 1000), "payload": catalog}
+    agent = Agent("openrouter-thinking", None,
+                  settings={"defaultProvider": "openrouter", "defaultModel": "z-ai/glm-4.6"},
+                  files={"agent/auth.json": json.dumps({"openrouter": {"type": "api_key", "key": "sk-or-e2e"}}),
+                         "agent/models.json": json.dumps({"providers": {"openrouter": {
+                             "baseUrl": f"http://127.0.0.1:{server.server_port}/api/v1"}}}),
+                         "agent/models/provider-model-catalog.v1.json": json.dumps(cache)})
+    answer = agent.prompt("how many r in strawberry?")
+    check("openrouter: the prompt ends the turn", answer.get("result") == {"stopReason": "end_turn"}, answer)
+    steps = []
+    for _, update in agent.updates():
+        thinking = unharnessed(update).get("thinking")
+        if thinking:
+            steps.append((thinking["state"], ""))
+        elif update["sessionUpdate"] in ("agent_thought_chunk", "agent_message_chunk"):
+            label = "thought" if update["sessionUpdate"] == "agent_thought_chunk" else "text"
+            steps.append((label, update["content"]["text"]))
+    labels = [step[0] for step in steps]
+    order = [label for at, label in enumerate(labels) if at == 0 or labels[at - 1] != label]
+    # The chat completions stream closes its blocks when it ends, after the
+    # text: the panel ends the reasoning when the text comes.
+    check("openrouter: the reasoning opens once, all its words inside, and closes once",
+          order == ["start", "thought", "text", "end"], order)
+    thought = "".join(text for label, text in steps if label == "thought")
+    check("openrouter: the reasoning text streams whole", thought == "".join(words), thought)
+    check("openrouter: the agent exits cleanly", agent.close() == 0)
+    server.shutdown()
 
 
 def scenario_cancel():
@@ -395,9 +477,224 @@ def scenario_images():
     check("images: the agent exits cleanly", agent.close() == 0)
 
 
-for scenario in (scenario_turn, scenario_thinking, scenario_cancel, scenario_wake, scenario_commands,
-                 scenario_session_commands, scenario_images):
-    print(f"# {scenario.__name__[len('scenario_'):]}")
+def listed(agent, cwd=None):
+    """`session/list` as (title, current) pairs, the newest first."""
+    answer = agent.request("session/list", {"cwd": str(cwd)} if cwd else {})
+    return [(s.get("title"), unharnessed(s).get("current", False)) for s in answer["result"]["sessions"]]
+
+
+def error_details(answer):
+    return answer.get("error", {}).get("data", {}).get("details", "")
+
+
+def scenario_history():
+    first = Agent("history", [
+        {"content": [{"type": "thinking", "thinking": "Adding them up."},
+                     {"type": "text", "text": "Let me count."},
+                     {"type": "toolCall", "name": "ipython", "arguments": {"code": "print(1 + 1)"}}]},
+        "It is 2.",
+        "I see it",
+    ])
+    first.prompt("what is\n1 + 1?")
+    first.prompt("what is this?", [PIXEL])
+    first.prompt("/goal")
+    sessions = first.request("session/list", {})["result"]["sessions"]
+    check("history: the conversation is listed, titled by its first prompt, as this process's own",
+          [(s.get("title"), s["cwd"], unharnessed(s).get("current")) for s in sessions]
+          == [("what is 1 + 1?", str(first.work), True)], sessions)
+    session_id = sessions[0]["sessionId"] if sessions else None
+    path = unharnessed(sessions[0]).get("path", "") if sessions else ""
+    check("history: with the file that holds it", Path(path).is_file() and session_id in path, path)
+    check("history: the agent exits cleanly", first.close() == 0)
+    artifacts = first.agent_dir / "session-artifacts" / str(session_id)
+    check("history: the kernel's state is saved beside it", artifacts.is_dir(), artifacts)
+
+    other = Agent("history-other", ["over there"], home="history", work="elsewhere")
+    other.prompt("a question from elsewhere")
+    check("history: a conversation in another folder", other.close() == 0)
+
+    second = Agent("history-load", ["4, then."], home="history", args=("--resume", path), load=session_id)
+    capabilities = second.initialized["result"]["agentCapabilities"]
+    check("load: the agent says it loads and lists sessions",
+          capabilities["loadSession"] is True and capabilities["sessionCapabilities"] == {"close": {}, "list": {}},
+          capabilities)
+    check("load: the answer comes with the pickers", "configOptions" in second.loaded.get("result", {}),
+          second.loaded)
+    answer_at = second.frames.index(second.loaded)
+    # The turns; a picker update (the catalog's refresh) may come in between, outside any turn.
+    replayed = [f["params"]["update"] for f in second.frames[:answer_at] if f.get("method") == "session/update"
+                and unharnessed(f["params"]["update"]).get("promptTurnId")]
+    turns = {}
+    for update in replayed:
+        turns.setdefault(unharnessed(update)["promptTurnId"], []).append(update)
+    check("load: the conversation comes back before the answer, a turn each",
+          len(turns) == 3 and all("turnStart" in unharnessed(t[0]) for t in turns.values()), list(turns))
+    one, two, three = (list(turns.values()) + [[], [], []])[:3]
+
+    def chunks(turn, kind):
+        return [u["content"] for u in turn if u["sessionUpdate"] == kind]
+
+    def texts(turn, kind):
+        found = {}
+        for update in turn:
+            if update["sessionUpdate"] == kind:
+                found[update["messageId"]] = found.get(update["messageId"], "") + update["content"]["text"]
+        return list(found.values())
+
+    check("load: each turn starts as the prompt's", [unharnessed(t[0])["turnStart"] for t in (one, two, three)]
+          == [{"origin": "prompt"}] * 3)
+    check("load: then the prompt, as the user wrote it",
+          chunks(one, "user_message_chunk") == [{"type": "text", "text": "what is\n1 + 1?"}],
+          chunks(one, "user_message_chunk"))
+    check("load: the reasoning, and each message's text", texts(one, "agent_thought_chunk") == ["Adding them up."]
+          and texts(one, "agent_message_chunk") == ["Let me count.", "It is 2."], texts(one, "agent_message_chunk"))
+    calls = [u for u in one if u["sessionUpdate"] in ("tool_call", "tool_call_update")]
+    output = calls[1].get("content", [{}])[0].get("content", {}).get("text", "") if len(calls) == 2 else ""
+    check("load: the cell, with its code and its output",
+          len(calls) == 2 and calls[0]["rawInput"] == {"code": "print(1 + 1)"} and calls[1]["status"] == "completed"
+          and output.strip() == "2", calls)
+    check("load: each turn ends as it did", [unharnessed(t[-1]).get("turnEnd") for t in (one, two, three)]
+          == [{"state": "done"}] * 3, [unharnessed(t[-1]) for t in (one, two, three)])
+    check("load: an image comes back with its prompt", chunks(two, "user_message_chunk") == [
+        {"type": "text", "text": "what is this?"}, {"type": "image", "mimeType": "image/png", "data": PIXEL}],
+          chunks(two, "user_message_chunk"))
+    check("load: a slash command, as typed, with its answer",
+          chunks(three, "user_message_chunk") == [{"type": "text", "text": "/goal"}]
+          and [unharnessed(u)["command"] for u in three if "command" in unharnessed(u)]
+          == [{"name": "goal", "text": "No active goal.", "severity": "info"}], three)
+    answer = second.prompt("and 2 + 2?")
+    check("load: the conversation goes on", answer.get("result") == {"stopReason": "end_turn"}, answer)
+    text = "".join(u["content"]["text"] for t, u in second.updates() if t not in turns
+                   and u["sessionUpdate"] == "agent_message_chunk")
+    check("load: in a turn of its own", text == "4, then.", text)
+    check("list: this folder's only, with cwd", listed(second, second.work) == [("what is 1 + 1?", True)],
+          listed(second, second.work))
+    check("list: every folder's without, the newest first",
+          listed(second) == [("what is 1 + 1?", True), ("a question from elsewhere", False)], listed(second))
+    answer = second.request("_unharnessed/sessions/delete", {"sessionId": session_id})
+    check("delete: not the conversation in progress",
+          error_details(answer).startswith("This is the conversation in progress"), answer)
+
+    third = Agent("history-third", [], home="history", session=False)
+    answer = third.request("session/load", {"sessionId": session_id, "cwd": str(third.work), "mcpServers": []})
+    check("load: only the session the process resumed", error_details(answer).startswith("This process holds"),
+          answer)
+    answer = third.request("_unharnessed/sessions/delete", {"sessionId": session_id})
+    check("delete: not one another process holds",
+          error_details(answer) == "This conversation is open in another window.", answer)
+    check("load: the loaded agent exits cleanly", second.close() == 0)
+    check("list: none is this process's once the other has exited",
+          listed(third) == [("what is 1 + 1?", False), ("a question from elsewhere", False)], listed(third))
+    answer = third.request("_unharnessed/sessions/delete", {"sessionId": session_id})
+    check("delete: one no process holds", answer.get("result") == {}, answer)
+    check("delete: its file and the kernel's state are gone", not Path(path).exists() and not artifacts.exists())
+    check("delete: and it is no longer listed", listed(third) == [("a question from elsewhere", False)],
+          listed(third))
+    answer = third.request("_unharnessed/sessions/delete", {"sessionId": "../settings"})
+    check("delete: only a saved conversation", error_details(answer) == "No saved conversation ../settings.",
+          answer)
+    check("history: the last agent exits cleanly", third.close() == 0)
+
+
+def usages(agent):
+    """Every usage report so far, as (frame index, its `_meta.unharnessed`)."""
+    with agent.lock:
+        frames = list(agent.frames)
+    return [(at, unharnessed(f["params"]["update"])) for at, f in enumerate(frames)
+            if f.get("method") == "session/update" and "usage" in unharnessed(f["params"]["update"])]
+
+
+def priced(usage):
+    """What a model call's usage costs at PRICE."""
+    return sum(usage[kind] * PRICE[kind] for kind in PRICE) / 1e6
+
+
+def entries(agent):
+    return [json.loads(line) for line in agent.sessions().splitlines() if line.strip()]
+
+
+def scenario_usage():
+    agent = Agent("usage", [
+        {"content": [{"type": "text", "text": "Let me compute it."},
+                     {"type": "toolCall", "name": "ipython", "arguments": {"code": "print(6 * 7)"}}]},
+        "It is 42.",
+        "Summary: the user asked for 6 * 7; it is 42.",
+        "Still 42.",
+        "Summary: 6 * 7 is 42, asked twice.",
+        "42, again.",
+    ], settings={"compaction": {"enabled": True, "keepRecentTokens": 10}}, script={"cost": PRICE})
+    agent.wait_for(lambda f: "usage" in unharnessed(f.get("params", {}).get("update", {})))
+    opened = usages(agent)[0][1]
+    check("usage: the open session reports it, outside any turn, nothing measured yet",
+          opened["promptTurnId"] == 0 and opened["usage"] == {
+              "window": 100000, "compactAt": 79520, "cost": 0, "billed": False, "compacting": False}, opened)
+
+    answer = agent.prompt("what is 6 * 7?")
+    answered = agent.frames.index(answer)
+    turn = [(at, meta) for at, meta in usages(agent) if at > usages(agent)[0][0]]
+    replies = [e["message"]["usage"] for e in entries(agent)
+               if e.get("type") == "message" and e["message"]["role"] == "assistant"]
+    check("usage: each reply is priced at the model's rates",
+          len(replies) == 2 and all(abs(u["cost"]["total"] - priced(u)) < 1e-12 and u["cost"]["total"] > 0
+                                    for u in replies), replies)
+    check("usage: the turn reports after each message, before its answer, outside the turn",
+          len(turn) == 3 and all(at < answered and meta["promptTurnId"] == 0 for at, meta in turn),
+          [(at, meta["usage"]) for at, meta in turn])
+    costs = [meta["usage"]["cost"] for _, meta in turn]
+    check("usage: the cost adds up each reply as it lands",
+          len(costs) == 3 and abs(costs[0] - replies[0]["cost"]["total"]) < 1e-12 and costs[1] == costs[0]
+          and abs(costs[2] - sum(u["cost"]["total"] for u in replies)) < 1e-12, costs)
+    sizes = [meta["usage"].get("tokens") for _, meta in turn]
+    check("usage: the context is the last reply's tokens, plus an estimate of what came after it",
+          len(sizes) == 3 and sizes[0] == replies[0]["totalTokens"] and sizes[1] > sizes[0]
+          and sizes[2] == replies[1]["totalTokens"], (sizes, [u["totalTokens"] for u in replies]))
+
+    def compact(name):
+        before = usages(agent)[-1]
+        agent.prompt("/compact")
+        reports = [meta["usage"] for at, meta in usages(agent) if at > before[0]]
+        summaries = [e["usage"]["cost"]["total"] for e in entries(agent) if e.get("type") == "compaction"]
+        check(f"usage: {name} compaction shows while it runs",
+              len(reports) == 2 and reports[0]["compacting"] is True
+              and reports[0].get("tokens") == before[1]["usage"].get("tokens"), reports)
+        after = reports[-1] if reports else {}
+        check(f"usage: after the {name}, the context waits for a reply to measure it, and the summary is paid for",
+              after.get("compacting") is False and "tokens" not in after and summaries and summaries[-1] > 0
+              and abs(after["cost"] - before[1]["usage"]["cost"] - summaries[-1]) < 1e-12, (after, summaries))
+        agent.prompt("and now?")
+        measured = usages(agent)[-1][1]["usage"]
+        check(f"usage: after the {name}, the next reply measures the context again",
+              measured.get("tokens", 0) > 0 and measured["cost"] > after.get("cost", 0), measured)
+
+    compact("first")
+    compact("second")
+    final = usages(agent)[-1][1]["usage"]
+    sessions = agent.request("session/list", {})["result"]["sessions"]
+    saved = sessions[0]["sessionId"] if sessions else None
+    path = unharnessed(sessions[0]).get("path", "") if sessions else ""
+    check("usage: the agent exits cleanly", agent.close() == 0)
+
+    again = Agent("usage-load", [], home="usage", args=("--resume", path), load=saved)
+    again.wait_for(lambda f: "usage" in unharnessed(f.get("params", {}).get("update", {})))
+    loaded = usages(again)[0]
+    check("usage: a conversation that comes back reports it after its answer, what it cost and its context",
+          loaded[0] > again.frames.index(again.loaded) and abs(loaded[1]["usage"]["cost"] - final["cost"]) < 1e-12
+          and loaded[1]["usage"].get("tokens") == final.get("tokens"), (loaded, final))
+    check("usage: the loaded agent exits cleanly", again.close() == 0)
+
+    off = Agent("usage-off", [], settings={"compaction": {"enabled": False}})
+    off.wait_for(lambda f: "usage" in unharnessed(f.get("params", {}).get("update", {})))
+    check("usage: no threshold when the automatic compaction is off", "compactAt" not in usages(off)[0][1]["usage"],
+          usages(off))
+    check("usage: the agent without compaction exits cleanly", off.close() == 0)
+
+
+for scenario in (scenario_turn, scenario_thinking, scenario_openrouter_thinking, scenario_cancel, scenario_wake, scenario_commands,
+                 scenario_session_commands, scenario_images, scenario_history, scenario_usage):
+    name = scenario.__name__[len("scenario_"):]
+    if os.environ.get("UNHARNESSED_E2E_ONLY", name) != name:
+        continue
+    print(f"# {name}")
     try:
         scenario()
     except Exception as error:  # noqa: BLE001 - a scenario that breaks is a failure, the others still run

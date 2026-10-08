@@ -15,16 +15,18 @@
 //! 1. **Cache safety**: the static layer files never contain dynamic
 //!    (session-specific) content, and the assembled prompt's cached prefix is
 //!    byte-identical across sessions with different dynamic tails.
-//! 2. **Tool surface**: the core layer's documented programmatic-tool
-//!    surface matches the real registered surface — kernel-bound names from
-//!    the bootstrap code, host-request handlers registered by the session
-//!    engine, and the bundled Python skills' public functions. Adding or
-//!    removing a tool without updating the prompt fails here.
+//! 2. **Tool surface**: every programmatic tool on the real registered
+//!    surface — kernel-bound names from the bootstrap code, host-request
+//!    handlers registered by the session engine, and the bundled Python
+//!    skills' public functions — is documented, either in the core layer
+//!    or in its bundled skill's SKILL.md (the skills inventory points the
+//!    model there), and the core layer documents nothing phantom. Adding a
+//!    tool without documenting it fails here.
 
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use uh_core::prompts::layers::{self, CORE_LAYER, PER_MODEL_MAP};
+use uh_core::prompts::layers::{self, CORE_LAYER};
 use uh_core::prompts::system_prompt::{
     system_prompt_breakdown, BuildSystemPromptOptions, SegmentKind,
 };
@@ -69,7 +71,7 @@ const DYNAMIC_ONLY_MARKERS: &[&str] = &[
 
 #[test]
 fn static_layers_contain_no_dynamic_content() {
-    for (name, text) in [("core", CORE_LAYER), ("per-model", PER_MODEL_MAP)] {
+    for (name, text) in [("core", CORE_LAYER)] {
         for marker in DYNAMIC_ONLY_MARKERS {
             assert!(
                 !text.contains(marker),
@@ -97,7 +99,6 @@ fn cached_prefix_is_stable_across_sessions() {
     options.generic_mcp_servers = vec!["slack".into(), "github".into()];
     options.context_files = vec![("AGENTS.md".into(), "Never commit main.".into())];
     options.prompt_guidelines = Some(vec!["prefer tabs".into()]);
-    options.append_system_prompt = Some("And one more thing.".into());
     let second = system_prompt_breakdown(&options);
 
     // The cacheable prefix is byte-identical and exactly the layered static
@@ -109,7 +110,7 @@ fn cached_prefix_is_stable_across_sessions() {
     );
     assert_eq!(
         &first.assembled[..first.cached_prefix_len],
-        layers::static_prefix(Some("mock/mock-1"))
+        layers::static_prefix()
     );
 
     // The tails carry each session's own values.
@@ -123,7 +124,6 @@ fn cached_prefix_is_stable_across_sessions() {
     assert!(second_tail.contains("Enabled generic MCP servers: `github`, `slack`."));
     assert!(second_tail.contains("# Project Context"));
     assert!(second_tail.contains("# Additional Guidance"));
-    assert!(second_tail.ends_with("And one more thing."));
 
     // Static segments all sit inside the cached prefix, dynamic ones after.
     for segment in &first.segments {
@@ -316,29 +316,10 @@ fn python_skill_functions(package_path: &Path) -> Vec<String> {
     functions
 }
 
-/// Bundled skills that are auth-gated builtin MCP integrations: they are
-/// disabled in sessions whose user is not logged into the integration, so
-/// the prompt documents them only through the dynamic skills inventory (and
-/// its generic "additional skills may exist" note), not as API surface.
-fn auth_gated_bundled_skills() -> BTreeSet<String> {
-    uh_core::mcp::BUILTIN_MCP_CATALOG
-        .iter()
-        .map(|(server, _, _)| server.to_string())
-        .collect()
-}
-
-/// (import name, public functions) for every bundled Python skill that is
-/// always available (auth-gated integrations excluded).
+/// (import name, public functions) for every bundled Python skill.
 fn bundled_python_skills() -> Vec<(String, Vec<String>)> {
-    let gated = auth_gated_bundled_skills();
     sorted_bundled_skills()
         .into_iter()
-        .filter(|skill| {
-            skill
-                .python
-                .as_ref()
-                .is_none_or(|python| !gated.contains(&python.import_name))
-        })
         .filter_map(|skill| {
             let python = skill.python?;
             let mut functions = python_skill_functions(&python.package_path)
@@ -431,9 +412,20 @@ fn documented_surface_tokens() -> BTreeSet<String> {
     documented
 }
 
+/// The bundled skills' SKILL.md texts, joined: the documentation for the
+/// surface the core layer leaves to the skills.
+fn bundled_skill_docs() -> String {
+    sorted_bundled_skills()
+        .iter()
+        .map(|skill| std::fs::read_to_string(&skill.file_path).expect("read SKILL.md"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn core_layer_documents_the_real_tool_surface() {
     let documented = documented_surface_tokens();
+    let skill_docs = bundled_skill_docs();
     let allowed = allowed_surface_tokens();
     let required = required_surface_tokens();
 
@@ -459,7 +451,8 @@ fn core_layer_documents_the_real_tool_surface() {
     }
 
     // Nothing missing: every registered surface entry is documented, either
-    // as its own bullet or through a documented member of its module.
+    // in the core layer (as its own bullet or through a documented member of
+    // its module) or in a bundled SKILL.md (called, or through a member).
     for token in &required {
         let documented_form = documented.contains(token)
             || documented
@@ -467,11 +460,14 @@ fn core_layer_documents_the_real_tool_surface() {
                 .any(|entry| entry.starts_with(&format!("{token}.")))
             || documented
                 .iter()
-                .any(|entry| entry.starts_with(token.as_str()) && entry.contains('.'));
+                .any(|entry| entry.starts_with(token.as_str()) && entry.contains('.'))
+            || skill_docs.contains(&format!("{token}("))
+            || skill_docs.contains(&format!("{token}."));
         assert!(
             documented_form,
-            "tool {token:?} is on the registered surface but the prompt does not \
-             document it: update prompts/layers/core.md"
+            "tool {token:?} is on the registered surface but neither the core \
+             layer nor a bundled SKILL.md documents it: update \
+             prompts/layers/core.md or the skill's SKILL.md"
         );
     }
 }
@@ -481,10 +477,11 @@ fn core_layer_documents_the_real_tool_surface() {
 // ---------------------------------------------------------------------
 
 /// The packaged skill set: the TS tip `f62dae4d0` set
-/// (`packages/coding-agent/skills/`) reduced to the four Unharnessed keeps,
+/// (`packages/coding-agent/skills/`) reduced to the three Unharnessed keeps,
 /// the kernel's API to the runtime (the generic `mcp` doc skill in, the
-/// per-service linear/notion pair out).
-const TS_PACKAGED_SKILL_SET: &[&str] = &["attach-image", "compact", "goal", "mcp"];
+/// per-service linear/notion pair out, `compact` out: the harness compacts
+/// on its own).
+const TS_PACKAGED_SKILL_SET: &[&str] = &["attach-image", "goal", "mcp"];
 
 /// The bundled skills directory matches the TS packaged set name-for-name:
 /// the generic `mcp` skill is present and markdown-only, and the retired
@@ -513,7 +510,7 @@ fn bundled_skills_match_the_ts_packaged_set() {
     );
     assert_eq!(
         mcp_skill.description,
-        "Use external MCP services generically from Python - search the supported-service catalog, inspect the user's connections, discover live tool schemas, and call tools on any connection (Notion, Linear, Slack, and the rest of the catalog) without per-service packages."
+        "Use this to call tools on the user's MCP services."
     );
 }
 

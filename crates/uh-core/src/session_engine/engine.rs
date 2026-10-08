@@ -122,9 +122,7 @@ pub struct SessionEngine {
     /// this field (shared handle: the daemon worker and the engine gate
     /// prompts through one store).
     pub mcp_manager: std::sync::Arc<std::sync::Mutex<crate::mcp::McpManager>>,
-    /// The turn-boundary request surface (`compact.*`/
-    /// `model.info` host requests and the pending requests the turn loop
-    /// consumes after a settled turn).
+    /// The turn-boundary request surface (the `model.info` host request).
     pub turn_boundary: std::sync::Arc<super::turn_boundary::TurnBoundaryRequests>,
     /// The session's kernel provisioner. The engine is the STRONG owner on
     /// purpose: the `ipython` tool on the agent and the compaction
@@ -140,13 +138,12 @@ pub struct SessionEngine {
     pub(crate) wakes: std::sync::Arc<super::wakes::SessionWakes>,
 }
 
-/// Resolve the MCP gating the resource loader and prompt need: skill
-/// overrides for built-in integrations the user is not logged into, plus the
-/// enabled persistent generic servers (prompt `mcp` guidance).
+/// Resolve the MCP gating the prompt needs: the enabled persistent generic
+/// servers (prompt `mcp` guidance).
 async fn mcp_gating(
     settings: &crate::settings::SettingsManager,
     agent_dir: std::path::PathBuf,
-) -> anyhow::Result<(Vec<String>, Vec<String>, crate::mcp::McpManager)> {
+) -> anyhow::Result<(Vec<String>, crate::mcp::McpManager)> {
     let user_servers = settings
         .settings()
         .mcp_servers
@@ -171,20 +168,8 @@ async fn mcp_gating(
 fn mcp_gating_blocking(
     user_servers: std::collections::HashMap<String, crate::mcp::McpServerConfig>,
     agent_dir: &std::path::Path,
-) -> (Vec<String>, Vec<String>, crate::mcp::McpManager) {
+) -> (Vec<String>, crate::mcp::McpManager) {
     crate::mcp::McpManager::prompt_gating(user_servers, agent_dir)
-}
-
-/// The built-in skills the settings leave out. Without
-/// `compaction.agentCallable` the `compact.*` handlers are not registered:
-/// the built-in skill that calls them goes too.
-#[must_use]
-pub fn builtin_skill_overrides(compaction: &crate::settings::CompactionSettings) -> Vec<String> {
-    if compaction.agent_callable == Some(false) {
-        vec!["-compact/SKILL.md".to_string()]
-    } else {
-        Vec::new()
-    }
 }
 
 /// Assemble a session: load resources, build the system prompt, and start the
@@ -213,9 +198,15 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
 
     let settings = crate::settings::SettingsManager::create(&cwd, &config.agent_dir);
     let service_tier_preference = settings.get_default_service_tier();
-    // Captured before `settings` moves into the resource loader: the
-    // compaction scheduling budget (`compact.run` prepare check).
+    // Captured before `settings` moves into the resource loader.
     let compaction_settings = settings.settings().compaction.clone().unwrap_or_default();
+    // The instructions per model, read once: a change waits for the next
+    // session, a model switch in this one picks from these.
+    let model_instructions = settings
+        .settings()
+        .model_instructions
+        .clone()
+        .unwrap_or_default();
     // Request timing (TS #2462): the settings half of the flag is read once
     // here — `settings` moves into the resource loader below and its merged
     // snapshot is fixed for the session anyway — while the `UNHARNESSED_REQUEST_TIMING`
@@ -224,15 +215,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // `enableSkillCommands`: whether `/skill:<name>` expands (read once,
     // like the skills it expands against).
     let skill_commands = settings.get_enable_skill_commands();
-    let (mcp_skill_overrides, mcp_generic_servers, built_manager) =
+    let (mcp_generic_servers, built_manager) =
         mcp_gating(&settings, config.agent_dir.clone()).await?;
     let mcp_manager = config
         .mcp_manager
         .take()
         .unwrap_or_else(|| std::sync::Arc::new(std::sync::Mutex::new(built_manager)));
-    let mut extra_builtin_skill_overrides = config.extra_builtin_skill_overrides.clone();
-    extra_builtin_skill_overrides.extend(mcp_skill_overrides);
-    extra_builtin_skill_overrides.extend(builtin_skill_overrides(&compaction_settings));
+    let extra_builtin_skill_overrides = config.extra_builtin_skill_overrides.clone();
     let mut generic_mcp_servers = config.generic_mcp_servers.clone();
     for server in mcp_generic_servers {
         if !generic_mcp_servers.contains(&server) {
@@ -250,7 +239,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         no_prompt_templates: false,
         no_context_files: false,
         system_prompt: config.custom_system_prompt.clone(),
-        append_system_prompt: Vec::new(),
         ..Default::default()
     });
 
@@ -273,8 +261,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             input: Vec::new(),
         },
     };
-    // The context window the usage estimate and status rows read.
-    let model_context_window = model.context_window;
 
     // The runtime wiring: goal host handlers ride the kernel
     // provisioner, and the agent gains the `ipython` tool backed by that
@@ -288,23 +274,15 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // The `mcp.*` host requests (config/refresh/begin_login) the kernel's
     // generic MCP registry sends while listing or calling generic servers.
     // The registration takes the shared manager: the
-    // inventory handlers (list_plugins/search_plugins/list_connections)
-    // serve live views per request.
+    // inventory handler (list_connections) serves live views per request.
     crate::mcp::McpManager::register_host_handlers(&mcp_manager, &mut handlers);
-    // The turn-boundary surface: `model.info` always; `compact.*` behind
-    // the compaction `agentCallable` setting.
+    // The turn-boundary surface: `model.info`.
     let turn_boundary = Arc::new(super::turn_boundary::TurnBoundaryRequests::new());
     turn_boundary.register_model_info_handler(&mut handlers, model_info.clone());
     // The detached `bash()` completions (`bash.completed`/`bash.consumed`)
     // queue the wakes the idle host delivers.
     let wakes = Arc::new(super::wakes::SessionWakes::default());
     super::wakes::SessionWakes::register_host_handlers(&wakes, &mut handlers);
-    let keep_recent_tokens = compaction_settings
-        .keep_recent_tokens
-        .unwrap_or(super::compaction::DEFAULT_KEEP_RECENT_TOKENS);
-    if compaction_settings.agent_callable.unwrap_or(true) {
-        turn_boundary.register_compact_handlers(&mut handlers, keep_recent_tokens);
-    }
     // The session's artifact dir (TS `getSessionArtifactDir`), where the
     // kernel snapshot lives.
     let session_artifact_dir: Option<PathBuf> =
@@ -405,34 +383,47 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
 
     let prompt_guidelines = config.prompt_guidelines.clone();
 
-    // The per-model prompt layer keys on the resolved `provider/id`
-    // selector; vision capability gates the image-input line. Both are
-    // captured before `model_info` moves into the turn-boundary handler.
-    let prompt_model_selector = Some(format!("{}/{}", model_info.provider, model_info.id));
-    let prompt_vision_capable = Some(model_info.input.contains(&uh_types::ai::ModelInput::Image));
-    let system_prompt = crate::prompts::system_prompt::build_system_prompt(
-        &crate::prompts::system_prompt::BuildSystemPromptOptions {
-            custom_prompt: resources.system_prompt.clone(),
-            model: prompt_model_selector.as_deref(),
-            vision_capable: prompt_vision_capable,
-            cwd: cwd.display().to_string(),
-            messages_path: conversation_log.clone(),
-            context_files: resources
-                .agents_files
-                .iter()
-                .map(|file| (file.path.display().to_string(), file.content.clone()))
-                .collect(),
-            skills: resources.skills.clone(),
-            selected_tools: Some(
-                active_tool_names
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
-            ),
-            generic_mcp_servers,
-            prompt_guidelines: Some(prompt_guidelines),
-            ..Default::default()
-        },
+    // The prompt for a model: its `provider/id` selector picks its
+    // instructions, its image input the image-input line. The session
+    // builds it again for the model it switches to.
+    let prompt_for: super::SystemPromptFor = {
+        let custom_prompt = resources.system_prompt.clone();
+        let cwd = cwd.display().to_string();
+        let messages_path = conversation_log.clone();
+        let context_files: Vec<(String, String)> = resources
+            .agents_files
+            .iter()
+            .map(|file| (file.path.display().to_string(), file.content.clone()))
+            .collect();
+        let skills = resources.skills.clone();
+        let active_tool_names = active_tool_names.clone();
+        Arc::new(move |model: &str, vision_capable: bool| {
+            crate::prompts::system_prompt::build_system_prompt(
+                &crate::prompts::system_prompt::BuildSystemPromptOptions {
+                    custom_prompt: custom_prompt.clone(),
+                    model: Some(model),
+                    model_instructions: &model_instructions,
+                    vision_capable: Some(vision_capable),
+                    cwd: cwd.clone(),
+                    messages_path: messages_path.clone(),
+                    context_files: context_files.clone(),
+                    skills: skills.clone(),
+                    selected_tools: Some(
+                        active_tool_names
+                            .iter()
+                            .map(String::as_str)
+                            .collect::<Vec<_>>(),
+                    ),
+                    generic_mcp_servers: generic_mcp_servers.clone(),
+                    prompt_guidelines: Some(prompt_guidelines.clone()),
+                },
+            )
+        })
+    };
+    // Captured before `model_info` moves into the turn-boundary handler.
+    let system_prompt = prompt_for(
+        &format!("{}/{}", model_info.provider, model_info.id),
+        model_info.input.contains(&uh_types::ai::ModelInput::Image),
     );
 
     // sdk.ts `createAgentSession` parity: a session manager that already
@@ -554,8 +545,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     )
     .await?;
     // Every compaction path reads the session's resolved compaction
-    // settings (TS `getCompactionSettings`): `/compact` matches the
-    // `compact.*` turn-boundary tool's `keepRecentTokens`/`reserveTokens`.
+    // settings (TS `getCompactionSettings`).
     session.set_compaction_settings(crate::session_engine::compaction::CompactionSettings {
         enabled: compaction_settings.enabled.unwrap_or(true),
         reserve_tokens: compaction_settings
@@ -603,6 +593,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // The embedding's image-model routing seam (the headless surfaces
     // install theirs; the daemon worker's turn dispatch owns routing).
     session.set_image_model_router(config.image_model_router.clone());
+    session.set_system_prompt_for(Some(prompt_for));
     // The armed image route never outlives the run that armed it (TS
     // `_clearModelOverrideWhenIdle`: the override drops once the turn is
     // idle, so a picker switch between turns is live immediately — the
@@ -642,14 +633,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
     // session's queue.
     session.adopt_next_turn_rows(boot_notice_rows);
 
-    // Bind the turn-boundary runtime the `compact.*` handlers
-    // probe (turn-active state, usage estimate, compaction preparation).
-    turn_boundary.bind(super::turn_boundary::TurnBoundaryRuntime {
-        agent,
-        session: wiring.session.clone(),
-        context_window: (model_context_window > 0).then_some(model_context_window),
-        model_info,
-    });
+    // Bind the model facts `model.info` reports.
+    turn_boundary.bind(super::turn_boundary::TurnBoundaryRuntime { model_info });
 
     let goal_driver = wiring.runtime.goal_driver().clone();
     Ok(SessionEngine {
@@ -687,9 +672,9 @@ fn background_work_settled(
 
 impl SessionEngine {
     /// Live model-facts bookkeeping for the turn-boundary surface: after
-    /// a model switch the registered `model.info` handler and the context
-    /// window the usage estimate reads follow the model the session now
-    /// runs (the TS runtime reads both live, not at assembly time).
+    /// a model switch the registered `model.info` handler follows the
+    /// model the session now runs (the TS runtime reads it live, not at
+    /// assembly time).
     pub fn update_model_facts(&self, model: &uh_types::ai::Model) {
         super::turn_boundary::TurnBoundaryRequests::rebind_model_facts(
             &self.turn_boundary,
@@ -698,7 +683,6 @@ impl SessionEngine {
                 provider: model.provider.clone(),
                 input: model.input.clone(),
             },
-            (model.context_window > 0).then_some(model.context_window),
         );
     }
 
@@ -750,6 +734,25 @@ impl SessionEngine {
         options: PromptOptions,
     ) -> anyhow::Result<PromptOutcome> {
         self.session.prompt(text, options).await
+    }
+
+    /// Go back to `entry_id`, an entry on the current branch, while no
+    /// turn runs: the conversation goes on from there, what came after
+    /// stays in the file on a branch of its own, and the goal state follows
+    /// the branch. The kernel keeps what it holds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the full history cannot be read, or when
+    /// `entry_id` is not on the current branch.
+    pub async fn rewind_to(&self, entry_id: &str) -> anyhow::Result<()> {
+        // The driver-first lock order the goal arms use.
+        let mut driver = self.goal_driver.lock().await;
+        self.session.rewind_to(entry_id).await?;
+        let persistence = self.session.shared_persistence();
+        let session = persistence.lock().await;
+        driver.reload_from_branch(&session);
+        Ok(())
     }
 
     /// Tear the session's kernel down now (a final namespace snapshot,

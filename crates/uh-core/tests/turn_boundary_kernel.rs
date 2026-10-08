@@ -10,23 +10,20 @@
     clippy::cast_precision_loss
 )]
 
-//! Verifier: the turn-boundary host-request contract (`model.info`,
-//! `compact.*`) over a REAL kernel, driven in-process through
-//! `create_session`.
+//! Verifier: the turn-boundary host-request contract (`model.info`) over a
+//! REAL kernel, driven in-process through `create_session`.
 //!
 //! The scripted faux provider drives one turn whose `ipython` cell calls the
-//! kernel's `rlm.host_request` bridge directly — the exact surface the
-//! installed `compact` skill module uses (`rlm.host_request("<type>",
-//! {...})`). The cell records the raw handler responses on disk; the test
-//! asserts them against the TS contract.
+//! kernel's `rlm.host_request` bridge directly (`rlm.host_request("<type>",
+//! {...})`). The cell records the raw handler response on disk; the test
+//! asserts it against the TS contract.
 //!
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
-use uh_agent::scripted::{tool_call_turn_steps, ScriptStep, ScriptedProvider, ScriptedTurn};
-use uh_agent::stream::AssistantMessageEvent;
+use uh_agent::scripted::{tool_call_turn_steps, ScriptedProvider, ScriptedTurn};
 use uh_core::session::manager::SessionManager;
 use uh_core::session_engine::engine::{create_session, SessionEngineConfig};
 use uh_core::session_engine::PromptOptions;
@@ -131,11 +128,12 @@ impl Drop for EnvOverride {
     }
 }
 
-/// The kernel cell: the raw host requests the `compact` skill module issues, recorded on disk for the verifier (and printed so the tool result
-/// carries the same proof into the session transcript).
+/// The kernel cell: the raw host request, recorded on disk for the verifier
+/// (and printed so the tool result carries the same proof into the session
+/// transcript).
 fn harness_cell(receipt_path: &Path) -> String {
     format!(
-        "import json\nfrom rlm import host_request\npayload = {{}}\npayload[\"model_info\"] = await host_request(\"model.info\", {{}})\npayload[\"compact_status\"] = await host_request(\"compact.status\", {{}})\npayload[\"compact_run\"] = await host_request(\"compact.run\", {{\"instructions\": \"keep the observation\"}})\nopen({receipt_path:?}, \"w\").write(json.dumps(payload))\nprint(\"HARNESS_CELL_OK\")",
+        "import json\nfrom rlm import host_request\npayload = {{}}\npayload[\"model_info\"] = await host_request(\"model.info\", {{}})\nopen({receipt_path:?}, \"w\").write(json.dumps(payload))\nprint(\"HARNESS_CELL_OK\")",
         receipt_path = receipt_path.display().to_string(),
     )
 }
@@ -161,9 +159,9 @@ fn registry_model() -> uh_types::ai::Model {
     .expect("faux registry model")
 }
 
-/// The turn-boundary host requests round-trip through a real kernel: the
-/// registered handlers answer the `rlm.host_request` bridge with the TS
-/// contract shapes.
+/// The turn-boundary host request round-trips through a real kernel: the
+/// registered handler answers the `rlm.host_request` bridge with the TS
+/// contract shape.
 #[tokio::test]
 async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
     let Some(kernel_python) = kernel_python() else {
@@ -202,10 +200,7 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
     let model = scripted_model();
     let provider = std::sync::Arc::new(ScriptedProvider::new(model.clone()));
     // One turn: the model calls the kernel cell. Then the turn settles.
-    // The scripted provider reports zero usage, but `compact.status` anchors
-    // its estimate on the last assistant usage (TS `getContextUsage`), so the
-    // tool-call turn carries a real one: 120 tokens.
-    let mut steps = tool_call_turn_steps(
+    let steps = tool_call_turn_steps(
         &model,
         Some("running the harness cell"),
         vec![(
@@ -214,20 +209,6 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
             json!({ "code": harness_cell(&receipt_path) }),
         )],
     );
-    for step in &mut steps {
-        if let ScriptStep::Event(event) = step {
-            if let AssistantMessageEvent::Done { message, .. } = &mut **event {
-                message.usage = uh_agent::types::Usage {
-                    input: 100,
-                    output: 20,
-                    cache_read: 0,
-                    cache_write: 0,
-                    total_tokens: 120,
-                    cost: uh_agent::types::UsageCost::default(),
-                };
-            }
-        }
-    }
     provider.push_turn(ScriptedTurn::Events(steps));
     provider.push_text_turn("boundary reached");
 
@@ -281,19 +262,6 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
         "model_info: {}",
         payload["model_info"]
     );
-    // compact.status: the usage estimate over the session, nothing scheduled.
-    let compact_status = &payload["compact_status"];
-    assert_eq!(compact_status["scheduled"], false, "{payload}");
-    assert_eq!(compact_status["context_window"], 200_000, "{payload}");
-    // The usage anchor (the faux turn's 120 tokens) with nothing trailing it.
-    assert_eq!(compact_status["tokens"], 120, "{payload}");
-    assert_eq!(compact_status["percent"], 0.06, "{payload}");
-    // compact.run on the fresh session: the TS prepare skip reason.
-    assert_eq!(payload["compact_run"]["scheduled"], false, "{payload}");
-    assert_eq!(
-        payload["compact_run"]["reason"],
-        "session is too short to compact"
-    );
 
     // The cell output entered the session transcript (the model saw the
     // same proof the receipt carries).
@@ -304,10 +272,5 @@ async fn turn_boundary_host_requests_round_trip_through_a_real_kernel() {
     assert!(
         serialized.contains("HARNESS_CELL_OK"),
         "no kernel cell output in the session rows"
-    );
-
-    assert!(
-        engine.turn_boundary.take_compaction().await.is_none(),
-        "the skipped compact.run must not schedule anything"
     );
 }

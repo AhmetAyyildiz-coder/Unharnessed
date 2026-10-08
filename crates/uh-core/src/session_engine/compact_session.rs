@@ -17,10 +17,8 @@ use crate::session::manager::SessionManager;
 // chars/4 request estimate, and the exact-request window estimator the
 // auxiliary-model routing consults) moved to the child module; the module
 // bindings above keep the child's `super::compaction_exec::` and
-// `super::compaction_utils::` path literals resolving unchanged, and the
-// re-exports keep the facade and `branch_summarization` caller paths stable.
+// `super::compaction_utils::` path literals resolving unchanged.
 mod summarization;
-pub(crate) use summarization::summarizer_request_tokens;
 use summarization::{
     estimate_summary_request_tokens, history_summary_completion_budget,
     turn_prefix_summary_completion_budget,
@@ -35,8 +33,8 @@ mod recent_state_anchor;
 // The preparation (the skip guards, the prior-compaction boundary and
 // previous-summary anchors, the cut resolution, and the session-cut test
 // seam) moved to the child module; the pub use re-exports keep every
-// compact_session:: path stable (turn_boundary, the facade's
-// execute_compaction, and the tests glob).
+// compact_session:: path stable (the facade's execute_compaction and
+// the tests glob).
 mod prepare;
 pub use prepare::{compute_cut, prepare_compaction, CompactSkip, CompactionPreparation};
 
@@ -104,13 +102,6 @@ fn message_from_entry(entry: &FileEntry) -> Option<AgentMessage> {
                 rest: serde_json::Map::default(),
             }))
         }
-        FileEntry::BranchSummary { payload, .. } => Some(AgentMessage::BranchSummary(
-            uh_types::session::BranchSummaryMessage {
-                summary: payload.summary.clone(),
-                from_id: payload.from_id.clone(),
-                timestamp: crate::session::timestamp_to_millis(entry.timestamp()),
-            },
-        )),
         // Prior compactions are kept context, not summarizer input; the new
         // compaction covers their retained span.
         _ => None,

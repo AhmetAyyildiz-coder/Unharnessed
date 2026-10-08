@@ -84,7 +84,6 @@ pub struct LoadedResources {
     pub prompts: Vec<PromptTemplate>,
     pub agents_files: Vec<ContextFile>,
     pub system_prompt: Option<String>,
-    pub append_system_prompt: Vec<String>,
 }
 
 /// Resource loading options (the TS `DefaultResourceLoaderOptions` surface,
@@ -105,7 +104,6 @@ pub struct ResourceLoaderOptions {
     pub no_prompt_templates: bool,
     pub no_context_files: bool,
     pub system_prompt: Option<String>,
-    pub append_system_prompt: Vec<String>,
 }
 
 impl ResourceLoaderOptions {
@@ -289,20 +287,6 @@ pub fn load_resources(mut options: ResourceLoaderOptions) -> LoadedResources {
     });
     resources.system_prompt = system_source.and_then(|source| resolve_prompt_input(&source));
 
-    // Append system prompt: explicit sources or discovered file.
-    let append_sources: Vec<String> = if options.append_system_prompt.is_empty() {
-        discover_append_system_prompt_file(&options.cwd, &options.agent_dir)
-            .map(|path| path.to_string_lossy().to_string())
-            .into_iter()
-            .collect()
-    } else {
-        options.append_system_prompt.clone()
-    };
-    resources.append_system_prompt = append_sources
-        .iter()
-        .filter_map(|source| resolve_prompt_input(source))
-        .collect();
-
     resources
 }
 
@@ -351,22 +335,6 @@ pub fn discover_system_prompt_file(cwd: &Path, agent_dir: &Path) -> Option<PathB
         return Some(project);
     }
     let global = agent_dir.join("SYSTEM.md");
-    if global.exists() {
-        return Some(global);
-    }
-    None
-}
-
-/// `cwd/{CONFIG_DIR_NAME}/APPEND_SYSTEM.md` then `agentDir/APPEND_SYSTEM.md`.
-#[must_use]
-pub fn discover_append_system_prompt_file(cwd: &Path, agent_dir: &Path) -> Option<PathBuf> {
-    let project = cwd
-        .join(crate::settings::CONFIG_DIR_NAME)
-        .join("APPEND_SYSTEM.md");
-    if project.exists() {
-        return Some(project);
-    }
-    let global = agent_dir.join("APPEND_SYSTEM.md");
     if global.exists() {
         return Some(global);
     }
@@ -449,7 +417,6 @@ mod tests {
         assert_eq!(resources.agents_files.len(), 1);
         assert_eq!(resources.agents_files[0].content, "Project rules");
         assert_eq!(resources.system_prompt.as_deref(), Some("custom system"));
-        assert!(resources.append_system_prompt.is_empty());
     }
 
     #[test]

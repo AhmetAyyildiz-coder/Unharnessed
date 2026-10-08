@@ -177,12 +177,16 @@ fn acp_initialize_matches_the_ts_golden() {
     let result = &response["result"];
     assert_eq!(result["protocolVersion"], 1);
     let capabilities = &result["agentCapabilities"];
-    assert_eq!(capabilities["loadSession"], false);
+    // The saved conversations: `session/load` and `session/list`.
+    assert_eq!(capabilities["loadSession"], true);
     assert_eq!(
         capabilities["promptCapabilities"],
         json!({ "image": true, "embeddedContext": true })
     );
-    assert_eq!(capabilities["sessionCapabilities"], json!({ "close": {} }));
+    assert_eq!(
+        capabilities["sessionCapabilities"],
+        json!({ "close": {}, "list": {} })
+    );
     // ACP MCP server admission is served, so the TS `mcpCapabilities`
     // flag (http support) is advertised.
     assert_eq!(capabilities["mcpCapabilities"], json!({ "http": true }));
@@ -257,20 +261,26 @@ fn acp_prompt_stream_completion_envelope_and_stop_reason_match_ts() {
         Some("result".to_string()),
         None,
     );
-    // Before the TS sequence: the session's command list (published once
-    // after `session/new`), then the turn's origin.
+    // Before the TS sequence: the session's command list and what it has
+    // used (published once after `session/new`), then the turn's origin.
     let tags: Vec<&str> = shapes.iter().map(|(tag, _, _, _)| tag.as_str()).collect();
     assert_eq!(
-        tags[..3],
+        tags[..4],
         [
             "available_commands_update",
+            "session_info_update",
             "session_info_update",
             "agent_message_chunk"
         ]
     );
-    assert_eq!(
-        updates[1]["params"]["update"]["_meta"]["unharnessed"]["turnStart"],
-        json!({ "origin": "prompt" })
+    assert!(updates[1]["params"]["update"]["_meta"]["unharnessed"]["usage"].is_object());
+    // The turn's origin, and where the conversation stood before the
+    // prompt (an entry id, to go back to it).
+    let turn_start = &updates[2]["params"]["update"]["_meta"]["unharnessed"]["turnStart"];
+    assert_eq!(turn_start["origin"], "prompt");
+    assert!(
+        turn_start["rewindTo"].is_string(),
+        "turnStart: {turn_start}"
     );
     assert!(shapes.contains(&boundary), "shapes: {shapes:?}");
     assert!(shapes.contains(&completion), "shapes: {shapes:?}");
@@ -331,10 +341,11 @@ fn acp_prompt_chunk_carries_the_assistant_message_id() {
         chunk["params"]["update"]["content"],
         json!({ "type": "text", "text": "ACP-OK" })
     );
-    // The session's command list and the turn's origin are published first.
+    // The session's command list, what it has used and the turn's origin
+    // are published first.
     assert_eq!(
         chunk["params"]["update"]["_meta"]["unharnessed"],
-        json!({ "promptTurnId": 1, "eventSequence": 3, "phase": "event" })
+        json!({ "promptTurnId": 1, "eventSequence": 4, "phase": "event" })
     );
 }
 
@@ -473,11 +484,14 @@ fn acp_cancel_without_an_active_turn_is_a_noop() {
     // The no-op cancel answers nothing; the session still closes cleanly.
     let close = client.request("session/close", &json!({ "sessionId": session_id }));
     let (close_response, notifications) = client.wait_response(close, TIMEOUT);
-    // Only the session's command list, published after `session/new`.
+    // Only what `session/new` publishes: the session's command list and
+    // what it has used.
     assert!(
-        notifications
-            .iter()
-            .all(|n| n["params"]["update"]["sessionUpdate"] == "available_commands_update"),
+        notifications.iter().all(|n| {
+            let update = &n["params"]["update"];
+            update["sessionUpdate"] == "available_commands_update"
+                || update["_meta"]["unharnessed"]["usage"].is_object()
+        }),
         "a no-op cancel publishes nothing: {notifications:?}"
     );
     assert_eq!(close_response["result"], json!({}));

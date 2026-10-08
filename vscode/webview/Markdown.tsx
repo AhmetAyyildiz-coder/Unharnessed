@@ -115,28 +115,30 @@ function split(node: HtmlNode): void {
   node.children = children;
 }
 
-/** A fenced block, its language above it, a copy button on hover. */
+/** A fenced block, under a band with its language (when the model gave one) and a copy button. */
 function CodeBlock({ children }: { children: ReactNode }) {
   const [copied, setCopied] = useState(false);
   const code = codeOf(children);
   const language = /language-(\S+)/.exec(code.className)?.[1];
   return (
     <div className="md-code">
-      {language && <span className="md-code-language">{language}</span>}
-      <button
-        className="icon-button md-code-copy"
-        type="button"
-        aria-label="Copy"
-        data-tip={copied ? "Copied" : "Copy"}
-        data-tip-align="end"
-        onClick={() => {
-          post({ type: "copy", text: code.text });
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1400);
-        }}
-      >
-        {copied ? <IconCheck /> : <IconCopy />}
-      </button>
+      <div className="md-code-head">
+        <span className="md-code-language">{language}</span>
+        <button
+          className="icon-button md-code-copy"
+          type="button"
+          aria-label="Copy"
+          data-tip={copied ? "Copied" : "Copy"}
+          data-tip-side="left"
+          onClick={() => {
+            post({ type: "copy", text: code.text });
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1400);
+          }}
+        >
+          {copied ? <IconCheck /> : <IconCopy />}
+        </button>
+      </div>
       <pre>{children}</pre>
     </div>
   );

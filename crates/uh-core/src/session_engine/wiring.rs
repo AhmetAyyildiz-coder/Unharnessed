@@ -118,6 +118,11 @@ impl AgentSession {
         self.skills = skills;
     }
 
+    /// Install the engine's prompt builder, which a model switch calls.
+    pub fn set_system_prompt_for(&mut self, prompt_for: Option<super::SystemPromptFor>) {
+        self.system_prompt_for = prompt_for;
+    }
+
     /// Bind the kernel-state probe behind the post-compaction
     /// `ipython_state` notice (the engine wiring hands over the session's
     /// kernel provisioner, TS `AgentSession._ipythonKernelProvisioner`).

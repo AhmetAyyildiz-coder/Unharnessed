@@ -88,10 +88,14 @@ fn assemble_breakdown(
                 .map(|parsed| (server, parsed))
         })
         .collect::<std::collections::HashMap<String, uh_core::mcp::McpServerConfig>>();
-    let (skill_overrides, generic_servers, _manager) =
+    let (generic_servers, _manager) =
         uh_core::mcp::McpManager::prompt_gating(user_servers, &agent_dir);
+    let model_instructions = settings
+        .settings()
+        .model_instructions
+        .clone()
+        .unwrap_or_default();
     let resources = load_resources(ResourceLoaderOptions {
-        extra_builtin_skill_overrides: skill_overrides,
         system_prompt: None,
         ..ResourceLoaderOptions::new(cwd.to_path_buf(), agent_dir)
     });
@@ -101,6 +105,7 @@ fn assemble_breakdown(
             // A dump has no session file; the tail states the value it uses.
             messages_path: None,
             model,
+            model_instructions: &model_instructions,
             custom_prompt: resources.system_prompt.clone(),
             context_files: resources
                 .agents_files

@@ -1,7 +1,6 @@
 //! The automatic compaction arms on the in-process ACP turn path: the TS
-//! `_checkCompaction` boundary (overflow Case 1, the model-requested arm,
-//! and the threshold arm) plus `_runPreTurnCompaction`, ported onto the
-//! ACP transport.
+//! `_checkCompaction` boundary (overflow Case 1 and the threshold arm)
+//! plus `_runPreTurnCompaction`, ported onto the ACP transport.
 //!
 //! TS ground truth: the arms live inside the `AgentSession` turn loop
 //! (agent-session.ts), so every transport that drives the session —
@@ -70,19 +69,16 @@ pub(super) enum CompactionCheckRun {
     /// `willRetry`: the model turn re-runs on the compacted context
     /// without a new user message).
     OverflowRetry,
-    /// A requested compaction consumed the boundary and stops the run on
-    /// purpose: the model resumes on the next prompt.
-    RequestedStop,
 }
 
 /// What one overflow Case-1 attempt decided (TS `_checkCompaction` Case 1
-/// returns `false` for every non-retry outcome, so the requested and
-/// threshold arms never fire after a matched case).
+/// returns `false` for every non-retry outcome, so the threshold arm never
+/// fires after a matched case).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OverflowAttempt {
     /// The Case-1 guard did not match (no overflow, a different model, a
-    /// stale pre-compaction error, or compaction disabled with no pending
-    /// request): the check continues to the requested and threshold arms.
+    /// stale pre-compaction error, or compaction disabled): the check
+    /// continues to the threshold arm.
     Continue,
     /// The compact-and-retry ran: the turn re-issues.
     Retry,
@@ -163,14 +159,12 @@ impl CompactionArms {
 
 impl AcpSession {
     /// TS `_checkCompaction` at the settled-turn boundary (`agent_end`):
-    /// the overflow Case 1 first (it consumes any pending model request),
-    /// then the requested arm (which never falls through to the threshold
-    /// arm), then the threshold arm. `assistant` is the turn's settled
-    /// message; an aborted message never reaches here (the turn loop
-    /// classifies aborts first, dropping the boundary requests). The
-    /// return carries the threshold arm's held goal continuation (the
-    /// goal-queue mint before the compaction; the settle loop runs it as
-    /// the post-compaction turn).
+    /// the overflow Case 1 first, then the threshold arm. `assistant` is
+    /// the turn's settled message; an aborted message never reaches here
+    /// (the turn loop classifies aborts first). The return carries the
+    /// threshold arm's held goal continuation (the goal-queue mint before
+    /// the compaction; the settle loop runs it as the post-compaction
+    /// turn).
     pub(super) async fn check_compaction(
         &self,
         mode: &AcpModeState,
@@ -192,17 +186,10 @@ impl AcpSession {
             .await
         {
             OverflowAttempt::Retry => return (CompactionCheckRun::OverflowRetry, None),
-            // A matched case is done (TS `return false`): the requested
-            // and threshold arms never fire after it.
+            // A matched case is done (TS `return false`): the threshold
+            // arm never fires after it.
             OverflowAttempt::Done => return (CompactionCheckRun::Proceed, None),
             OverflowAttempt::Continue => {}
-        }
-        if self
-            .requested_arm(mode, &model, api_key.clone())
-            .await
-            .was_consumed()
-        {
-            return (CompactionCheckRun::RequestedStop, None);
         }
         let held = self
             .threshold_arm(mode, &model, api_key, assistant, goal_queue)
@@ -212,21 +199,15 @@ impl AcpSession {
 
     /// TS `_runPreTurnCompaction` before an admitted prompt: the same
     /// check over the last assistant message of the loop context, with
-    /// the pre-turn semantics — an aborted last assistant drops its
-    /// pending requests but the checks still run, and an overflow
-    /// recovery never re-issues (the admitted prompt proceeds on the
-    /// compacted context; TS `resumeAfterFailure` excludes overflow).
+    /// the pre-turn semantics — an overflow recovery never re-issues (the
+    /// admitted prompt proceeds on the compacted context; TS
+    /// `resumeAfterFailure` excludes overflow).
     pub(super) async fn run_pre_turn_compaction(&self, mode: &AcpModeState) {
         let Some(assistant) =
             super::session::latest_assistant_message(mode.engine.session.agent()).await
         else {
             return;
         };
-        if assistant.stop_reason == uh_types::ai::StopReason::Aborted {
-            // TS `skipAbortedCheck = false`: the aborted turn's pending
-            // requests drop, then the checks continue.
-            mode.engine.turn_boundary.clear_pending().await;
-        }
         // A pre-turn threshold compaction never queues the goal
         // continuation (TS `_runPreTurnCompaction` passes
         // `queueAutonomousContinuation = false`), so the check holds
@@ -235,12 +216,6 @@ impl AcpSession {
             .check_compaction(mode, &assistant, ThresholdGoalQueue::Skip)
             .await;
         drop(held);
-    }
-
-    /// Drop the pending turn-boundary request (an aborted turn never
-    /// services it; TS `_checkCompaction`'s abort arm clears it).
-    pub(super) async fn clear_turn_boundary_requests(&self, engine: &SessionEngine) {
-        engine.turn_boundary.clear_pending().await;
     }
 
     /// Reset the overflow recovery state (the turn loop calls it at
@@ -290,13 +265,12 @@ impl AcpSession {
             }
             _ => None,
         };
-        let outcome = run_compaction(self, engine, model, api_key, None).await;
+        let outcome = run_compaction(self, engine, model, api_key).await;
         let cancelled = outcome
             .as_ref()
             .err()
             .is_some_and(uh_agent::abort::is_abort_error);
-        self.finish_compaction(engine, CompactionOutcomeReason::Threshold, outcome)
-            .await;
+        self.finish_compaction(engine, outcome).await;
         if cancelled && held.is_some() {
             // TS `_clearQueuedGoalContinuationAfterCancelledThresholdCompaction`:
             // withdraw the queued continuation and roll the slot back.
@@ -306,51 +280,22 @@ impl AcpSession {
         held
     }
 
-    /// The TS `_checkCompaction` requested arm: a pending `compact.run`
-    /// request consumed at the boundary (any outcome consumed it; the
-    /// run stops the turn loop on purpose).
-    async fn requested_arm(
-        &self,
-        mode: &AcpModeState,
-        model: &Model,
-        api_key: Option<String>,
-    ) -> RequestedArmRun {
-        let engine = &mode.engine;
-        if !engine.turn_boundary.compaction_scheduled().await {
-            return RequestedArmRun::None;
-        }
-        let instructions = engine
-            .turn_boundary
-            .take_compaction()
-            .await
-            .and_then(|pending| pending.instructions);
-        let outcome = run_compaction(self, engine, model, api_key, instructions.as_deref()).await;
-        self.finish_compaction(engine, CompactionOutcomeReason::Requested, outcome)
-            .await;
-        RequestedArmRun::Consumed
-    }
-
-    /// The shared outcome→event mapping for the threshold and requested
-    /// arms (TS `_runAutoCompaction`'s success / catch arms): a ran
-    /// compaction publishes its result,
-    /// a skip records the warning disclosure, a cancel records the
-    /// aborted disclosure, and a failure records the error disclosure.
+    /// The threshold arm's outcome→event mapping (TS `_runAutoCompaction`'s
+    /// success / catch arms): a ran compaction publishes its result, a skip
+    /// records the warning disclosure, a cancel records the aborted
+    /// disclosure, and a failure records the error disclosure.
     async fn finish_compaction(
         &self,
         engine: &SessionEngine,
-        reason: CompactionOutcomeReason,
         outcome: anyhow::Result<CompactOutcome>,
     ) {
+        let reason = CompactionOutcomeReason::Threshold;
         match outcome {
             Ok(CompactOutcome::Ran(run)) => {
                 publish_compaction_end(self, Some(&run.result)).await;
             }
             Ok(CompactOutcome::Skipped(message)) => {
-                let text = if reason == CompactionOutcomeReason::Requested {
-                    format!("Requested compaction skipped: {message}")
-                } else {
-                    format!("Auto-compaction skipped: {message}")
-                };
+                let text = format!("Auto-compaction skipped: {message}");
                 end_compaction_unsuccessfully(
                     self,
                     engine,
@@ -361,27 +306,17 @@ impl AcpSession {
                 .await;
             }
             Err(error) if uh_agent::abort::is_abort_error(&error) => {
-                let text = if reason == CompactionOutcomeReason::Requested {
-                    "Requested compaction cancelled"
-                } else {
-                    "Compaction cancelled"
-                };
                 end_compaction_unsuccessfully(
                     self,
                     engine,
                     reason,
                     CompactionOutcomeKind::Cancelled,
-                    text,
+                    "Compaction cancelled",
                 )
                 .await;
             }
             Err(error) => {
-                let text = match reason {
-                    CompactionOutcomeReason::Requested => {
-                        format!("Requested compaction failed: {error:#}")
-                    }
-                    _ => format!("Auto-compaction failed: {error:#}"),
-                };
+                let text = format!("Auto-compaction failed: {error:#}");
                 end_compaction_unsuccessfully(
                     self,
                     engine,
@@ -395,8 +330,8 @@ impl AcpSession {
     }
 
     /// The TS `_checkCompaction` Case 1 body: guards (same model, not
-    /// before the latest compaction, enabled-or-requested, and an actual
-    /// context overflow), the one-attempt state machine, and the
+    /// before the latest compaction, enabled, and an actual context
+    /// overflow), the one-attempt state machine, and the
     /// compact-and-retry. The error turn leaves the loop context before
     /// the compaction runs (it stays in the session history), and a ran
     /// compaction drops it again from the rebuilt tail.
@@ -423,12 +358,8 @@ impl AcpSession {
         {
             return OverflowAttempt::Continue;
         }
-        // Enablement: the compaction settings gate, or a pending model
-        // request (the run below consumes it and honors its
-        // instructions).
-        let pending_scheduled = engine.turn_boundary.compaction_scheduled().await;
-        let enabled = engine.session.auto_compaction_enabled();
-        if !enabled && !pending_scheduled {
+        // Enablement: the compaction settings gate.
+        if !engine.session.auto_compaction_enabled() {
             return OverflowAttempt::Continue;
         }
         if !uh_ai::is_context_overflow(assistant, Some(model.context_window)) {
@@ -472,14 +403,7 @@ impl AcpSession {
             .session
             .drop_trailing_assistant(uh_core::session_engine::TrailingAssistantFilter::Any)
             .await;
-        // Any compaction consumes a pending model request (overflow can
-        // fire first and take the request with it).
-        let instructions = engine
-            .turn_boundary
-            .take_compaction()
-            .await
-            .and_then(|pending| pending.instructions);
-        let outcome = run_compaction(self, engine, model, api_key, instructions.as_deref()).await;
+        let outcome = run_compaction(self, engine, model, api_key).await;
         match outcome {
             Ok(CompactOutcome::Ran(run)) => {
                 publish_compaction_end(self, Some(&run.result)).await;
@@ -533,19 +457,6 @@ impl AcpSession {
     }
 }
 
-/// Whether the requested arm consumed the boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RequestedArmRun {
-    None,
-    Consumed,
-}
-
-impl RequestedArmRun {
-    fn was_consumed(self) -> bool {
-        self == RequestedArmRun::Consumed
-    }
-}
-
 /// One compaction run shared by every arm (TS `_runAutoCompaction`'s
 /// provider half): the abort slot is held for the run's duration and the
 /// summarizer races the abort signal. Returns the raw outcome; the caller
@@ -555,18 +466,19 @@ async fn run_compaction(
     engine: &SessionEngine,
     model: &Model,
     api_key: Option<String>,
-    instructions: Option<&str>,
 ) -> anyhow::Result<CompactOutcome> {
     let controller = session.arms.install_abort_controller();
     let signal = controller.signal();
+    session.usage.compacting(true).await;
     let compact = async {
         engine
             .session
-            .compact(instructions, model, api_key, Some(&signal))
+            .compact(None, model, api_key, Some(&signal))
             .await
     };
     let outcome = uh_agent::abort::race_with_abort(compact, &signal).await;
     session.arms.clear_abort_controller(&controller);
+    session.usage.compacting(false).await;
     // The race's outer `Err` is the abort marker (the summarizer was
     // dropped); the inner `Err` is the compaction's own failure — both
     // surface as the caller's `Err` for `is_abort_error` to classify.

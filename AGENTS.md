@@ -108,8 +108,8 @@ keep working.
 - Kernel API in the REPL: `bash()` handles, and the four built-in skills `goal`, `compact`,
   `mcp`, `attach_image` (plus any user or project skill), documented in `layers/core.md`.
   `prompt_guards` pins the documented surface to the registered one.
-- System prompt: the cache-stable `core.md` layer (plus the per-model map) followed by one
-  dynamic tail (packages, project context, skills inventory, MCP servers, environment).
+- System prompt: the cache-stable `core.md` layer (plus the model's instructions, settings
+  `modelInstructions`) followed by one dynamic tail (packages, project context, skills inventory, MCP servers, environment).
   `unharnessed prompt` dumps the assembled prompt with its layer breakdown.
 - CLI: headless only — `-p` in `text`/`json` modes, and `--mode acp` (Agent Client Protocol
   over stdio, the future VS Code front-end).

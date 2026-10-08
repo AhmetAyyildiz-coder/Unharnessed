@@ -8,9 +8,7 @@ use super::{
 };
 
 /// Why a compaction cannot prepare (TS `prepareCompaction` returning
-/// `undefined`). The two surfaces spell it differently: `/compact` raises
-/// the `CompactionSkippedError` message, the kernel `compact.run` host
-/// request returns the short reason.
+/// `undefined`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompactSkip {
     AlreadyCompacted,
@@ -24,15 +22,6 @@ impl CompactSkip {
         match self {
             CompactSkip::AlreadyCompacted => "Already compacted",
             CompactSkip::TooShort => "Session is too short to compact — try again once it grows",
-        }
-    }
-
-    /// The `compact.run` host-request reason (TS `handleCompactHostRequest`).
-    #[must_use]
-    pub fn request_reason(self) -> &'static str {
-        match self {
-            CompactSkip::AlreadyCompacted => "already compacted",
-            CompactSkip::TooShort => "session is too short to compact",
         }
     }
 }

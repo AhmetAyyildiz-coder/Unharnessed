@@ -5,8 +5,7 @@ Two surfaces, one module:
 - Dispatch: ``list_tools(connection)`` / ``call_tool(connection, tool, arguments)``
   open a configured MCP server (host-resolved via ``mcp.config``), discover its
   tools, and call them. Adding a service is data, not a new Python module.
-- Discovery: ``list_plugins`` / ``search_plugins`` (host-owned catalog),
-  ``list_connections`` (the user's actual connections), ``search_tools`` /
+- Discovery: ``list_connections`` (the user's connections), ``search_tools`` /
   ``describe_tool`` (live tool metadata). Inventory calls are bounded and never
   return credentials; live tool schemas and results are passed through
   unmodified.
@@ -43,10 +42,8 @@ __all__ = [
     "close",
     "describe_tool",
     "list_connections",
-    "list_plugins",
     "list_tools",
     "reload",
-    "search_plugins",
     "search_tools",
 ]
 
@@ -62,12 +59,6 @@ _ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)
 _CONTROL_CHAR = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 # Host-backed inventory requests are interactive-sized, not tool-call-sized.
 _INVENTORY_TIMEOUT = 15.0
-_DEFAULT_PLUGIN_LIMIT = 50
-_MAX_PLUGIN_LIMIT = 200
-_DEFAULT_PLUGIN_SEARCH_LIMIT = 10
-_MAX_PLUGIN_SEARCH_LIMIT = 50
-_MAX_CURSOR_CHARS = 512
-_PLUGIN_CONNECTION_STATUSES = ("connected", "not_connected")
 # tools/list pagination: a server that paginates must not wedge discovery.
 _MAX_TOOL_PAGES = 25
 _DEFAULT_TOOL_SEARCH_LIMIT = 20
@@ -95,8 +86,8 @@ class McpDiscoveryError(RuntimeError):
 class McpCredentialsUnavailable(RuntimeError):
     """Raised when a configured connection has no usable credentials.
 
-    The user must connect the service first (`/plugins` or
-    `/mcp login <service>`)."""
+    The user must connect the service first (Settings > MCP: the
+    Marketplace, or a sign-in)."""
 
 
 class _StderrTail(io.TextIOBase):
@@ -658,45 +649,6 @@ async def list_connections() -> list[dict[str, Any]]:
     return [_sanitize_inventory_entry(entry) for entry in connections]
 
 
-async def list_plugins(
-    connection_status: str | None = None,
-    limit: int = _DEFAULT_PLUGIN_LIMIT,
-    cursor: str | None = None,
-) -> dict[str, Any]:
-    """One bounded page of the supported-service catalog (host-owned).
-
-    Returns ``{"plugins": [...], "nextCursor": str | None}``; while
-    ``nextCursor`` is not None, more entries exist — pass it back as ``cursor``.
-    ``connection_status`` filters to ``"connected"`` or ``"not_connected"``.
-    """
-    if connection_status is not None and connection_status not in _PLUGIN_CONNECTION_STATUSES:
-        raise ValueError("connection_status must be None, 'connected' or 'not_connected'")
-    _validate_limit(limit, "limit", _MAX_PLUGIN_LIMIT)
-    payload: dict[str, Any] = {"limit": limit}
-    if connection_status is not None:
-        payload["connectionStatus"] = connection_status
-    if cursor is not None:
-        _validate_cursor(cursor)
-        payload["cursor"] = cursor
-    result = await _host_inventory("mcp.list_plugins", payload)
-    return _plugin_page(result)
-
-
-async def search_plugins(query: str, limit: int = _DEFAULT_PLUGIN_SEARCH_LIMIT) -> dict[str, Any]:
-    """Bounded search of the supported-service catalog by the host.
-
-    Matches service ids, labels, aliases, descriptions, categories and
-    publishers. Returns ``{"plugins": [...], "nextCursor": None}``; narrow the
-    query rather than expecting exhaustive pages.
-    """
-    if not isinstance(query, str) or not query.strip():
-        raise TypeError("query must be a non-empty string")
-    _validate_limit(limit, "limit", _MAX_PLUGIN_SEARCH_LIMIT)
-    payload: dict[str, Any] = {"query": query.strip(), "limit": limit}
-    result = await _host_inventory("mcp.search_plugins", payload)
-    return _plugin_page(result)
-
-
 async def search_tools(
     query: str,
     connection_id: str | None = None,
@@ -783,17 +735,6 @@ def _inventory_entries(result: dict[str, Any], key: str) -> list[dict[str, Any]]
     return entries
 
 
-def _plugin_page(result: dict[str, Any]) -> dict[str, Any]:
-    entries = _inventory_entries(result, "plugins")
-    next_cursor = result.get("nextCursor")
-    if next_cursor is not None and (not isinstance(next_cursor, str) or not next_cursor):
-        raise RuntimeError("MCP plugin inventory from the host is malformed")
-    return {
-        "plugins": [_sanitize_inventory_entry(entry) for entry in entries],
-        "nextCursor": next_cursor,
-    }
-
-
 def _sanitize_inventory_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """Copy one inventory entry, dropping secret-looking keys defensively.
 
@@ -863,11 +804,6 @@ def _validate_limit(value: Any, label: str, maximum: int) -> None:
         raise ValueError(f"{label} must be an integer between 1 and {maximum}")
 
 
-def _validate_cursor(value: Any) -> None:
-    if not isinstance(value, str) or not value or len(value) > _MAX_CURSOR_CHARS:
-        raise ValueError(f"cursor must be a non-empty string of at most {_MAX_CURSOR_CHARS} characters")
-
-
 def _validate_name(value: str, label: str) -> None:
     if not isinstance(value, str) or not value:
         raise TypeError(f"{label} must be a non-empty string")
@@ -907,7 +843,7 @@ def _bound_auth(provider: str, config: dict[str, Any]) -> dict[str, Any] | None:
 def _credentials_unavailable(server: str) -> McpCredentialsUnavailable:
     return McpCredentialsUnavailable(
         f"MCP credentials for '{server}' are not available. Ask the user to connect it "
-        f"(/plugins or /mcp login {server}); do not ask them to set environment variables."
+        f"in Settings > MCP; do not ask them to set environment variables."
     )
 
 

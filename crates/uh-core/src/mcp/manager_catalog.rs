@@ -168,8 +168,6 @@ impl McpManager {
     /// The `expect` on the service's endpoint is unreachable: the
     /// pasteability filter already rejects services without an endpoint.
     pub fn paste_install_inputs(&self, server: &str) -> Result<PasteInstallInputs, String> {
-        let token = String::new();
-        let _ = token;
         let service = self
             .service_descriptor(server)
             .filter(|service| is_pasteable_token_service(service))
@@ -189,6 +187,19 @@ impl McpManager {
             store: std::sync::Arc::clone(&self.connection_store),
             probe: self.probe(),
         })
+    }
+
+    /// What a pasteable token service asks for ("GitHub personal access
+    /// token"); `None` for any other server.
+    pub fn paste_token_label(&self, server: &str) -> Option<String> {
+        let service = self
+            .service_descriptor(server)
+            .filter(|service| is_pasteable_token_service(service))?;
+        let credential = super::catalog_views::mcp_paste_credential(service)?;
+        Some(super::catalog_views::mcp_credential_field_prompt_label(
+            service,
+            &credential.field,
+        ))
     }
 
     /// The async handles one connection acts through (credential store,
@@ -254,7 +265,6 @@ impl McpManager {
                 &service.service_id,
                 Some(&service),
                 None,
-                None,
                 record,
                 credential,
                 false,
@@ -281,11 +291,9 @@ impl McpManager {
                     config: http_config(&config_url, uses_oauth),
                     uses_oauth,
                     user_declared: false,
-                    catalog_service_id: Some(service.service_id.clone()),
                     static_token_eligible: static_token,
                     credential_free_eligible: service.auth_strategy == AuthStrategy::None
                         && service.setup.status == SetupStatus::Ready,
-                    blocked_reason: None,
                 },
             );
         }
@@ -318,7 +326,6 @@ impl McpManager {
                 &record.connection_id,
                 Some(service),
                 None,
-                None,
                 Some(record),
                 credential,
                 false,
@@ -339,50 +346,16 @@ impl McpManager {
                     config: http_config(&config_url, uses_oauth),
                     uses_oauth,
                     user_declared: false,
-                    catalog_service_id: Some(service.service_id.clone()),
                     static_token_eligible: is_pasteable_token_service(service),
                     credential_free_eligible: service.auth_strategy == AuthStrategy::None
                         && service.setup.status == SetupStatus::Ready,
-                    blocked_reason: None,
                 },
             );
         }
-        // User-declared servers: a legacy-builtin shadow is a dead entry
-        // (disabled integration with the conflict hint); any other user
-        // entry owns its id.
+        // User-declared servers own their id: one sharing a catalog
+        // service's id replaces it.
         let user_servers = (self.get_user_servers)().unwrap_or_default();
         for (server, config) in user_servers {
-            let reserved = self
-                .service_catalog
-                .descriptors
-                .iter()
-                .find(|service| service.service_id == server && service.legacy_builtin);
-            if let Some(service) = reserved {
-                let ownership =
-                    super::catalog_views::reserved_mcp_ownership(Some(service), Some(&config));
-                for integration in integrations.values_mut() {
-                    if integration.server != server
-                        && integration.catalog_service_id.as_deref() != Some(server.as_str())
-                    {
-                        continue;
-                    }
-                    match &ownership {
-                        super::catalog_views::ReservedOwnership::Canonical => {
-                            // Settings exactly mirror the canonical entry:
-                            // merge nothing (the catalog config stands).
-                        }
-                        super::catalog_views::ReservedOwnership::Disabled => {
-                            integration.config = disabled_config(integration.config.clone());
-                            integration.blocked_reason = Some("Disabled in settings.".to_string());
-                        }
-                        super::catalog_views::ReservedOwnership::Conflict(hint) => {
-                            integration.config = disabled_config(integration.config.clone());
-                            integration.blocked_reason = Some(hint.clone());
-                        }
-                    }
-                }
-                continue;
-            }
             integrations.insert(
                 server.clone(),
                 ResolvedIntegration {
@@ -391,22 +364,12 @@ impl McpManager {
                     uses_oauth: super::uses_oauth(&config),
                     user_declared: true,
                     config,
-                    catalog_service_id: None,
                     static_token_eligible: false,
                     credential_free_eligible: false,
-                    blocked_reason: None,
                 },
             );
         }
         self.integrations = integrations;
-    }
-
-    /// Whether an integration's name is a legacy-builtin reserved id.
-    pub(crate) fn is_reserved_server_name(&self, server: &str) -> bool {
-        self.service_catalog
-            .descriptors
-            .iter()
-            .any(|service| service.legacy_builtin && service.service_id == server)
     }
 
     /// The endpoint-pinned URL of an installed connection (the pinning
@@ -432,23 +395,6 @@ fn http_config(url: &str, uses_oauth: bool) -> McpServerConfig {
         disabled_tools: None,
         startup_timeout_ms: None,
         call_timeout_ms: None,
-    }
-}
-
-fn disabled_config(config: McpServerConfig) -> McpServerConfig {
-    match config {
-        McpServerConfig::Http { url, .. } => McpServerConfig::Http {
-            url,
-            headers: None,
-            bearer_token_env_var: None,
-            oauth: None,
-            enabled: Some(false),
-            enabled_tools: None,
-            disabled_tools: None,
-            startup_timeout_ms: None,
-            call_timeout_ms: None,
-        },
-        other @ McpServerConfig::Stdio { .. } => other,
     }
 }
 

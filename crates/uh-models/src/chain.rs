@@ -13,6 +13,9 @@
 //!
 //! A user always has models, offline or not, install or upgrade.
 //!
+//! The live `OpenRouter` list (`crate::openrouter`), when one was fetched,
+//! overlays the `OpenRouter` entries of whichever layer served.
+//!
 //! Refresh cadence: hourly, at startup, on picker open, and on auth change;
 //! fire-and-forget — errors are caught and last-good retained, never
 //! surfaced into a session. A mid-session refresh never retargets the
@@ -29,6 +32,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::bundled::{load_bundled_models, BundledAssets};
 use crate::cache::{CatalogCache, RefreshOptions, PUBLIC_SCOPE};
 use crate::fetch::{CatalogFetcher, MODEL_CATALOG_URL};
+use crate::openrouter::{merge_openrouter_models, OpenRouterCatalog, OPENROUTER_BASE_URL};
 use crate::pinning::{parse_provider_model_catalog, PinnedTemplates};
 use crate::prime_inference::{
     merge_prime_inference_models, PrimeInferenceCatalog, PrimeInferenceCredentials,
@@ -82,6 +86,9 @@ impl PrimeCredentials {
 pub struct ModelCatalog {
     provider_cache: CatalogCache<Vec<Model>>,
     prime_inference: PrimeInferenceCatalog,
+    /// The live `OpenRouter` list; `None` keeps the catalog's entries (the
+    /// hermetic [`ModelCatalog::with_urls`] seam never reaches `OpenRouter`).
+    openrouter: Option<OpenRouterCatalog>,
     bundled: BundledAssets,
     templates: PinnedTemplates,
     compiled: Arc<Vec<Model>>,
@@ -89,6 +96,7 @@ pub struct ModelCatalog {
     /// entitlements lane in uh-core) targets the same endpoint as the
     /// public catalog fetch and reads it from the shared catalog.
     pi_base_url: Arc<str>,
+    models_dir: Option<PathBuf>,
     /// Guards [`ModelCatalog::spawn_hourly_refresh`]: one loop per instance.
     hourly_loop: OnceLock<()>,
     /// The Prime Inference credential scope the last catalog request in
@@ -114,6 +122,7 @@ impl ModelCatalog {
             MODEL_CATALOG_URL,
             PRIME_INFERENCE_BASE_URL,
         )
+        .with_openrouter_url(OPENROUTER_BASE_URL)
     }
 
     /// [`ModelCatalog::new`] with an explicit bundled-asset directory
@@ -126,10 +135,12 @@ impl ModelCatalog {
             MODEL_CATALOG_URL,
             PRIME_INFERENCE_BASE_URL,
         )
+        .with_openrouter_url(OPENROUTER_BASE_URL)
     }
 
     /// [`ModelCatalog::new`] with both remote URLs overridden (hermetic
-    /// tests run the two fetch layers against a local server).
+    /// tests run the two fetch layers against a local server). The live
+    /// `OpenRouter` layer stays off: see [`ModelCatalog::with_openrouter_url`].
     pub fn with_urls(
         models_dir: Option<PathBuf>,
         bundled_dir: Option<PathBuf>,
@@ -151,7 +162,9 @@ impl ModelCatalog {
                 Arc::new(CatalogFetcher::new()),
                 parse,
             ),
-            prime_inference: PrimeInferenceCatalog::with_base_url(models_dir, pi_base_url),
+            prime_inference: PrimeInferenceCatalog::with_base_url(models_dir.clone(), pi_base_url),
+            openrouter: None,
+            models_dir,
             bundled: bundled_dir
                 .map_or_else(BundledAssets::at_package_root, BundledAssets::from_dir),
             templates,
@@ -160,6 +173,18 @@ impl ModelCatalog {
             hourly_loop: OnceLock::new(),
             pi_scope_seen: Mutex::new(None),
         }
+    }
+
+    /// Turn on the live `OpenRouter` list, fetched from `{base_url}/models`
+    /// and cached beside the models dir.
+    #[must_use]
+    pub fn with_openrouter_url(mut self, base_url: &str) -> Self {
+        self.openrouter = Some(OpenRouterCatalog::new(
+            self.models_dir.clone(),
+            base_url,
+            self.templates.clone(),
+        ));
+        self
     }
 
     /// The Prime Inference API base URL: the same endpoint the public
@@ -223,9 +248,26 @@ impl ModelCatalog {
         };
         let live = credentials
             .and_then(|credentials| self.prime_inference.get(&credentials.as_inference()));
-        match live {
+        let models = match live {
             Some(live) => merge_prime_inference_models(&base, Some(&live)),
             None => base,
+        };
+        match self.openrouter.as_ref().and_then(OpenRouterCatalog::get) {
+            Some(openrouter) => merge_openrouter_models(models, &openrouter),
+            None => models,
+        }
+    }
+
+    /// Awaited refresh of the live `OpenRouter` list (`force` for the forced
+    /// triggers). Callers run it only for users signed in to `OpenRouter`:
+    /// nobody else's client contacts openrouter.ai.
+    pub async fn refresh_openrouter(&self, force: bool) {
+        if let Some(openrouter) = &self.openrouter {
+            let refreshed = openrouter.refresh(force).await;
+            tracing::debug!(
+                refreshed = refreshed.map(|models| models.len()),
+                "openrouter list refresh settled"
+            );
         }
     }
 

@@ -1170,12 +1170,10 @@ fn append_goal_row(session: &mut SessionManager, state: &GoalState) {
         .unwrap();
 }
 
-/// TS `agent-session-goal.test.ts` "reloads the goal state from the
-/// branch after a summary context rebuild" (the monotonic arm): a
-/// stale same-goal snapshot never regresses the accounting, while a
-/// plain branch move stays faithful to the branch even when lower.
+/// A branch move stays faithful to the branch's last persisted goal
+/// entry, even when its accounting is lower than the in-memory state.
 #[test]
-fn same_timeline_reload_never_regresses_the_same_goal() {
+fn reload_follows_the_branch_even_when_lower() {
     let mut session = persisted_session();
     let mut driver = GoalDriver::new();
     driver.start(&mut session, "do work", None).unwrap();
@@ -1191,9 +1189,7 @@ fn same_timeline_reload_never_regresses_the_same_goal() {
     );
     assert!(driver.state().tokens_used >= 50);
 
-    // Simulate a stale persisted snapshot for the SAME goal: an older
-    // accounting entry re-persisted after the newer usage (queue/flush
-    // race, or child-usage attribution landing after the branch write).
+    // The branch's last persisted entry for the same goal is lower.
     append_goal_row(
         &mut session,
         &GoalState {
@@ -1204,64 +1200,14 @@ fn same_timeline_reload_never_regresses_the_same_goal() {
         },
     );
 
-    // A summary navigation (compaction) continues the same timeline:
-    // the same goal's accounting must not regress to the stale row.
-    driver.reload_from_branch(&session, GoalBranchReload::SameTimeline);
-    assert_eq!(driver.state().status, GoalStatus::Active);
-    assert_eq!(driver.state().goal_id, goal_id);
-    assert!(driver.state().tokens_used >= 50);
-
-    // Plain branch moves are time travel and stay faithful to the
-    // branch's last persisted entry, even when it is lower.
-    driver.reload_from_branch(&session, GoalBranchReload::FaithfulBranch);
+    driver.reload_from_branch(&session);
     assert_eq!(driver.state().goal_id, goal_id);
     assert_eq!(driver.state().tokens_used, 1);
 }
 
-/// TS `agent-session-goal.test.ts` "keeps a fired budget gate
-/// monotonic across summary context rebuilds": the gate that already
-/// fired survives the same-timeline reload and the counter never
-/// regresses.
+/// A different goal on the moved branch adopts faithfully.
 #[test]
-fn same_timeline_reload_keeps_a_fired_budget_gate() {
-    let mut session = persisted_session();
-    let mut driver = GoalDriver::new();
-    driver.start(&mut session, "do work", Some(100)).unwrap();
-    let goal_id = driver.state().goal_id.clone();
-
-    // Bill usage until the budget gate fires.
-    assert_eq!(
-        driver
-            .record_assistant_usage(&mut session, "a1", &usage(60, 50))
-            .unwrap(),
-        UsageOutcome::BudgetReached
-    );
-    assert_eq!(driver.state().status, GoalStatus::BudgetLimited);
-
-    // A stale branch snapshot for the same goal predates the gate.
-    append_goal_row(
-        &mut session,
-        &GoalState {
-            active: true,
-            status: GoalStatus::Active,
-            tokens_used: 10,
-            ..driver.state().clone()
-        },
-    );
-
-    // A summary rebuild continues the same timeline: the gate that
-    // already fired must survive, and the counter must not regress.
-    driver.reload_from_branch(&session, GoalBranchReload::SameTimeline);
-    assert_eq!(driver.state().status, GoalStatus::BudgetLimited);
-    assert_eq!(driver.state().goal_id, goal_id);
-    assert!(driver.state().tokens_used >= 110);
-}
-
-/// A different goal on the moved branch adopts faithfully even under
-/// the same-timeline rule (TS clamps only
-/// `reloaded.goalId === previous.goalId`).
-#[test]
-fn same_timeline_reload_adopts_a_different_goal_faithfully() {
+fn reload_adopts_a_different_goal_faithfully() {
     let mut session = persisted_session();
     let mut driver = GoalDriver::new();
     driver.start(&mut session, "first goal", None).unwrap();
@@ -1286,13 +1232,13 @@ fn same_timeline_reload_adopts_a_different_goal_faithfully() {
             ..empty_goal_state()
         },
     );
-    driver.reload_from_branch(&session, GoalBranchReload::SameTimeline);
+    driver.reload_from_branch(&session);
     assert_eq!(driver.state().goal_id.as_deref(), Some("other-goal"));
     assert_eq!(driver.state().objective.as_deref(), Some("second goal"));
     assert_eq!(driver.state().tokens_used, 3);
 
     // A newer persisted state adopts faithfully as well: the branch's
-    // own row wins on both arms when the ids differ.
+    // own row wins.
     append_goal_row(
         &mut session,
         &GoalState {
@@ -1306,7 +1252,7 @@ fn same_timeline_reload_adopts_a_different_goal_faithfully() {
             ..empty_goal_state()
         },
     );
-    driver.reload_from_branch(&session, GoalBranchReload::FaithfulBranch);
+    driver.reload_from_branch(&session);
     assert_eq!(driver.state().tokens_used, 500);
     assert_eq!(driver.state().continuations_used, 4);
     assert_eq!(driver.state().time_used_seconds, 9);
@@ -1332,7 +1278,7 @@ fn reload_skips_invalid_rows() {
             })),
         )
         .unwrap();
-    driver.reload_from_branch(&session, GoalBranchReload::FaithfulBranch);
+    driver.reload_from_branch(&session);
     assert_eq!(driver.state().status, GoalStatus::Active);
     assert!(driver.state().goal_id.is_some());
 
@@ -1347,7 +1293,7 @@ fn reload_skips_invalid_rows() {
             },
         ))
         .unwrap();
-    driver.reload_from_branch(&fresh, GoalBranchReload::FaithfulBranch);
+    driver.reload_from_branch(&fresh);
     assert_eq!(driver.state(), &empty_goal_state());
 }
 

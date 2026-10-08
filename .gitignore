@@ -16,3 +16,6 @@ test-compile-*.log
 /vscode/dist/
 /vscode/.vscode-test/
 *.vsix
+
+# Editor local-history snapshots
+/.history/

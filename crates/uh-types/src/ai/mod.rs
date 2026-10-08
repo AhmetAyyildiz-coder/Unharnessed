@@ -628,6 +628,11 @@ pub struct Tool {
     pub parameters: Value,
 }
 
+/// Opens the system-prompt line from which the prompt is per-session (the
+/// conversation log path). Providers that place cache breakpoints end the
+/// cached system block before it, so every session reuses the head.
+pub const SESSION_TAIL_PREFIX: &str = "Conversation log: ";
+
 /// Conversation context handed to a provider stream call.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -802,8 +807,15 @@ pub fn supports_service_tier_fields(
     // model, routes to matching tier endpoints where they exist, and bills
     // by the tier that actually served the request:
     // https://openrouter.ai/docs/guides/features/service-tiers
+    // Only OpenAI, Anthropic, Google and xAI models have priority endpoints
+    // there; elsewhere the fast mode would be a toggle that does nothing.
     if provider == "openrouter" && api == "openai-completions" {
-        return matches!(tier, ServiceTier::Flex | ServiceTier::Priority);
+        let vendor = model_id.trim_start_matches('~').split('/').next().unwrap_or("");
+        return match tier {
+            ServiceTier::Flex => true,
+            ServiceTier::Priority => matches!(vendor, "openai" | "anthropic" | "google" | "x-ai"),
+            _ => false,
+        };
     }
     let openai_responses = provider == "openai" && api == "openai-responses";
     let codex_responses = provider == "openai-codex" && api == "openai-codex-responses";

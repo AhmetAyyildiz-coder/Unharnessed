@@ -29,7 +29,7 @@ pub const CURRENT_SESSION_VERSION: u32 = 3;
 pub const ANTHROPIC_WARNING_SHOWN_CUSTOM_TYPE: &str = "anthropic_subscription_warning_shown";
 
 /// Entry types that can represent user intent (vs. daemon bookkeeping).
-pub const CONTENT_ENTRY_TYPES: [&str; 10] = [
+pub const CONTENT_ENTRY_TYPES: [&str; 9] = [
     "message",
     "custom_message",
     "custom",
@@ -39,7 +39,6 @@ pub const CONTENT_ENTRY_TYPES: [&str; 10] = [
     "session_info",
     "label",
     "compaction",
-    "branch_summary",
 ];
 
 /// ISO-8601 timestamp -> unix milliseconds (best effort, UTC assumed).
@@ -229,7 +228,6 @@ fn entry_base_mut(entry: &mut FileEntry) -> Option<&mut EntryBase> {
         | FileEntry::ServiceTierChange { base, .. }
         | FileEntry::ModelChange { base, .. }
         | FileEntry::Compaction { base, .. }
-        | FileEntry::BranchSummary { base, .. }
         | FileEntry::Custom { base, .. }
         | FileEntry::ChildUsageAttributed { base, .. }
         | FileEntry::Label { base, .. }
@@ -360,15 +358,6 @@ pub fn build_session_context(entries: &[FileEntry], leaf_id: Option<&str>) -> Se
         FileEntry::Message { message, .. } => target.push(message.clone()),
         FileEntry::CustomMessage { payload, .. } => {
             target.push(AgentMessage::Custom(create_custom_message(payload, entry)));
-        }
-        FileEntry::BranchSummary { payload, .. } if !payload.summary.is_empty() => {
-            target.push(AgentMessage::BranchSummary(
-                uh_types::session::BranchSummaryMessage {
-                    summary: payload.summary.clone(),
-                    from_id: payload.from_id.clone(),
-                    timestamp: timestamp_to_millis(entry.timestamp()),
-                },
-            ));
         }
         _ => {}
     };

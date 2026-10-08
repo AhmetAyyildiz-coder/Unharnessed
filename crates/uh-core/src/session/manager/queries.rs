@@ -32,6 +32,87 @@ impl SessionManager {
         &self.file_entries
     }
 
+    /// What the active branch has cost, in dollars: every reply (with the
+    /// child usage attributed to it) and every compaction and branch
+    /// summary loaded. A windowed load adds the replies older than its
+    /// window, from its stats.
+    #[must_use]
+    pub fn branch_cost(&self) -> f64 {
+        let older = self
+            .window
+            .as_ref()
+            .filter(|window| !window.full_history())
+            .map_or(0.0, |window| window.older_path_stats().cost);
+        let loaded: f64 = self
+            .active_branch_entries()
+            .into_iter()
+            .map(|entry| match entry {
+                FileEntry::Message {
+                    message: uh_types::session::AgentMessage::Assistant(assistant),
+                    ..
+                } => assistant.usage.cost.total.as_f64(),
+                FileEntry::Compaction { payload, .. } => {
+                    payload.usage.map_or(0.0, |usage| usage.cost.total.as_f64())
+                }
+                _ => 0.0,
+            })
+            .sum();
+        older + loaded
+    }
+
+    /// How the active branch's loaded replies reused the provider's
+    /// cache, as `(reusable, reused, saved)`. A reply's request extends the
+    /// one before it, so all of that earlier request (`input + cacheRead +
+    /// cacheWrite`) is reusable, and the reply's `cacheRead` is what it
+    /// reused: new content (a tool result) counts in neither, a pause past
+    /// the cache's lifetime shows as reusable tokens not reused. A model,
+    /// thinking-level or compaction change starts the chain over (the cache
+    /// cannot carry across it). `saved` is the dollars every cache read
+    /// saved, compaction summaries included, at each request's own recorded
+    /// prices (its input cost per input token, less what its cache reads
+    /// cost), so a model switch does not reprice the past.
+    #[must_use]
+    pub fn branch_cache(&self) -> (u64, u64, f64) {
+        let (mut reusable, mut reused, mut saved) = (0, 0, 0.0);
+        let mut previous: Option<u64> = None;
+        for entry in self.active_branch_entries() {
+            let (usage, reply) = match entry {
+                FileEntry::Message {
+                    message: uh_types::session::AgentMessage::Assistant(assistant),
+                    ..
+                } => (&assistant.usage, true),
+                FileEntry::Compaction { payload, .. } => {
+                    previous = None;
+                    match &payload.usage {
+                        Some(usage) => (usage, false),
+                        None => continue,
+                    }
+                }
+                FileEntry::ModelChange { .. } | FileEntry::ThinkingLevelChange { .. } => {
+                    previous = None;
+                    continue;
+                }
+                _ => continue,
+            };
+            if usage.input > 0 {
+                let full = usage.cost.input.as_f64() * usage.cache_read as f64 / usage.input as f64;
+                saved += (full - usage.cost.cache_read.as_f64()).max(0.0);
+            }
+            let sent = usage.input + usage.cache_read + usage.cache_write;
+            // A reply with no usage (an abort, a failure) leaves the chain as is.
+            if !reply || sent == 0 {
+                continue;
+            }
+            if let Some(previous) = previous {
+                let available = previous.min(sent);
+                reusable += available;
+                reused += usage.cache_read.min(available);
+            }
+            previous = Some(sent);
+        }
+        (reusable, reused, saved)
+    }
+
     pub fn has_thinking_level(&self) -> bool {
         self.window
             .as_ref()

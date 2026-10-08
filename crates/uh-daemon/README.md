@@ -22,7 +22,7 @@ its name so the ACP code stays where it was.
   and `session/update` notifications interleave in publication order, with
   namespaced `_meta` (`unharnessed`). The transport hosts the
   automatic compaction arms at its turn boundaries (`acp/compaction_arms.rs`:
-  overflow compact-and-retry, model-requested `compact.run`, threshold) and the
+  overflow compact-and-retry, threshold) and the
   goal/autonomous continuation loop (`acp/goal_continuation.rs`). A failed turn
   goes through the provider retry/failover chain first. When a background
   `bash()` finishes, a goal backoff passes or a quota resets while no prompt

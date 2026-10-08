@@ -100,16 +100,6 @@ pub struct CustomMessage {
     pub rest: JsonMap,
 }
 
-/// `role: "branchSummary"`: summary of a branch the conversation returned from.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BranchSummaryMessage {
-    pub summary: String,
-    pub from_id: String,
-    /// Unix timestamp in milliseconds.
-    pub timestamp: u64,
-}
-
 /// `role: "compactionSummary"`: compaction result presented as a user turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -145,7 +135,6 @@ pub enum AgentMessage {
     ToolResult(ToolResultMessage),
     BashExecution(BashExecutionMessage),
     Custom(CustomMessage),
-    BranchSummary(BranchSummaryMessage),
     CompactionSummary(CompactionSummaryMessage),
 }
 
@@ -213,20 +202,6 @@ pub struct CompactionEntry {
     /// verbatim like it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness_state_fingerprint: Option<String>,
-}
-
-/// `type: "branch_summary"`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BranchSummaryEntry {
-    pub from_id: String,
-    pub summary: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub details: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub from_hook: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub usage: Option<Usage>,
 }
 
 /// `type: "custom"`: opaque custom data with a `customType` tag.
@@ -378,12 +353,6 @@ pub enum FileEntry {
         #[serde(flatten)]
         base: EntryBase,
     },
-    BranchSummary {
-        #[serde(flatten)]
-        payload: BranchSummaryEntry,
-        #[serde(flatten)]
-        base: EntryBase,
-    },
     Custom {
         #[serde(flatten)]
         payload: CustomEntry,
@@ -478,12 +447,6 @@ enum KnownFileEntry {
         #[serde(flatten)]
         base: EntryBase,
     },
-    BranchSummary {
-        #[serde(flatten)]
-        payload: BranchSummaryEntry,
-        #[serde(flatten)]
-        base: EntryBase,
-    },
     Custom {
         #[serde(flatten)]
         payload: CustomEntry,
@@ -541,9 +504,6 @@ impl From<KnownFileEntry> for FileEntry {
             }
             KnownFileEntry::ModelChange { payload, base } => Self::ModelChange { payload, base },
             KnownFileEntry::Compaction { payload, base } => Self::Compaction { payload, base },
-            KnownFileEntry::BranchSummary { payload, base } => {
-                Self::BranchSummary { payload, base }
-            }
             KnownFileEntry::Custom { payload, base } => Self::Custom { payload, base },
             KnownFileEntry::ChildUsageAttributed { payload, base } => {
                 Self::ChildUsageAttributed { payload, base }
@@ -589,7 +549,6 @@ impl FileEntry {
             | FileEntry::ServiceTierChange { base, .. }
             | FileEntry::ModelChange { base, .. }
             | FileEntry::Compaction { base, .. }
-            | FileEntry::BranchSummary { base, .. }
             | FileEntry::Custom { base, .. }
             | FileEntry::ChildUsageAttributed { base, .. }
             | FileEntry::Label { base, .. }
@@ -614,7 +573,6 @@ impl FileEntry {
             | FileEntry::ServiceTierChange { base, .. }
             | FileEntry::ModelChange { base, .. }
             | FileEntry::Compaction { base, .. }
-            | FileEntry::BranchSummary { base, .. }
             | FileEntry::Custom { base, .. }
             | FileEntry::ChildUsageAttributed { base, .. }
             | FileEntry::Label { base, .. }
@@ -642,7 +600,6 @@ impl FileEntry {
             | FileEntry::ServiceTierChange { base, .. }
             | FileEntry::ModelChange { base, .. }
             | FileEntry::Compaction { base, .. }
-            | FileEntry::BranchSummary { base, .. }
             | FileEntry::Custom { base, .. }
             | FileEntry::ChildUsageAttributed { base, .. }
             | FileEntry::Label { base, .. }

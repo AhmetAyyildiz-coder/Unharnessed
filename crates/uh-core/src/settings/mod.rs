@@ -13,5 +13,6 @@ pub use storage::{
     FileSettingsStorage, InMemorySettingsStorage, SettingsScope, SettingsStorage, CONFIG_DIR_NAME,
 };
 pub use types::{
-    CompactionSettings, McpServerConfig, QueueModeSetting, Settings, ThinkingLevelSetting,
+    CompactionSettings, McpServerConfig, ModelInstructions, QueueModeSetting, Settings,
+    ThinkingLevelSetting,
 };

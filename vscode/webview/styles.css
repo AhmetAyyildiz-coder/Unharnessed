@@ -19,6 +19,13 @@
   font-display: block;
 }
 
+/* VS Code's default file icons (FileIcon.tsx). */
+@font-face {
+  font-family: "Seti";
+  src: url("../media/fonts/seti.woff") format("woff");
+  font-display: block;
+}
+
 /* On body, not :root: the derived tokens (muted, lines) then follow the
    theme classes VS Code puts on body. */
 body {
@@ -28,6 +35,11 @@ body {
   --uh-bg: #1a1a1b;
   --uh-raised: #222223;
   --uh-raised-2: #2a2a2c;
+  /* A code block's face: the page under a light veil of ink, solid (what
+     sits on it, the copy button, hides the code beneath). */
+  --uh-code: color-mix(in srgb, var(--uh-text) 2.25%, var(--uh-bg));
+  /* Its band on top, a step greyer: it stands out from the page. */
+  --uh-code-head: color-mix(in srgb, var(--uh-text) 7%, var(--uh-bg));
   --uh-ink-rgb: 236 236 238;
   --uh-text: #ececee;
   --uh-muted: rgb(var(--uh-ink-rgb) / 0.56);
@@ -79,6 +91,15 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) {
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+/* Everything scrolls without a bar. */
+* {
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
 }
 
 html,
@@ -254,7 +275,7 @@ button {
   overflow-y: auto;
 }
 
-/* The agent's state: a soft pill, its mark glowing while it runs. */
+/* The agent's state while it is not ready: a soft pill, its mark spinning while it starts. */
 .agent-line {
   display: inline-flex;
   align-self: flex-start;
@@ -273,17 +294,6 @@ button {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-}
-
-.agent-line.is-ready {
-  color: rgb(var(--uh-accent-rgb) / 0.9);
-  background: rgb(var(--uh-accent-rgb) / 0.1);
-}
-
-.agent-line.is-ready .agent-mark {
-  background: var(--uh-accent);
-  box-shadow: 0 0 10px rgb(var(--uh-accent-rgb) / 0.7);
-  animation: uh-breathe 2.4s var(--uh-soft) infinite;
 }
 
 .agent-line.is-starting .agent-mark {
@@ -310,12 +320,6 @@ button {
 @keyframes uh-spin {
   to {
     transform: rotate(360deg);
-  }
-}
-
-@keyframes uh-breathe {
-  50% {
-    box-shadow: 0 0 4px rgb(var(--uh-accent-rgb) / 0.35);
   }
 }
 
@@ -422,6 +426,11 @@ button {
   border-radius: 13px;
 }
 
+/* A row that is a button spans the row, and so does its hover. */
+.row > .row-body {
+  width: 100%;
+}
+
 .row-body.is-button {
   cursor: pointer;
   transition: background-color 220ms var(--uh-soft);
@@ -473,6 +482,13 @@ button {
   margin-right: 4px;
 }
 
+/* A row's own action at its end: the Marketplace's Add. */
+.row-line > .row-add {
+  flex: none;
+  align-self: center;
+  margin-right: 7px;
+}
+
 .row-status {
   color: rgb(var(--uh-accent-rgb) / 0.9);
 }
@@ -494,6 +510,72 @@ button {
   gap: 10px;
   padding: 12px 10px 12px;
   animation: uh-rise 300ms var(--uh-soft);
+}
+
+/* A local server's models (Local.tsx): a line each, switched on or off. */
+.local-models {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.local-model {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 6px 4px 11px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 11px;
+  transition: background-color 220ms var(--uh-soft);
+}
+
+.local-model:hover:not(:disabled) {
+  background: var(--uh-tint);
+}
+
+.local-model:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.local-model:focus-visible {
+  outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
+  outline-offset: -2px;
+}
+
+.local-model-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font: 12px var(--uh-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-model-specs {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--uh-faint);
+}
+
+.local-model-image,
+.local-model-image svg {
+  display: block;
+  width: 13px;
+  height: 13px;
 }
 
 /* A provider's mark in a soft round badge; a connected one carries the cyan dot. */
@@ -837,7 +919,22 @@ button {
   position: relative;
 }
 
+/* The pills under the mentions: drawn behind the text, which stays the
+   box's own, wrapped and scrolled as it is. */
+.composer-mirror {
+  position: absolute;
+  inset: 0;
+  padding: 12px 15px 4px;
+  overflow: hidden;
+  color: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+
 .composer-input {
+  position: relative;
+  z-index: 1;
   display: block;
   width: 100%;
   min-height: 62px;
@@ -849,8 +946,23 @@ button {
   background: transparent;
   border: 0;
   outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
   caret-color: var(--uh-accent);
   field-sizing: content;
+}
+
+/* A mention of a file or folder: a light cyan pill, in the box and in the
+   message sent. Its padding takes no room, so the text keeps its place; a
+   space wide, it covers the first of the two spaces a picked file gets. */
+.mention {
+  margin: 0 -0.2em;
+  padding: 1px 0.2em;
+  color: inherit;
+  background: rgb(var(--uh-accent-rgb) / 0.16);
+  border-radius: 999px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 
@@ -905,6 +1017,11 @@ button {
   position: relative;
   display: flex;
   min-width: 0;
+}
+
+/* Short of room, the model's name is cut, never the reasoning effort. */
+.picker.effort-picker {
+  flex: none;
 }
 
 /* A picker's face: a soft pill, brighter when hovered or open. */
@@ -1059,6 +1176,521 @@ button {
   fill: currentColor;
 }
 
+/* Goal mode: while the conversation has a goal (`data-goal` on the shell),
+   its line tops the box and a pill stands in for stop: the time it has
+   taken, then the stop square, which pauses it; paused, the square turns
+   into the cyan play. The light keeps circling the box while it runs. */
+.composer-shell {
+  /* The light that runs through the time on a start or a play. */
+  --uh-flash: #ffffff;
+}
+
+body.vscode-light .composer-shell,
+body.vscode-high-contrast-light .composer-shell {
+  --uh-flash: var(--uh-text);
+}
+
+/* The light, driven frame by frame while there is a goal (Goal.tsx). */
+.composer-glow.is-driven {
+  transition: none;
+  animation: none;
+}
+
+/* The goal's line opens like a drawer. */
+.goal-head-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 520ms var(--uh-soft);
+}
+
+.composer-shell[data-goal] .goal-head-wrap {
+  grid-template-rows: 1fr;
+}
+
+.goal-head-wrap > div {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Once open, the drawer lets its cross's tip out above it; it clips again
+   as soon as it closes. */
+.composer-shell[data-goal] .goal-head-wrap > div {
+  overflow: visible;
+  transition: overflow 0s 520ms allow-discrete;
+}
+
+.goal-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px 6px 0 15px;
+  font-size: 12px;
+  color: var(--uh-muted);
+}
+
+/* The cross that ends the goal, at the end of its line. */
+.goal-end {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+}
+
+.goal-mark {
+  display: grid;
+  flex: none;
+  color: var(--uh-accent);
+  transition: color 420ms var(--uh-soft);
+}
+
+/* One mark per state, crossing over: the flag (under way), a grey pause
+   sign, a check (reached). */
+.goal-mark > * {
+  grid-area: 1 / 1;
+  transition:
+    opacity 200ms var(--uh-soft),
+    scale 520ms var(--uh-spring);
+}
+
+.mark-pause,
+.mark-done,
+.composer-shell:is([data-goal="paused"], [data-goal="done"], [data-goal="failed"]) .mark-run {
+  opacity: 0;
+  scale: 0.4;
+}
+
+.composer-shell:is([data-goal="paused"], [data-goal="failed"]) .mark-pause,
+.composer-shell[data-goal="done"] .mark-done {
+  opacity: 1;
+  scale: 1;
+}
+
+.composer-shell:is([data-goal="paused"], [data-goal="failed"]) .goal-mark {
+  color: var(--uh-muted);
+}
+
+.mark-run,
+.mark-pause {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+
+.mark-run svg {
+  overflow: visible;
+}
+
+.mark-pause {
+  grid-auto-flow: column;
+  gap: 4px;
+  justify-content: center;
+}
+
+.mark-pause i {
+  width: 2px;
+  height: 10px;
+  background: currentColor;
+  border-radius: 1px;
+}
+
+.mark-run .cloth {
+  fill: currentColor;
+  fill-opacity: 0.2;
+}
+
+/* A start or a play: the flag goes up its pole. */
+.mark-run.is-arriving .hoist {
+  animation: uh-hoist 820ms var(--uh-spring) both;
+}
+
+@keyframes uh-hoist {
+  from {
+    translate: 0 8px;
+  }
+}
+
+.goal-state {
+  flex: none;
+  font-weight: 500;
+  color: var(--uh-text);
+}
+
+.goal-objective {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 30px;
+  background: var(--uh-tint);
+  border-radius: 999px;
+}
+
+/* The time slides out of the disc when the goal comes. */
+.goal-time-wrap {
+  display: grid;
+  grid-template-columns: 1fr;
+  animation: uh-grow 620ms var(--uh-spring) both;
+}
+
+@keyframes uh-grow {
+  from {
+    grid-template-columns: 0fr;
+    opacity: 0;
+  }
+}
+
+.goal-time-wrap > span {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.goal-time {
+  display: inline-flex;
+  padding: 0 8px 0 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--uh-text);
+  white-space: nowrap;
+  transition: color 520ms var(--uh-soft);
+}
+
+/* One slot per character: the pill never jitters as seconds pass. */
+.goal-time > span {
+  display: inline-block;
+  width: 0.6em;
+  text-align: center;
+}
+
+.goal-time > span.sep {
+  width: 0.3em;
+}
+
+/* Paused or over: the time stands still, greyed. */
+.composer-shell:not([data-goal="running"]) .goal-time {
+  color: var(--uh-muted);
+}
+
+.composer-shell[data-goal="done"] .goal-time {
+  padding-right: 6px;
+}
+
+.composer-shell[data-goal="failed"] .goal-time {
+  padding-right: 12px;
+}
+
+/* A start or a play: a light runs through the digits, grey, white, cyan,
+   then settles. Flat colours, no glow. */
+.goal-time.is-lit > span {
+  animation: uh-light-up 780ms var(--uh-soft) both;
+  animation-delay: calc(var(--i) * 55ms);
+}
+
+@keyframes uh-light-up {
+  0% {
+    color: var(--uh-faint);
+  }
+  30% {
+    color: var(--uh-flash);
+  }
+  58% {
+    color: var(--uh-accent);
+  }
+  100% {
+    color: var(--uh-text);
+  }
+}
+
+/* Pause is the stop square; paused, it turns into the cyan play disc. */
+.goal-toggle {
+  color: var(--uh-text);
+  background: var(--uh-tint-strong);
+  box-shadow: none;
+}
+
+.goal-toggle:hover {
+  background: rgb(var(--uh-ink-rgb) / 0.16);
+}
+
+.composer-shell[data-goal="paused"] .goal-toggle {
+  color: var(--uh-on-accent);
+  background: var(--uh-accent);
+  box-shadow: 0 8px 18px -8px rgb(var(--uh-accent-rgb) / 0.7);
+}
+
+.composer-shell[data-goal="paused"] .goal-toggle:hover {
+  box-shadow: 0 8px 22px -6px rgb(var(--uh-accent-rgb) / 0.9);
+}
+
+.goal-toggle .i-pause,
+.goal-toggle .i-play {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition:
+    transform 480ms var(--uh-spring),
+    opacity 180ms var(--uh-soft);
+}
+
+.goal-toggle .i-play {
+  opacity: 0;
+  transform: scale(0.3) rotate(-60deg);
+}
+
+.composer-shell[data-goal="paused"] .goal-toggle .i-pause {
+  opacity: 0;
+  transform: scale(0.3) rotate(60deg);
+}
+
+.composer-shell[data-goal="paused"] .goal-toggle .i-play {
+  opacity: 1;
+  transform: none;
+}
+
+/* Reached: a check beside the time it took, until the next message. */
+.goal-check {
+  flex: none;
+  margin-right: 11px;
+  color: var(--uh-accent);
+}
+
+/* The context gauge beside send: a ring that fills as the conversation
+   takes up the window. Grey while there is room; dotted until a reply
+   measures it; an orbit of cyan while a compaction runs, and cyan when one
+   comes. */
+.usage {
+  position: relative;
+  display: flex;
+  flex: none;
+}
+
+.usage-ring {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: rgb(var(--uh-ink-rgb) / 0.6);
+  cursor: default;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  transition:
+    color 420ms var(--uh-soft),
+    background-color 220ms var(--uh-soft);
+  animation: uh-fade-in 500ms var(--uh-soft);
+}
+
+.usage-ring:hover:not(:disabled),
+.usage-ring[aria-expanded="true"] {
+  color: var(--uh-text);
+  background: var(--uh-tint);
+}
+
+.usage-ring:focus-visible {
+  outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
+  outline-offset: 2px;
+}
+
+.ring {
+  overflow: visible;
+  transition: filter 600ms var(--uh-soft);
+}
+
+.ring-track,
+.ring-fill,
+.ring-orbit {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.ring-track {
+  stroke: var(--uh-tint-strong);
+  stroke-linecap: round;
+  transition: stroke 420ms var(--uh-soft);
+}
+
+/* The fill springs to each new measure, and drains back after a compaction. */
+.ring-fill {
+  stroke: currentColor;
+  stroke-linecap: round;
+  transition:
+    stroke-dashoffset 1100ms cubic-bezier(0.34, 1.32, 0.64, 1),
+    opacity 320ms var(--uh-soft);
+}
+
+.ring-fill.is-empty {
+  opacity: 0;
+}
+
+.ring-orbit {
+  stroke: var(--uh-accent);
+  stroke-linecap: round;
+  opacity: 0;
+  transform-origin: 10px 10px;
+  transition: opacity 320ms var(--uh-soft);
+}
+
+.usage-ring.is-near {
+  color: var(--uh-accent);
+}
+
+.usage-ring.is-near .ring {
+  filter: drop-shadow(0 0 3px rgb(var(--uh-accent-rgb) / 0.45));
+}
+
+/* Nothing measured yet: twelve soft dots where the ring will be. */
+.usage-ring.is-unmeasured .ring-track {
+  stroke: rgb(var(--uh-ink-rgb) / 0.26);
+  stroke-dasharray: 0 3.796;
+}
+
+.usage-ring.is-unmeasured .ring-fill,
+.usage-ring.is-compacting .ring-fill {
+  opacity: 0;
+}
+
+.usage-ring.is-compacting .ring-track {
+  stroke: rgb(var(--uh-accent-rgb) / 0.2);
+}
+
+.usage-ring.is-compacting .ring-orbit {
+  opacity: 1;
+  animation: uh-spin 1.15s linear infinite;
+}
+
+.usage-ring.is-compacting .ring {
+  animation: uh-breathe 2.2s ease-in-out infinite;
+}
+
+@keyframes uh-breathe {
+  50% {
+    filter: drop-shadow(0 0 5px rgb(var(--uh-accent-rgb) / 0.7));
+  }
+}
+
+/* A compaction landed: a ripple of cyan leaves the ring. */
+.ring-ripple {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1.5px var(--uh-accent);
+  animation: uh-ripple 800ms var(--uh-soft) forwards;
+}
+
+@keyframes uh-ripple {
+  from {
+    opacity: 0.95;
+    scale: 0.6;
+  }
+  to {
+    opacity: 0;
+    scale: 1.55;
+  }
+}
+
+/* The card: the context and its share, its bar, its tokens, then the cache; one
+   size of text throughout. */
+.usage-card {
+  position: absolute;
+  right: -35px;
+  bottom: calc(100% + 12px);
+  z-index: 10;
+  width: 220px;
+  padding: 14px 14px 12px;
+  cursor: default;
+  background: var(--uh-raised-2);
+  border-radius: 18px;
+  box-shadow:
+    0 0 0 1px var(--uh-line),
+    0 22px 46px -18px var(--uh-shadow),
+    inset 0 1px 0 var(--uh-highlight);
+  transform-origin: calc(100% - 50px) 100%;
+  animation: uh-pop 420ms var(--uh-spring);
+}
+
+.usage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.usage-title,
+.usage-figure {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--uh-text);
+}
+
+.usage-figure {
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-bar {
+  position: relative;
+  height: 8px;
+  margin: 10px 2px 0;
+  overflow: hidden;
+  background: var(--uh-tint-strong);
+  border-radius: 999px;
+}
+
+/* The bar fills like the ring: grey, cyan when a compaction comes. */
+.usage-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgb(var(--uh-ink-rgb) / 0.6);
+  border-radius: 999px;
+  transition:
+    width 1100ms cubic-bezier(0.34, 1.32, 0.64, 1),
+    background-color 420ms var(--uh-soft);
+}
+
+.usage-bar.is-near .usage-bar-fill {
+  background: var(--uh-accent);
+}
+
+.usage-tokens {
+  margin: 12px 0 0;
+  padding: 9px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  color: var(--uh-text);
+  background: var(--uh-tint);
+  border-radius: 12px;
+}
+
+/* Under the tokens, the same pill: the share of each earlier request the
+   next one reused from the provider's cache, and what the cache saved. */
+.usage-cache {
+  display: flex;
+  justify-content: space-between;
+  margin: 6px 0 0;
+  padding: 9px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  color: var(--uh-text);
+  background: var(--uh-tint);
+  border-radius: 12px;
+}
+
 /* A file dragged over the box: it lights up to take it. */
 .composer-shell.is-dragging .composer {
   background: var(--uh-raised-2);
@@ -1073,6 +1705,32 @@ button {
   font-size: 11.5px;
   line-height: 1.45;
   color: var(--uh-muted);
+}
+
+/* An earlier message being changed: a line on top of the box, the way out
+   on its right. */
+.composer-editing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 0 15px;
+  font-size: 11.5px;
+  color: var(--uh-muted);
+}
+
+.composer-editing > svg {
+  flex: none;
+  color: rgb(var(--uh-accent-rgb) / 0.9);
+}
+
+.composer-editing > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.composer-editing .icon-button {
+  width: 24px;
+  height: 24px;
 }
 
 /* The images a message carries: soft tiles, removed from their corner. */
@@ -1196,49 +1854,305 @@ button {
   height: 13px;
 }
 
-/* The `/` menu: commands, prompts and skills, each with what it does. */
-.slash-list {
-  padding: 2px 5px 5px;
+/* The `/` and `@` menus (PickMenu.tsx): a row per entry, its icon, its name,
+   then what is said of it, in a column across the rows. Under the
+   highlighted one, a pill slides on a spring from row to row; as it lands,
+   its icon lights up, white then cyan, and settles. */
+.pick-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 5px;
+  overflow-y: auto;
 }
 
-.slash-list .menu-list {
+.pick-list {
+  display: grid;
+  grid-template-columns: 22px fit-content(55%) minmax(0, 1fr);
+  column-gap: 14px;
+  margin: 0;
   padding: 0;
+  list-style: none;
+}
+
+.pick-scroll .menu-title {
+  grid-column: 1 / -1;
+  padding: 10px 12px 4px;
+}
+
+.pick-scroll .menu-title:first-child {
+  padding-top: 5px;
+}
+
+.pick-cursor {
+  position: absolute;
+  top: 0;
+  right: 5px;
+  left: 5px;
+  pointer-events: none;
+  background: var(--uh-tint);
+  border-radius: 12px;
+  transition:
+    translate 420ms var(--uh-spring),
+    height 420ms var(--uh-spring);
+}
+
+.pick-cursor.is-placed {
+  transition: none;
+}
+
+.pick-row {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  color: var(--uh-text);
+  cursor: pointer;
+  border-radius: 12px;
+}
+
+/* The icon at the start of its column: 20px to the name. */
+.pick-icon {
+  display: grid;
+  place-items: center start;
+  transform-origin: 8px 50%;
+  color: var(--uh-faint);
+  transition: color 180ms var(--uh-soft);
+}
+
+.pick-icon svg {
   overflow: visible;
 }
 
-.slash-list .menu-title {
-  padding: 9px 10px 3px;
+/* Its own color, so the light that lands on the row leaves it be. VS Code
+   draws the glyph at 150% of the text. */
+.seti {
+  font: 150%/1 "Seti";
+  color: var(--seti-dark);
+  -webkit-font-smoothing: antialiased;
 }
 
-.slash-row {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
+body.vscode-light .seti,
+body.vscode-high-contrast-light .seti {
+  color: var(--seti-light);
 }
 
-.slash-name {
-  font-size: 12.5px;
-  font-weight: 500;
+.pick-icon .pick-goal {
+  color: var(--uh-accent);
 }
 
-.slash-hint {
-  margin-left: 7px;
-  font: 11.5px var(--uh-mono);
+.pick-icon .cloth {
+  fill: currentColor;
+  fill-opacity: 0.2;
+}
+
+.pick-row.is-active .pick-icon {
+  color: var(--uh-text);
+  animation: uh-pick-light 900ms var(--uh-soft) both;
+}
+
+@keyframes uh-pick-light {
+  0% {
+    scale: 0.85;
+    color: var(--uh-flash, #fff);
+  }
+  25% {
+    scale: 1.15;
+    color: var(--uh-flash, #fff);
+    filter: drop-shadow(0 0 4px rgb(var(--uh-accent-rgb) / 0.8));
+  }
+  50% {
+    scale: 1;
+    color: var(--uh-accent);
+    filter: drop-shadow(0 0 3px rgb(var(--uh-accent-rgb) / 0.5));
+  }
+  100% {
+    color: var(--uh-text);
+    filter: drop-shadow(0 0 3px rgb(var(--uh-accent-rgb) / 0));
+  }
+}
+
+.pick-name,
+.pick-about {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The `/` menu: no third column, the name and what is written for it get
+   the row. */
+.slash-menu .pick-list {
+  grid-template-columns: 22px minmax(0, 1fr);
+}
+
+.pick-hint {
+  margin-left: 6px;
   color: var(--uh-faint);
 }
 
-.slash-description {
-  max-width: 100%;
-  overflow: hidden;
-  font-size: 11.5px;
+.pick-written {
+  color: var(--uh-text);
+}
+
+.pick-about {
+  font-size: 12px;
+  color: var(--uh-faint);
+}
+
+.pick-row.is-active .pick-about {
   color: var(--uh-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+/* The band at the bottom, a step lighter: what the highlighted `/` entry does. */
+.pick-detail {
+  flex: none;
+  padding: 10px 17px 12px;
+  background: color-mix(in srgb, var(--uh-text) 3.5%, var(--uh-raised-2));
+}
+
+/* Room for two lines: the band keeps its height from entry to entry. */
+.slash-menu .pick-detail {
+  min-height: 57px;
+}
+
+.pick-explain {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--uh-muted);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .menu > .menu-empty {
   margin: 0;
   padding: 12px 14px;
+}
+
+/* The history: a menu dropping from the top bar's clock, a conversation a
+   row, its time at the end. With the row's hover the time gives way to a
+   bin; a press on it asks once more, in place. */
+.topbar {
+  position: relative;
+}
+
+.topbar .icon-button.is-open {
+  color: var(--uh-text);
+  background: var(--uh-tint-strong);
+}
+
+.menu.history-menu {
+  top: calc(100% - 4px);
+  right: 10px;
+  bottom: auto;
+  left: auto;
+  width: min(300px, calc(100% - 20px));
+  max-height: min(400px, 70vh);
+  transform-origin: 88% 0;
+  animation: uh-drop 420ms var(--uh-spring);
+}
+
+@keyframes uh-drop {
+  from {
+    opacity: 0;
+    scale: 0.96;
+    translate: 0 -6px;
+  }
+}
+
+.history-row {
+  position: relative;
+}
+
+.history-row .menu-row {
+  padding-right: 12px;
+}
+
+/* Room for "Delete", wider than the time it takes the place of. */
+.history-row:has(.history-delete.is-confirm) .menu-row {
+  padding-right: 68px;
+}
+
+.history-when {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--uh-faint);
+  font-variant-numeric: tabular-nums;
+  transition: opacity 160ms var(--uh-soft);
+}
+
+.menu-row-name.is-untitled {
+  color: var(--uh-muted);
+}
+
+.history-delete {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--uh-muted);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  opacity: 0;
+  translate: 0 -50%;
+  transition:
+    opacity 160ms var(--uh-soft),
+    color 180ms var(--uh-soft),
+    background-color 180ms var(--uh-soft);
+}
+
+.history-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
+.history-row:hover .history-delete,
+.history-delete:focus-visible,
+.history-delete.is-confirm {
+  opacity: 1;
+}
+
+.history-row:hover .history-when,
+.history-row:has(.history-delete.is-confirm) .history-when {
+  opacity: 0;
+}
+
+.history-delete:hover {
+  color: var(--uh-danger);
+  background: rgb(var(--uh-danger-rgb) / 0.12);
+}
+
+.history-delete.is-confirm {
+  width: auto;
+  height: 22px;
+  padding: 0 9px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--uh-danger);
+  background: rgb(var(--uh-danger-rgb) / 0.14);
+}
+
+.history-delete:focus-visible {
+  outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
+  outline-offset: 1px;
+}
+
+.menu-empty.is-error {
+  color: var(--uh-danger);
 }
 
 /* Chat: the conversation on home. The user's messages sit right in soft
@@ -1313,6 +2227,33 @@ button {
     inset 0 1px 0 var(--uh-highlight);
 }
 
+/* `/goal` in a message: the goal's flag, going up its pole as the message
+   comes in, then flying. */
+.goal-word {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  margin-right: 1px;
+  font-weight: 500;
+  color: var(--uh-accent);
+  vertical-align: -2px;
+}
+
+.goal-word svg {
+  width: 14px;
+  height: 14px;
+  overflow: visible;
+}
+
+.goal-word .cloth {
+  fill: currentColor;
+  fill-opacity: 0.2;
+}
+
+.goal-word .hoist {
+  animation: uh-hoist 820ms var(--uh-spring) both;
+}
+
 .user-images {
   display: flex;
   flex-wrap: wrap;
@@ -1326,6 +2267,24 @@ button {
   object-fit: cover;
   border-radius: 14px;
   box-shadow: 0 0 0 1px var(--uh-line);
+}
+
+/* A sent prompt, clicked: it goes back to the message box, to be changed
+   and sent again. */
+.user-message.is-editable {
+  cursor: pointer;
+}
+
+.user-message.is-editable:focus-visible {
+  outline: none;
+}
+
+/* What sending the edited prompt drops fades: its answer, the turns after. */
+.turn.is-dimmed-all,
+.turn.is-dimmed-answer > :not(.user-message),
+.restart-line.is-dimmed {
+  opacity: 0.35;
+  transition: opacity 320ms var(--uh-soft);
 }
 
 /* A turn the agent started: a live dot, then why. */
@@ -1420,7 +2379,7 @@ button {
   height: 14px;
 }
 
-/* A command's answer, a compaction, a goal's change. */
+/* A command's answer, a goal's change. */
 .notice {
   display: flex;
   align-items: baseline;
@@ -1449,6 +2408,188 @@ button {
 
 .notice.is-error {
   color: var(--uh-danger);
+}
+
+/* Where the conversation was compacted: what is above it now lives as a
+   summary. A pill like the restart line; while it runs, its words shine as
+   "Working" does and a small ring orbits, the gauge's own. Once done, a
+   grey line on each side across the conversation; as it lands, its letters
+   light up one after another and the lines grow out of it. It opens on the
+   summary. */
+.compaction {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  align-items: center;
+  animation: uh-rise 420ms var(--uh-soft);
+}
+
+.compaction-row {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.compaction-pill {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px 12px 6px 10px;
+  font-size: 12px;
+  color: var(--uh-muted);
+  cursor: pointer;
+  background: var(--uh-tint);
+  border: 0;
+  border-radius: 999px;
+  transition:
+    color 220ms var(--uh-soft),
+    background-color 220ms var(--uh-soft);
+}
+
+.compaction-pill > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.compaction-pill:hover:not(.is-still) {
+  color: var(--uh-text);
+  background: var(--uh-tint-strong);
+}
+
+.compaction.is-running .compaction-pill,
+.compaction-pill.is-still {
+  cursor: default;
+}
+
+.compaction-label {
+  font-weight: 500;
+  color: var(--uh-text);
+  white-space: pre;
+}
+
+.compaction.is-landing .compaction-label .letter {
+  animation: uh-letter-pass 900ms var(--uh-soft) both;
+  animation-delay: calc(var(--i) * 34ms);
+}
+
+.compaction-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.compaction-pill > .compaction-chevron {
+  width: 13px;
+  height: 13px;
+  margin-left: -2px;
+  transition: rotate 320ms var(--uh-soft);
+}
+
+.compaction.is-open .compaction-chevron {
+  rotate: 90deg;
+}
+
+.mini-orbit {
+  overflow: visible;
+}
+
+.mini-orbit circle {
+  fill: none;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
+
+.mini-orbit .track {
+  stroke: rgb(var(--uh-accent-rgb) / 0.22);
+}
+
+.mini-orbit .arc {
+  stroke: var(--uh-accent);
+  transform-origin: 7px 7px;
+  animation: uh-spin 1.15s linear infinite;
+}
+
+.seam {
+  position: relative;
+  flex: 1;
+  height: 9px;
+}
+
+.seam::before {
+  position: absolute;
+  top: 4px;
+  right: 0;
+  left: 0;
+  height: 1px;
+  content: "";
+  background: var(--uh-line-strong);
+  border-radius: 1px;
+}
+
+.seam.is-left::before {
+  transform-origin: 100% 50%;
+}
+
+.seam.is-right::before {
+  transform-origin: 0 50%;
+}
+
+.compaction.is-landing .seam::before {
+  animation: uh-seam-grow 700ms var(--uh-soft) both;
+}
+
+@keyframes uh-seam-grow {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+.compaction-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  align-self: stretch;
+  transition: grid-template-rows 420ms var(--uh-soft);
+}
+
+.compaction.is-open .compaction-fold {
+  grid-template-rows: 1fr;
+}
+
+.compaction-fold > div {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.compaction-summary {
+  max-height: 260px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  overflow-y: auto;
+  font-size: 12.5px;
+  color: var(--uh-muted);
+  background: var(--uh-tint);
+  border-radius: 14px;
+}
+
+.compaction-summary .md h2 {
+  margin: 12px 0 4px;
+  font-size: 12.5px;
+  color: var(--uh-text);
+}
+
+.compaction-summary .md h2:first-child {
+  margin-top: 0;
+}
+
+.compaction-summary .md ul {
+  margin-bottom: 4px;
 }
 
 /* Folds: the reasoning and the cells, shut until asked. */
@@ -1636,11 +2777,6 @@ button {
 
 .thought-view.is-scroll {
   overflow-y: auto;
-  scrollbar-width: none;
-}
-
-.thought-view.is-scroll::-webkit-scrollbar {
-  display: none;
 }
 
 .thought-stream {
@@ -1767,10 +2903,11 @@ button {
    left to right, and words it crosses fast come in one after the other,
    one soft gradient over the last few: never a jump. --uh-p runs 0 to 1
    over the word's whole time (--wave-span plus --fade); --u is the time
-   since the front reached the word's left edge, and the word is drawn
-   through a gradient (its colour, then nothing) whose stops sit where the
-   points have been reached --fade ms and 0 ms ago. A word is on the page
-   as soon as it arrives: the fade only plays over it. */
+   since the front reached the word's left edge, and the word is masked by
+   a gradient (shown, then hidden) whose stops sit where the points have
+   been reached --fade ms and 0 ms ago. A mask, not a text fill, so emoji
+   keep their colours. A word is on the page as soon as it arrives: the
+   fade only plays over it. */
 @property --uh-p {
   syntax: "<number>";
   inherits: false;
@@ -1791,14 +2928,11 @@ button {
   --span: var(--wave-span, 120);
   --time: calc(var(--span) + var(--fade));
   --u: calc(var(--uh-p) * var(--time));
-  -webkit-text-fill-color: transparent;
-  background: linear-gradient(
+  mask-image: linear-gradient(
     90deg,
-    currentcolor calc((var(--u) - var(--fade)) / var(--span) * 100%),
+    #000 calc((var(--u) - var(--fade)) / var(--span) * 100%),
     transparent calc(var(--u) / var(--span) * 100%)
   );
-  -webkit-background-clip: text;
-  background-clip: text;
   animation: uh-word calc(var(--time) * 1ms) linear var(--wave-at, 0ms) backwards;
 }
 
@@ -1932,14 +3066,31 @@ button {
   max-width: 100%;
 }
 
-/* A fenced block: a soft card, its language above, copy on hover. */
+/* A fenced block: a flat veil on the page, no edge or shadow (the message
+   box is the one that floats). A greyer band on top holds its language
+   (when the model gave one) and copy. */
 .md-code {
-  position: relative;
-  background: var(--uh-raised);
+  background: var(--uh-code);
   border-radius: 12px;
-  box-shadow:
-    0 0 0 1px var(--uh-line),
-    inset 0 1px 0 var(--uh-highlight);
+}
+
+.md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 32px;
+  padding: 0 4px 0 13px;
+  background: var(--uh-code-head);
+  border-radius: 12px 12px 0 0;
+}
+
+.md-code-language {
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--uh-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .md-code pre {
@@ -1956,29 +3107,14 @@ button {
   border-radius: 0;
 }
 
-.md-code-language {
-  display: block;
-  padding: 8px 13px 0;
-  font-size: 11px;
-  color: var(--uh-faint);
-}
-
-.md-code-copy {
-  position: absolute;
-  top: 4px;
-  right: 4px;
+.md-code-copy.icon-button {
+  flex: none;
   width: 26px;
   height: 26px;
-  opacity: 0;
-  transition:
-    opacity 180ms var(--uh-soft),
-    color 220ms var(--uh-soft),
-    background-color 220ms var(--uh-soft);
 }
 
-.md-code:hover .md-code-copy,
-.md-code-copy:focus-visible {
-  opacity: 1;
+.md-code-copy.icon-button:hover {
+  background: color-mix(in srgb, var(--uh-text) 9%, var(--uh-code-head));
 }
 
 .md-code-copy svg {
@@ -2014,6 +3150,20 @@ button {
   font-size: 11px;
 }
 
+/* A brand's avatar (logos.tsx): the plain disc's mark size, scaled by how
+   much larger or smaller than most the brand draws its mark (--uh-mark). */
+.badge.is-brand .logo,
+.badge.is-brand .logo svg {
+  width: calc(14px * var(--uh-mark));
+  height: calc(14px * var(--uh-mark));
+}
+
+.model-badge.is-brand .logo,
+.model-badge.is-brand .logo svg {
+  width: calc(13px * var(--uh-mark));
+  height: calc(13px * var(--uh-mark));
+}
+
 /* Menus open upward, over home, with a little spring. */
 @keyframes uh-pop {
   from {
@@ -2043,11 +3193,244 @@ button {
   animation: uh-pop 420ms var(--uh-spring);
 }
 
-.menu.is-compact {
+/* The reasoning effort: a slider over its chip (Effort.tsx). It lets its
+   light spill, so it does not clip; the JS moves it left, inside the
+   composer. */
+.menu.effort-menu {
   right: auto;
   bottom: calc(100% + 12px);
   left: 0;
-  width: 180px;
+  width: 240px;
+  padding: 0 14px 14px;
+  overflow: visible;
+  user-select: none;
+}
+
+.effort-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0 11px;
+}
+
+.effort-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--uh-faint);
+}
+
+.effort-value {
+  position: relative;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--uh-text);
+  white-space: nowrap;
+}
+
+.effort-value > span,
+.effort-letter {
+  display: inline-block;
+}
+
+.effort-value > .is-out {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+/* The track: a pill one step lighter than the menu, a notch per level. */
+.effort-slide {
+  position: relative;
+}
+
+.effort-track {
+  position: relative;
+  height: 26px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--uh-tint);
+  border-radius: 999px;
+  outline: none;
+  touch-action: none;
+  transition: background-color 200ms var(--uh-soft);
+}
+
+.effort-track:hover,
+.effort-track.is-dragging {
+  background: var(--uh-tint-strong);
+}
+
+.effort-track.is-dragging {
+  cursor: grabbing;
+}
+
+.effort-notches {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--track-width);
+}
+
+.effort-notch {
+  position: absolute;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  background: rgb(var(--uh-ink-rgb) / 0.26);
+  border-radius: 50%;
+  transition: scale 280ms var(--uh-spring);
+}
+
+.effort-notch.is-hover {
+  scale: 1.75;
+}
+
+/* The fill: solid cyan up to the chosen notch, its round end the handle.
+   The notches under it are the same dots, cut by it, in a darker cyan. */
+.effort-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  background: var(--uh-accent);
+  border-radius: 999px;
+}
+
+.effort-fill .effort-notch {
+  background: color-mix(in srgb, var(--uh-accent), var(--uh-on-accent) 30%);
+}
+
+/* The ball on the fill's round end, over the chosen notch; it swells while
+   held. Placed with `translate` (JS) so the `scale` stays on its centre. */
+.effort-thumb {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  pointer-events: none;
+  background: #f5f8fa;
+  border-radius: 50%;
+  box-shadow:
+    0 1px 4px rgb(0 0 0 / 0.3),
+    inset 0 -2px 3px rgb(0 0 0 / 0.08);
+  transition: scale 280ms var(--uh-spring);
+}
+
+.effort-track.is-dragging .effort-thumb {
+  scale: 1.12;
+}
+
+/* The comet, while dragging: a halo spilling past the track, a glow
+   around the ball and a tail of light behind it, stretched by the speed
+   (opacities and places set by the JS). */
+.effort-halo {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  pointer-events: none;
+  background: var(--uh-accent);
+  border-radius: 50%;
+  filter: blur(14px);
+  opacity: 0;
+}
+
+.effort-glow {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+  pointer-events: none;
+  background: #ffffff;
+  border-radius: 50%;
+  filter: blur(5px);
+  opacity: 0;
+}
+
+.effort-tail {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100px;
+  height: 6px;
+  margin-top: -3px;
+  pointer-events: none;
+  background: linear-gradient(to right, rgb(255 255 255 / 0), rgb(255 255 255 / 0.8));
+  border-radius: 3px;
+  filter: blur(1.5px);
+  opacity: 0;
+  transform-origin: 100% 50%;
+}
+
+/* The charge on reaching the top level: a light running along the fill. */
+.effort-surge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 70px;
+  pointer-events: none;
+  background: linear-gradient(to right, rgb(255 255 255 / 0), rgb(255 255 255 / 0.85));
+  opacity: 0;
+}
+
+/* The level's name streams in letter by letter, as the box's placeholder
+   does (uh-stream), and a light runs through it, a little longer each step
+   up (--duration, set by the JS). The lowest has none and rests dim; the
+   top level waits for the charge, then settles in cyan. */
+.effort-value .is-bottom {
+  color: var(--uh-muted);
+}
+
+.effort-value .is-top {
+  color: var(--uh-accent);
+}
+
+.effort-value .is-arriving .effort-letter {
+  animation: uh-stream 420ms var(--uh-soft) both;
+  animation-delay: calc(var(--i) * 28ms);
+}
+
+@keyframes uh-letter-pass {
+  0% {
+    color: var(--uh-faint);
+  }
+  35% {
+    color: #ffffff;
+  }
+}
+
+.effort-value .is-mid.is-arriving .effort-letter {
+  animation:
+    uh-stream 420ms var(--uh-soft) both,
+    uh-letter-pass var(--duration) var(--uh-soft) both;
+  animation-delay: calc(var(--i) * 28ms);
+}
+
+@keyframes uh-letter-ignite {
+  0% {
+    color: var(--uh-faint);
+  }
+  30% {
+    color: #ffffff;
+  }
+}
+
+.effort-value .is-top.is-arriving .effort-letter {
+  animation:
+    uh-stream 420ms var(--uh-soft) both,
+    uh-letter-ignite 800ms var(--uh-soft) both;
+  animation-delay: calc(150ms + var(--i) * 28ms);
 }
 
 .menu-title {
@@ -2428,8 +3811,9 @@ button {
   padding: 4px 0 2px;
 }
 
-/* A restart waits: a faint cyan card at the top. */
-.notice {
+/* A restart waits: a faint cyan card at the top. Not `.notice`, the
+   chat's lines with a dot. */
+.restart-notice {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2439,12 +3823,13 @@ button {
   animation: uh-rise 300ms var(--uh-soft);
 }
 
-.notice .note {
+.restart-notice .note {
   color: var(--uh-text);
 }
 
-/* The settings' tabs: pills in a soft track, a light sliding under the
-   current one on a spring. Three tabs: the light is a third wide. */
+/* The settings' tabs: pills in a soft track, each as wide as its label
+   plus an equal share of the rest; a light slides under the current one on
+   a spring and takes its width (Settings.tsx measures it). */
 .tabs {
   position: relative;
   display: flex;
@@ -2462,18 +3847,20 @@ button {
   position: absolute;
   top: 3px;
   bottom: 3px;
-  left: 3px;
-  width: calc((100% - 6px) / 3);
+  left: 0;
   background: var(--uh-tint-strong);
   border-radius: 999px;
-  transition: translate 460ms var(--uh-spring);
+  transition:
+    translate 460ms var(--uh-spring),
+    width 460ms var(--uh-spring);
 }
 
 .tab {
   position: relative;
-  flex: 1;
+  flex: 1 1 auto;
   height: 28px;
-  padding: 0;
+  padding: 0 8px;
+  white-space: nowrap;
   font: inherit;
   font-size: 12.5px;
   font-weight: 500;
@@ -2493,6 +3880,232 @@ button {
 .tab:focus-visible {
   outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
   outline-offset: -1px;
+}
+
+/* An instructions group (SettingsInstructions.tsx): its models, a mark
+   and a name each, then the start of its text. */
+.group-body {
+  align-items: flex-start;
+  padding-top: 10px;
+  padding-bottom: 11px;
+}
+
+.group-body .row-end {
+  margin-top: 4px;
+}
+
+.group-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.group-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--uh-text);
+}
+
+.group-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The models' field: the checked ones as pills with a cross, a chevron;
+   a press on the field opens their list. */
+.picker-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: auto;
+  min-height: 38px;
+  padding: 5px 38px 5px 5px;
+  cursor: pointer;
+}
+
+.picker-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.picker-placeholder {
+  padding-left: 8px;
+  font-size: 12px;
+  color: var(--uh-faint);
+}
+
+.picker-toggle {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--uh-faint);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  translate: 0 -50%;
+  transition: color 200ms var(--uh-soft);
+}
+
+.picker-field:hover .picker-toggle {
+  color: var(--uh-text);
+}
+
+.picker-toggle:focus-visible {
+  outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
+  outline-offset: -2px;
+}
+
+.picker-toggle svg {
+  width: 16px;
+  height: 16px;
+  transition: rotate 380ms var(--uh-spring);
+}
+
+.picker-field.is-open .picker-toggle svg {
+  rotate: 180deg;
+}
+
+/* A checked model: a pill whose press unchecks it, its cross waking on hover. */
+.model-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 7px 0 9px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--uh-text);
+  cursor: pointer;
+  background: var(--uh-tint);
+  border: 0;
+  border-radius: 999px;
+  transition: background-color 200ms var(--uh-soft);
+}
+
+.model-pill:hover {
+  background: var(--uh-tint-strong);
+}
+
+.model-pill:focus-visible {
+  outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
+  outline-offset: -1px;
+}
+
+.model-pill-cross {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--uh-faint);
+  transition: color 200ms var(--uh-soft);
+}
+
+.model-pill:hover .model-pill-cross {
+  color: var(--uh-text);
+}
+
+/* The text stands a little apart from the models, a soft bar on its left. */
+.group-text {
+  position: relative;
+  display: -webkit-box;
+  margin-top: 11px;
+  padding-left: 12px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--uh-muted);
+  white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.group-text::before {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  width: 2px;
+  content: "";
+  background: var(--uh-line-strong);
+  border-radius: 999px;
+}
+
+/* The models to check, in a soft well under their field. */
+.group-pick {
+  max-height: 300px;
+  margin: 0;
+  padding: 0 4px 2px;
+  background: var(--uh-tint);
+  border-radius: 14px;
+}
+
+.group-pick .menu-search {
+  padding: 6px 2px 3px;
+}
+
+.group-pick .menu-search svg {
+  top: 15px;
+  left: 13px;
+}
+
+/* A model to check among several: a soft ring, filled cyan once checked. */
+.model-tick {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 4px;
+  color: var(--uh-on-accent);
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1.5px var(--uh-line-strong);
+  transition:
+    background-color 220ms var(--uh-soft),
+    box-shadow 220ms var(--uh-soft);
+}
+
+.model-tick svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0;
+  scale: 0.5;
+  transition:
+    opacity 160ms var(--uh-soft),
+    scale 380ms var(--uh-spring);
+}
+
+.model-tick.is-on {
+  background: var(--uh-accent);
+  box-shadow: 0 0 10px rgb(var(--uh-accent-rgb) / 0.35);
+}
+
+.model-tick.is-on svg {
+  opacity: 1;
+  scale: 1;
+}
+
+/* A text of several lines: it grows downward by hand. */
+.input.is-area {
+  height: auto;
+  min-height: 96px;
+  padding: 9px 13px;
+  line-height: 1.5;
+  resize: vertical;
 }
 
 /* Forms in a row (an MCP server, a new skill): a small label over each field. */
@@ -2748,6 +4361,21 @@ button {
 /* An open picker shows its menu, not its tip. */
 [data-tip][aria-expanded="true"]::after {
   display: none;
+}
+
+/* Beside the control, on its left (a code block's copy button: the tip
+   stays inside the block). */
+[data-tip-side="left"]::after {
+  top: 50%;
+  right: calc(100% + 7px);
+  bottom: auto;
+  left: auto;
+  translate: 3px -50%;
+}
+
+[data-tip-side="left"]:hover::after,
+[data-tip-side="left"]:focus-visible::after {
+  translate: 0 -50%;
 }
 
 /* The press: the pressed control's dust (powder.ts). */

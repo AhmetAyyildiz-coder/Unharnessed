@@ -9,8 +9,6 @@ use uh_types::session::AgentMessage;
 
 pub const COMPACTION_SUMMARY_PREFIX: &str = "[compaction-summary]\n\nThe conversation history before this point was compacted into the following summary.\nThe retained messages below are authoritative; this summary may lag behind them.\n\n<summary>\n";
 pub const COMPACTION_SUMMARY_SUFFIX: &str = "\n</summary>";
-pub const BRANCH_SUMMARY_PREFIX: &str = "[branch-summary]\n\nThe following is a summary of a branch that this conversation came back from:\n\n<summary>\n";
-pub const BRANCH_SUMMARY_SUFFIX: &str = "\n</summary>";
 
 pub use uh_types::slash_commands::{
     SESSION_SLASH_COMMAND_CUSTOM_TYPE, SESSION_SLASH_COMMAND_RESULT_CUSTOM_TYPE,
@@ -37,16 +35,13 @@ pub const ASYNC_BASH_COMPLETION_CUSTOM_TYPE: &str = "async_bash_completion";
 pub const ASYNC_BASH_COMPLETION_PREVIEW_LABEL: &str = "Background command finished";
 
 /// Why an unsuccessful compaction ran (TS `CompactionOutcomeReason`): the
-/// automatic threshold trigger, the overflow recovery, or the model's
-/// `compact.run` request consumed at a turn boundary.
+/// automatic threshold trigger or the overflow recovery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompactionOutcomeReason {
     /// The context crossed the auto-compaction threshold.
     Threshold,
     /// A context-overflow recovery attempt.
     Overflow,
-    /// The model requested the compaction (`compact.run`).
-    Requested,
 }
 
 impl CompactionOutcomeReason {
@@ -57,7 +52,6 @@ impl CompactionOutcomeReason {
         match self {
             Self::Threshold => "threshold",
             Self::Overflow => "overflow",
-            Self::Requested => "requested",
         }
     }
 }
@@ -314,14 +308,6 @@ pub fn convert_to_llm(messages: &[AgentMessage]) -> Vec<AgentMessage> {
                     rest: serde_json::Map::default(),
                 })
             }
-            AgentMessage::BranchSummary(summary) => AgentMessage::User(UserMessage {
-                content: UserContent::Blocks(vec![text_block(format!(
-                    "{BRANCH_SUMMARY_PREFIX}{}{BRANCH_SUMMARY_SUFFIX}",
-                    summary.summary
-                ))]),
-                timestamp: summary.timestamp,
-                rest: serde_json::Map::default(),
-            }),
             AgentMessage::CompactionSummary(summary) => AgentMessage::User(UserMessage {
                 content: UserContent::Blocks(vec![text_block(format!(
                     "{COMPACTION_SUMMARY_PREFIX}{}{COMPACTION_SUMMARY_SUFFIX}",
@@ -372,8 +358,7 @@ pub fn loop_convert_to_llm(
 }
 
 /// One loop custom row as its session wire shape, when the row matches a
-/// known session role (`custom`, `bashExecution`, `branchSummary`,
-/// `compactionSummary`). Unknown shapes read as unconvertible (TS drops
+/// known session role (`custom`, `bashExecution`, `compactionSummary`). Unknown shapes read as unconvertible (TS drops
 /// them via the exhaustive-switch default).
 fn custom_message_to_session(custom: &uh_agent::types::CustomAgentMessage) -> Option<AgentMessage> {
     let wire = serde_json::to_value(custom).ok()?;
@@ -482,11 +467,6 @@ mod tests {
                 timestamp: 0,
                 rest: serde_json::Map::default(),
             }),
-            AgentMessage::BranchSummary(uh_types::session::BranchSummaryMessage {
-                summary: "the branch".to_string(),
-                from_id: "x".to_string(),
-                timestamp: 0,
-            }),
             AgentMessage::CompactionSummary(uh_types::session::CompactionSummaryMessage {
                 summary: "the story".to_string(),
                 tokens_before: 1,
@@ -499,20 +479,14 @@ mod tests {
         ];
         let converted = convert_to_llm(&messages);
         // Bookkeeping custom dropped; other custom becomes user.
-        assert_eq!(converted.len(), 4);
+        assert_eq!(converted.len(), 3);
         assert!(matches!(converted[0], AgentMessage::User(_)));
         let note = match &converted[1] {
             AgentMessage::User(user) => user.content.text(),
             _ => panic!("expected user"),
         };
         assert_eq!(note, "a note");
-        let branch = match &converted[2] {
-            AgentMessage::User(user) => user.content.text(),
-            _ => panic!("expected user"),
-        };
-        assert!(branch.contains("[branch-summary]"));
-        assert!(branch.contains("the branch"));
-        let compaction = match &converted[3] {
+        let compaction = match &converted[2] {
             AgentMessage::User(user) => user.content.text(),
             _ => panic!("expected user"),
         };

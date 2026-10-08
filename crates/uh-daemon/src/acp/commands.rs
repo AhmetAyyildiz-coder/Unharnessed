@@ -2,7 +2,7 @@
 //! ACP `available_commands_update` once the session is admitted: the
 //! session commands (`/compact`, `/goal`, `/autonomous`), the prompt
 //! templates, and the skills as `/skill:<name>` while `enableSkillCommands`
-//! is on. Prompt admission expands a skill first, then a template, then
+//! is on, each with where it comes from (`builtin`, `user`, ...). Prompt admission expands a skill first, then a template, then
 //! runs a session command (`prompt_with_images`), so a template named like
 //! a command is what that name runs: it is listed once, as the template.
 
@@ -50,12 +50,14 @@ pub fn available_commands(engine: &SessionEngine) -> Vec<AvailableCommand> {
     };
     skills.sort_by(|a, b| a.name.cmp(&b.name));
     let skills = skills.into_iter().map(|skill| {
-        entry(
+        let mut command = entry(
             &format!("skill:{}", skill.name),
             &skill.description,
             None,
             "skill",
-        )
+        );
+        command.meta[UNHARNESSED_META_NAMESPACE]["source"] = json!(super::skills::source(skill));
+        command
     });
     commands.chain(prompts).chain(skills).collect()
 }

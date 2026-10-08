@@ -21,7 +21,7 @@ pub use uh_types::ai::{
     TextSignaturePhase, TextSignatureV1, ThinkingBudgets, ThinkingContent, ThinkingFormat,
     ThinkingLevel, ThinkingLevelMap, Tool, ToolCall, ToolResultMessage, Transport, Usage,
     UsageCost, UserContent as UserMessageContent, UserContentBlock as UserOrToolContent,
-    UserMessage,
+    UserMessage, SESSION_TAIL_PREFIX,
 };
 
 /// JSON tool parameter schema. In the TS reference this is a `TypeBox` schema;

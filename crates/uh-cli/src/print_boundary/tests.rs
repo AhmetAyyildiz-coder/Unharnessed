@@ -125,27 +125,6 @@ async fn admit(
     boundary.run_at_settled_turn(engine, model, None).await
 }
 
-/// The mid-turn-request shape: a `compact.run` scheduled DURING a turn
-/// is consumed at that same turn's settled boundary (TS `compact.run`
-/// refuses to schedule on an idle session, so a pending request never
-/// survives to a pre-turn check in the product flow). No `run_pre_turn`
-/// precedes the prompt — the schedule happened after the turn's
-/// admission, mid-turn.
-async fn admit_turn_with_scheduled_request(
-    boundary: &mut TurnBoundary,
-    engine: &SessionEngine,
-    model: &Model,
-    prompt: String,
-) -> Result<(), String> {
-    engine
-        .session
-        .prompt(&prompt, uh_core::session_engine::PromptOptions::default())
-        .await
-        .expect("the prompt admits");
-    engine.session.agent().wait_for_idle().await;
-    boundary.run_at_settled_turn(engine, model, None).await
-}
-
 /// The durable `compaction_outcome` rows, in order.
 async fn outcome_rows(engine: &SessionEngine) -> Vec<uh_types::session::CustomMessageEntry> {
     engine
@@ -578,135 +557,6 @@ fn capture_sink() -> (EventSink, std::sync::Arc<std::sync::Mutex<Vec<Value>>>) {
     (sink, events)
 }
 
-/// The requested compaction (TS `_runAutoCompaction("requested")`): the
-/// `compaction_start` event carries the consumed request's
-/// instructions, and the successful run ends with the client-facing
-/// result and `willRetry: false` (only the overflow arm re-issues).
-#[tokio::test]
-async fn requested_compaction_streams_the_ts_event_pair() {
-    let _faux = FAUX_TEST_LOCK.lock().await;
-    let (engine, _dir, model) = faux_engine_with_settings(
-        json!({
-            "responses": [
-                {"text": "seed reply"},
-                {"text": "second reply"},
-                {"text": "the summary"},
-            ]
-        }),
-        compactable_settings(),
-        None,
-    )
-    .await;
-    let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
-    admit(
-        &mut boundary,
-        &engine,
-        &model,
-        format!("seed turn {}", "x".repeat(48_000)),
-    )
-    .await
-    .unwrap();
-    events.lock().unwrap().clear();
-    // A mid-turn request consumed at that turn's settled boundary: the
-    // events pair with the `requested` reason (the requested arm
-    // consumes the check, so the threshold never re-evaluates).
-    engine
-        .turn_boundary
-        .schedule_compaction(Some("focus on the goal".to_string()))
-        .await;
-    admit_turn_with_scheduled_request(
-        &mut boundary,
-        &engine,
-        &model,
-        format!("second turn {}", "x".repeat(2_000)),
-    )
-    .await
-    .unwrap();
-    let events = events.lock().unwrap().clone();
-    let start_at = events
-        .iter()
-        .position(|event| event["type"] == "compaction_start")
-        .expect("the compaction_start event");
-    assert_eq!(
-        events[start_at],
-        json!({
-            "type": "compaction_start",
-            "reason": "requested",
-            "customInstructions": "focus on the goal",
-        })
-    );
-    let end_at = events
-        .iter()
-        .position(|event| event["type"] == "compaction_end")
-        .expect("the compaction_end event");
-    assert!(start_at < end_at);
-    assert_eq!(events[end_at]["reason"], "requested");
-    assert_eq!(events[end_at]["result"]["summary"], "the summary");
-    assert_eq!(events[end_at]["aborted"], false);
-    assert_eq!(events[end_at]["willRetry"], false);
-    assert_eq!(events[end_at]["customInstructions"], "focus on the goal");
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| event["type"] == "compaction_start")
-            .count(),
-        1,
-        "exactly one compaction pair"
-    );
-    assert_eq!(compaction_count(&engine).await, 1, "the compaction ran");
-}
-
-/// A skipped requested compaction surfaces the durable outcome row (its
-/// `message_start`/`message_end` pair) before the `compaction_end`
-/// warning, exactly like the TS `_endCompactionUnsuccessfully` order.
-#[tokio::test]
-async fn requested_compaction_skip_streams_the_warning_row_and_end_event() {
-    let _faux = FAUX_TEST_LOCK.lock().await;
-    // `keepRecentTokens` beyond the whole session: the compaction has
-    // no history to summarize.
-    let (engine, _dir, model) = faux_engine_with_settings(
-        json!({ "responses": [{"text": "seed reply"}] }),
-        json!({
-            "compaction": {
-                "enabled": true, "reserveTokens": 1, "keepRecentTokens": 100_000
-            }
-        }),
-        None,
-    )
-    .await;
-    let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
-    engine.turn_boundary.schedule_compaction(None).await;
-    admit_turn_with_scheduled_request(&mut boundary, &engine, &model, "seed turn".to_string())
-        .await
-        .unwrap();
-    let events = events.lock().unwrap().clone();
-    let row_at = events
-        .iter()
-        .position(|event| {
-            event["type"] == "message_start"
-                && event["message"]["customType"] == "compaction_outcome"
-        })
-        .expect("the outcome row's message pair");
-    assert_eq!(
-        events[row_at]["message"]["details"],
-        json!({ "reason": "requested", "outcome": "skipped" })
-    );
-    let end_at = events
-        .iter()
-        .position(|event| event["type"] == "compaction_end")
-        .expect("the compaction_end event");
-    assert!(row_at < end_at, "the row pair precedes the end event");
-    assert_eq!(events[end_at]["reason"], "requested");
-    assert_eq!(events[end_at]["willRetry"], false);
-    assert_eq!(
-        events[end_at]["errorMessage"],
-        "Requested compaction skipped: Session is too short to compact — try again once it grows"
-    );
-    assert_eq!(events[end_at]["errorSeverity"], "warning");
-}
-
 /// The threshold arm (TS `_checkCompaction` Case 3): a settled turn whose
 /// usage crosses the reserve headroom emits the `threshold` event pair —
 /// the start without instructions, the end with the client-facing
@@ -804,108 +654,6 @@ async fn threshold_compaction_streams_the_ts_event_pair() {
         "the threshold arm carries no request instructions"
     );
     assert_eq!(compaction_count(&engine).await, 1, "the compaction ran");
-}
-
-/// The pre-turn requested arm (TS `_runPreTurnCompaction` ->
-/// `_checkCompaction`'s pending-request branch): a request left pending
-/// before an admitted prompt consumes at the pre-turn check — the
-/// `requested` event pair with the request's instructions — so the
-/// prompt runs on the compacted context, and no second compaction
-/// fires at its settled boundary.
-#[tokio::test]
-async fn pre_turn_check_consumes_a_pending_request_before_the_prompt() {
-    let _faux = FAUX_TEST_LOCK.lock().await;
-    let (engine, _dir, model) = faux_engine_with_settings(
-        json!({
-            "responses": [
-                {"text": "seed reply"},
-                {"text": "second reply"},
-                {"text": "the summary"},
-                {"text": "next reply"},
-            ]
-        }),
-        compactable_settings(),
-        None,
-    )
-    .await;
-    let (sink, events) = capture_sink();
-    let mut boundary = TurnBoundary::with_sink(true, sink);
-    // A large seed turn, so the pre-turn compaction has pre-cut history
-    // to summarize (the `keepRecentTokens` cut keeps ~10 tokens).
-    admit(
-        &mut boundary,
-        &engine,
-        &model,
-        format!("seed turn {}", "x".repeat(48_000)),
-    )
-    .await
-    .unwrap();
-    // The second turn absorbs the keep-recent budget on its own, so
-    // the cut leaves the seed turn as summarizable history.
-    admit(
-        &mut boundary,
-        &engine,
-        &model,
-        format!("second turn {}", "x".repeat(2_000)),
-    )
-    .await
-    .unwrap();
-    // A pending request (e.g. a previous run's schedule that its turn
-    // never serviced) consumes at the next prompt's pre-turn check.
-    engine
-        .turn_boundary
-        .schedule_compaction(Some("focus on the goal".to_string()))
-        .await;
-    events.lock().unwrap().clear();
-    boundary.run_pre_turn(&engine, &model, None).await.unwrap();
-    let captured = events.lock().unwrap().clone();
-    assert_eq!(
-        captured[0],
-        json!({
-            "type": "compaction_start",
-            "reason": "requested",
-            "customInstructions": "focus on the goal",
-        })
-    );
-    assert_eq!(captured[1]["type"], "compaction_end");
-    assert_eq!(captured[1]["reason"], "requested");
-    assert_eq!(captured[1]["result"]["summary"], "the summary");
-    assert_eq!(captured[1]["willRetry"], false);
-    assert_eq!(
-        captured
-            .iter()
-            .filter(|event| event["type"] == "compaction_start")
-            .count(),
-        1,
-        "exactly one compaction pair"
-    );
-    assert_eq!(compaction_count(&engine).await, 1);
-    // The admitted prompt runs on the compacted context; its settled
-    // boundary finds nothing pending and no threshold crossing.
-    admit(&mut boundary, &engine, &model, "next prompt".to_string())
-        .await
-        .unwrap();
-    let events = events.lock().unwrap().clone();
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| event["type"] == "compaction_start")
-            .count(),
-        1,
-        "no second compaction"
-    );
-    assert_eq!(compaction_count(&engine).await, 1);
-    assert_eq!(user_texts(&engine).await.len(), 3);
-    let last = last_assistant(&engine).await.expect("a settled turn");
-    let text = last
-        .content
-        .iter()
-        .filter_map(|block| match block {
-            uh_types::ai::AssistantContentBlock::Text(text) => Some(text.text.clone()),
-            _ => None,
-        })
-        .collect::<String>();
-    assert_eq!(text, "next reply");
 }
 
 /// The pre-turn threshold arm (TS `_runPreTurnCompaction` Case 3): a
@@ -1007,13 +755,11 @@ async fn pre_turn_threshold_arm_compacts_a_resumed_session_before_the_prompt() {
 }
 
 /// The pre-turn abort arm (TS `_checkCompaction`'s aborted branch with
-/// `skipAbortedCheck=false`): an aborted trailing turn drops any
-/// pending model-requested compaction — the turn that
-/// would service it never ran — and the check continues without
-/// firing (no compaction entries, no outcome rows); the next prompt
-/// proceeds normally.
+/// `skipAbortedCheck=false`): after an aborted trailing turn the check
+/// continues without firing (no compaction entries, no outcome rows);
+/// the next prompt proceeds normally.
 #[tokio::test]
-async fn pre_turn_abort_arm_drops_pending_requests_and_continues() {
+async fn pre_turn_abort_arm_continues() {
     let _faux = FAUX_TEST_LOCK.lock().await;
     let (engine, _dir, model) = faux_engine_with_settings(
         json!({
@@ -1037,15 +783,8 @@ async fn pre_turn_abort_arm_drops_pending_requests_and_continues() {
         .unwrap();
     let last = last_assistant(&engine).await.expect("a settled turn");
     assert_eq!(last.stop_reason, uh_types::ai::StopReason::Aborted);
-    // A request pending against the aborted turn: the pre-turn check
-    // drops it.
-    engine
-        .turn_boundary
-        .schedule_compaction(Some("stale request".to_string()))
-        .await;
     events.lock().unwrap().clear();
     boundary.run_pre_turn(&engine, &model, None).await.unwrap();
-    assert!(!engine.turn_boundary.compaction_scheduled().await);
     assert!(events.lock().unwrap().is_empty(), "no compaction events");
     assert_eq!(compaction_count(&engine).await, 0);
     assert!(outcome_rows(&engine).await.is_empty());

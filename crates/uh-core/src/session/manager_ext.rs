@@ -220,54 +220,6 @@ impl SessionManager {
     pub fn reset_leaf(&mut self) {
         self.set_leaf_id(None);
     }
-
-    /// Branch with a summary message describing what the abandoned branch held.
-    ///
-    /// # Errors
-    ///
-    /// Returns the underlying I/O error when the durable append of the
-    /// summary row fails; the leaf is restored to its previous position.
-    ///
-    /// # Panics
-    ///
-    /// Asserts that the given branch target entry exists.
-    pub fn branch_with_summary(
-        &mut self,
-        branch_from_id: Option<&str>,
-        summary: &str,
-        details: Option<serde_json::Value>,
-        from_hook: Option<bool>,
-        usage: Option<uh_types::ai::Usage>,
-    ) -> std::io::Result<String> {
-        let previous_leaf = self.get_leaf_id().map(str::to_string);
-        if let Some(branch_from_id) = branch_from_id {
-            assert!(
-                self.get_entry_by_id(branch_from_id).is_some(),
-                "Entry {branch_from_id} not found"
-            );
-            self.set_leaf_id(Some(branch_from_id));
-        } else {
-            self.set_leaf_id(None);
-        }
-        let base = self.next_base();
-        let id = base.id.clone().unwrap_or_default();
-        let appended = self.append_entry(FileEntry::BranchSummary {
-            payload: uh_types::session::BranchSummaryEntry {
-                from_id: branch_from_id.map_or_else(|| "root".to_string(), str::to_string),
-                summary: summary.to_string(),
-                details,
-                from_hook,
-                usage,
-            },
-            base,
-        });
-        if let Err(error) = appended {
-            // The move must not outlive the failed append.
-            self.set_leaf_id(previous_leaf.as_deref());
-            return Err(error);
-        }
-        Ok(id)
-    }
 }
 
 fn normalize_state(status: SessionStateStatus) -> SessionStateStatus {
@@ -286,7 +238,6 @@ fn entry_type(entry: &FileEntry) -> &'static str {
         FileEntry::ServiceTierChange { .. } => "service_tier_change",
         FileEntry::ModelChange { .. } => "model_change",
         FileEntry::Compaction { .. } => "compaction",
-        FileEntry::BranchSummary { .. } => "branch_summary",
         FileEntry::Custom { .. } => "custom",
         FileEntry::ChildUsageAttributed { .. } => "child_usage_attributed",
         FileEntry::CustomMessage { .. } => "custom_message",
@@ -334,7 +285,7 @@ mod tests {
     }
 
     #[test]
-    fn branch_and_summary() {
+    fn branch_keeps_the_abandoned_entries() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("sessions");
         let mut manager = SessionManager::persisted(tmp.path(), &dir);
@@ -345,10 +296,9 @@ mod tests {
         manager.branch(&a);
         assert_eq!(manager.get_branch(None).len(), 1);
         // Append after branching creates a sibling of b.
-        let summary_id = manager
-            .branch_with_summary(Some(&a), "went back", None, None, None)
-            .unwrap();
-        assert!(manager.get_entry_by_id(&summary_id).is_some());
+        let c = manager.append_message(user("again")).unwrap();
+        assert_eq!(manager.get_branch(None).len(), 2);
+        assert!(manager.get_entry_by_id(&c).is_some());
         // b still exists (sibling branch).
         assert!(manager.get_entry_by_id(&b).is_some());
     }

@@ -89,9 +89,9 @@ async fn record_appends_row_to_entries_and_live_context_but_not_llm_input() {
     let session = scripted_session_over(SessionManager::in_memory(tmp.path())).await;
     let row = session
         .record_compaction_outcome(
-            CompactionOutcomeReason::Requested,
+            CompactionOutcomeReason::Overflow,
             CompactionOutcomeKind::Failed,
-            "Requested compaction failed: Summarization failed",
+            "Context overflow recovery failed: Summarization failed",
         )
         .await
         .unwrap();
@@ -111,11 +111,11 @@ async fn record_appends_row_to_entries_and_live_context_but_not_llm_input() {
     assert_eq!(outcome_entries.len(), 1, "one durable outcome row");
     assert_eq!(
         outcome_entries[0].content.text(),
-        "Requested compaction failed: Summarization failed"
+        "Context overflow recovery failed: Summarization failed"
     );
     assert_eq!(
         outcome_entries[0].details,
-        Some(serde_json::json!({ "reason": "requested", "outcome": "failed" }))
+        Some(serde_json::json!({ "reason": "overflow", "outcome": "failed" }))
     );
     assert!(outcome_entries[0].display);
     // The live loop context owns the disclosure (TS

@@ -1,21 +1,23 @@
-import type { AgentState, ChatState, Provider, SessionState } from "../src/protocol";
+import { useEffect, useState } from "react";
+import type { AgentState, ChatState, HistoryState, Provider, SessionState } from "../src/protocol";
 import { Transcript } from "./Chat";
 import { Composer, type Draft, type ImageSettings } from "./Composer";
-import { IconCross, IconNewChat, IconPlug, IconRestart, IconSliders } from "./icons";
+import { HistoryMenu } from "./History";
+import { IconCross, IconHistory, IconNewChat, IconPlug, IconRestart, IconSliders } from "./icons";
 import { post } from "./vscode";
 import { Wordmark } from "./Wordmark";
 
 type Failed = Extract<AgentState, { kind: "failed" }>;
 
-const LABELS: Record<AgentState["kind"], string> = {
+/** Said only while the agent is not there to talk to: a running agent goes without saying. */
+const LABELS: Record<Exclude<AgentState["kind"], "ready">, string> = {
   starting: "Starting agent",
-  ready: "Agent running",
   failed: "Agent stopped",
 };
 
 const restart = () => post({ type: "restartAgent" });
 
-/** Home: the conversation, the agent's state while it has none, and the message box. */
+/** Home: the conversation, the agent's state while it is not ready, and the message box. */
 export function Status({
   agent,
   session,
@@ -24,8 +26,11 @@ export function Status({
   images,
   draft,
   onDraft,
+  editing,
+  onEditEnd,
   onProviders,
   onSettings,
+  history,
 }: {
   agent: AgentState;
   session: SessionState | null;
@@ -34,10 +39,21 @@ export function Status({
   images: ImageSettings;
   draft: Draft;
   onDraft: (update: (draft: Draft) => Draft) => void;
+  /** The turn whose prompt is being changed in the message box. */
+  editing: number | null;
+  onEditEnd: () => void;
   onProviders: () => void;
   onSettings: () => void;
+  history: HistoryState;
 }) {
-  const empty = chat.entries.length === 0;
+  const [browsing, setBrowsing] = useState(false);
+  // The agent lists the conversations: the menu closes when it stops.
+  useEffect(() => {
+    if (agent.kind !== "ready") setBrowsing(false);
+  }, [agent.kind]);
+  // A saved conversation coming back: the agent restarts on it, then replays it.
+  const kind = agent.kind === "failed" ? "failed" : chat.loading || agent.kind === "starting" ? "starting" : null;
+  const label = kind === "starting" && chat.loading ? "Opening the conversation" : kind && LABELS[kind];
   return (
     <div className="screen">
       <header className="topbar">
@@ -66,6 +82,20 @@ export function Status({
             <IconSliders />
           </button>
           <button
+            className={browsing ? "icon-button is-open" : "icon-button"}
+            type="button"
+            aria-label="History"
+            aria-haspopup="menu"
+            aria-expanded={browsing}
+            data-tip={browsing ? undefined : "History"}
+            data-tip-side="below"
+            data-menu-trigger="history"
+            disabled={agent.kind !== "ready"}
+            onClick={() => setBrowsing(!browsing)}
+          >
+            <IconHistory />
+          </button>
+          <button
             className="icon-button"
             type="button"
             aria-label="New conversation"
@@ -78,12 +108,13 @@ export function Status({
             <IconNewChat />
           </button>
         </div>
+        {browsing && <HistoryMenu history={history} onClose={() => setBrowsing(false)} />}
       </header>
-      <Transcript chat={chat}>
-        {(empty || agent.kind !== "ready") && (
-          <div className={`agent-line is-${agent.kind}`}>
-            {agent.kind === "failed" ? <IconCross className="agent-mark" /> : <span className="agent-mark" />}
-            <span>{LABELS[agent.kind]}</span>
+      <Transcript chat={chat} editing={editing}>
+        {kind && (
+          <div className={`agent-line is-${kind}`}>
+            {kind === "failed" ? <IconCross className="agent-mark" /> : <span className="agent-mark" />}
+            <span>{label}</span>
           </div>
         )}
         {agent.kind === "failed" && <Failure agent={agent} />}
@@ -96,6 +127,8 @@ export function Status({
           images={images}
           draft={draft}
           onDraft={onDraft}
+          editing={editing}
+          onEditEnd={onEditEnd}
         />
       )}
     </div>

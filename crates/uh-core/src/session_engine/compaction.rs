@@ -133,7 +133,6 @@ pub fn estimate_tokens(message: &AgentMessage) -> u64 {
                 .sum(),
         ),
         AgentMessage::BashExecution(bash) => div4(chars(&bash.command) + chars(&bash.output)),
-        AgentMessage::BranchSummary(summary) => div4(chars(&summary.summary)),
         AgentMessage::CompactionSummary(summary) => div4(chars(&summary.summary)),
     }
     .saturating_add(0) // keep type u64
@@ -257,7 +256,6 @@ fn message_timestamp(message: &AgentMessage) -> u64 {
         AgentMessage::Custom(custom) => custom.timestamp,
         AgentMessage::ToolResult(result) => result.timestamp,
         AgentMessage::BashExecution(bash) => bash.timestamp,
-        AgentMessage::BranchSummary(summary) => summary.timestamp,
         AgentMessage::CompactionSummary(summary) => summary.timestamp,
     }
 }
@@ -316,8 +314,47 @@ pub fn threshold_compaction_due(
     should_compact(context_tokens, context_window, max_output_tokens, settings)
 }
 
-/// Valid cut point indices: user/assistant/custom/branch/compaction-summary
-/// messages plus `branch_summary` and `custom_message` entries. Never tool results.
+/// The live context's size as a reply measured it: the latest valid
+/// usage plus the chars/4 estimates of the messages after it (the
+/// threshold arm's estimate). `None` while no reply has measured it:
+/// before the first one, when the provider reports no usage, and right
+/// after a compaction (the usage before it measured the old context).
+#[must_use]
+pub fn measured_context_tokens(messages: &[AgentMessage]) -> Option<u64> {
+    let estimate = estimate_context_tokens(messages);
+    let index = estimate.last_usage_index?;
+    let compacted_after = messages.iter().rev().find_map(|message| match message {
+        AgentMessage::CompactionSummary(summary) => Some(summary.timestamp),
+        _ => None,
+    });
+    if compacted_after.is_some_and(|timestamp| message_timestamp(&messages[index]) <= timestamp) {
+        return None;
+    }
+    let usage = assistant_usage(&messages[index])?;
+    (calculate_context_tokens(&usage) > 0).then_some(estimate.tokens)
+}
+
+/// What a session has used: its context against the model's window and
+/// the automatic compaction's threshold, and what the conversation cost.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SessionUsage {
+    /// [`measured_context_tokens`] over the live context.
+    pub tokens: Option<u64>,
+    pub context_window: u64,
+    /// [`compaction_threshold`]; `None` when automatic compaction is off.
+    pub compact_at: Option<u64>,
+    /// Dollars, over the active branch.
+    pub cost: f64,
+    /// Prompt tokens each reply could reuse from the request before it,
+    /// and those it did ([`crate::session::SessionManager::branch_cache`]).
+    pub cache_reusable: u64,
+    pub cache_reused: u64,
+    /// Dollars the cache reads saved, at each reply's own prices.
+    pub cache_saved: f64,
+}
+
+/// Valid cut point indices: user/assistant/custom/compaction-summary
+/// messages plus `custom_message` entries. Never tool results.
 #[must_use]
 pub fn find_valid_cut_points(
     entries: &[FileEntry],
@@ -337,20 +374,17 @@ pub fn find_valid_cut_points(
                 | AgentMessage::Assistant(_)
                 | AgentMessage::Custom(_)
                 | AgentMessage::BashExecution(_)
-                | AgentMessage::BranchSummary(_)
                 | AgentMessage::CompactionSummary(_) => cut_points.push(i),
                 AgentMessage::ToolResult(_) => {}
             },
-            FileEntry::BranchSummary { .. } | FileEntry::CustomMessage { .. } => {
-                cut_points.push(i);
-            }
+            FileEntry::CustomMessage { .. } => cut_points.push(i),
             _ => {}
         }
     }
     cut_points
 }
 
-/// The user/bashExecution message (or branch boundary) starting the turn
+/// The user/bashExecution message (or custom message) starting the turn
 /// containing `entry_index`; None when no turn start exists before it.
 fn find_turn_start_index(
     entries: &[FileEntry],
@@ -360,8 +394,7 @@ fn find_turn_start_index(
     for i in (start_index..=entry_index).rev() {
         let entry = &entries[i];
         match entry {
-            FileEntry::BranchSummary { .. }
-            | FileEntry::CustomMessage { .. }
+            FileEntry::CustomMessage { .. }
             | FileEntry::Message {
                 message: AgentMessage::User(_) | AgentMessage::BashExecution(_),
                 ..

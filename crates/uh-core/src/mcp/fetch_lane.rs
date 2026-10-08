@@ -1,5 +1,5 @@
-//! The plugins service-catalog fetch lane: the background keep-warm for
-//! the `/mcp` view's remote catalog. The view's resolution side
+//! The plugins service-catalog fetch lane: keeps the Marketplace's remote
+//! catalog (Prime's `plugins/catalog.v2.json`) fresh. The view's resolution side
 //! ([`super::remote_source`]) reads the validated last-good disk cache
 //! this lane writes — fetching, cadence, and the cache write live here;
 //! the reader stays read-only and fail-closed.
@@ -14,10 +14,9 @@
 //! TS parity note (the sanctioned divergence): the TS picker's
 //! `SERVICE_CATALOG` is compile-time baked — TS never fetches the catalog
 //! at runtime. The Rust port carries the remote chain (URL + `ETag` fetch +
-//! validated disk cache) so the catalog stays fresh between releases;
-//! the daemon supervisor keeps the cache warm — a forced startup refresh
-//! plus the hourly loop, both fire-and-forget; the settle log is one
-//! debug line, mirroring the models chain.
+//! validated disk cache) so the catalog stays fresh between releases:
+//! the settings screen's MCP list refreshes it (at most hourly) before it
+//! reads it; the settle log is one debug line, mirroring the models chain.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -25,7 +24,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use uh_models::cache::{CatalogCache, CatalogParse, RefreshOptions, PUBLIC_SCOPE};
 use uh_models::fetch::{CatalogFetcher, MCP_SERVICE_CATALOG_URL};
-use uh_models::CATALOG_REFRESH_INTERVAL_MS;
 
 use super::catalog_schema::{parse_plugins_catalog, PluginsCatalog};
 use super::remote_source::PLUGINS_CACHE_FILE;
@@ -38,12 +36,9 @@ fn plugins_parse(payload: &serde_json::Value, _scope: &str) -> Result<PluginsCat
     parse_plugins_catalog(&bytes)
 }
 
-/// One plugins-catalog cache: the generic cache plus the per-instance
-/// hourly-loop guard (the models chain guards its loop the same way, so
-/// one loop runs per agent dir, not per process).
+/// One plugins-catalog cache.
 struct PluginsCatalogCache {
     cache: CatalogCache<PluginsCatalog>,
-    hourly_loop: OnceLock<()>,
 }
 
 impl PluginsCatalogCache {
@@ -56,7 +51,6 @@ impl PluginsCatalogCache {
                 Arc::new(CatalogFetcher::new()),
                 Arc::new(plugins_parse) as CatalogParse<PluginsCatalog>,
             ),
-            hourly_loop: OnceLock::new(),
         }
     }
 }
@@ -70,9 +64,8 @@ fn shared() -> &'static Mutex<SharedCaches> {
 }
 
 /// The process-shared plugins-catalog cache for `agent_dir`: one cache per
-/// agent dir, so the supervisor's startup refresh and its hourly loop
-/// share the same snapshots, hourly gating, and in-flight coalescing (the
-/// models chain's `catalog_for` shape).
+/// agent dir, so every refresh shares the same snapshots, hourly gating,
+/// and in-flight coalescing (the models chain's `catalog_for` shape).
 fn plugins_catalog_cache_for(agent_dir: &Path) -> Arc<PluginsCatalogCache> {
     let cache_path = agent_dir.join(PLUGINS_CACHE_FILE);
     let mut shared = shared().lock().unwrap();
@@ -84,59 +77,28 @@ fn plugins_catalog_cache_for(agent_dir: &Path) -> Arc<PluginsCatalogCache> {
     }))
 }
 
-/// One fire-and-forget refresh of the plugins service catalog: the
-/// cache's contract keeps the last-good snapshot on every failure path
-/// (including `UNHARNESSED_OFFLINE`, where the cache serves without the network),
-/// and the settle log is one debug line, mirroring the models chain.
-async fn refresh_plugins_catalog(cache: &PluginsCatalogCache, force: bool) {
+/// Refresh the agent dir's catalog cache when the last attempt is an hour
+/// old or more (none yet included), and wait for it: the reader then sees
+/// the fresh snapshot. The cache keeps the last-good snapshot on every
+/// failure path (`UNHARNESSED_OFFLINE` included, where it serves without
+/// the network).
+pub async fn refresh_plugins_catalog_for(agent_dir: &Path) {
+    let cache = plugins_catalog_cache_for(agent_dir);
     let fresh = cache
         .cache
         .refresh(
             PUBLIC_SCOPE,
             RefreshOptions {
-                force,
+                force: false,
                 headers: Vec::new(),
                 is_current: None,
             },
         )
         .await;
     tracing::debug!(
-        forced = force,
         entries = fresh.as_ref().map(|catalog| catalog.entries.len()),
         "plugins service catalog refresh settled"
     );
-}
-
-/// The daemon's plugins-catalog warm-up: a forced fire-and-forget refresh
-/// at startup (the disk cache fills in the background; the reader serves
-/// the last-good chain immediately). Mirrors the models chain's
-/// `startup_refresh`.
-pub fn startup_plugins_refresh(agent_dir: &Path) {
-    let cache = plugins_catalog_cache_for(agent_dir);
-    tokio::spawn(async move {
-        refresh_plugins_catalog(&cache, true).await;
-    });
-}
-
-/// The daemon's hourly plugins-catalog refresh loop (one loop per agent
-/// dir: the guard rides the shared instance, so a second supervisor in
-/// the same process still gets its own loop). Mirrors the models chain's
-/// `spawn_hourly_refresh`. Errors never surface; the task does not keep
-/// the runtime alive.
-pub fn spawn_hourly_plugins_refresh(agent_dir: &Path) {
-    let cache = plugins_catalog_cache_for(agent_dir);
-    if cache.hourly_loop.set(()).is_err() {
-        return;
-    }
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(
-            CATALOG_REFRESH_INTERVAL_MS,
-        ));
-        loop {
-            interval.tick().await;
-            refresh_plugins_catalog(&cache, false).await;
-        }
-    });
 }
 
 #[cfg(test)]
@@ -151,8 +113,8 @@ mod tests {
 
     /// The production cache pins the reader's contract: the catalog-repo
     /// URL the reader's url gate requires, the cache file the reader
-    /// reads, and one shared instance per agent dir (the supervisor's
-    /// startup and hourly calls drive the same cache).
+    /// reads, and one shared instance per agent dir (every refresh drives
+    /// the same cache).
     #[test]
     fn the_production_cache_pins_the_readers_contract() {
         let dir = tempfile::tempdir().expect("temp dir");

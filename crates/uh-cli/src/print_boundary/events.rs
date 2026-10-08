@@ -8,14 +8,9 @@ use super::{
     Value,
 };
 
-/// The `compaction_start` event (TS `_runAutoCompaction`): the reason plus
-/// the consumed request's instructions when it carried any.
-pub(super) fn compaction_start_event(reason: &str, custom_instructions: Option<&str>) -> Value {
-    let mut event = json!({ "type": "compaction_start", "reason": reason });
-    if let Some(instructions) = custom_instructions {
-        event["customInstructions"] = json!(instructions);
-    }
-    event
+/// The `compaction_start` event (TS `_runAutoCompaction`).
+pub(super) fn compaction_start_event(reason: &str) -> Value {
+    json!({ "type": "compaction_start", "reason": reason })
 }
 
 /// The successful `compaction_end` event (TS `_runAutoCompaction`): the TS
@@ -25,7 +20,6 @@ pub(super) fn compaction_end_success_event(
     reason: &str,
     run: &CompactRun,
     will_retry: bool,
-    custom_instructions: Option<&str>,
 ) -> Value {
     // The wire result is the TS `CompactionResult` shape: the client-facing
     // summary fields plus the persisted entry's `details` (the TS default
@@ -40,17 +34,13 @@ pub(super) fn compaction_end_success_event(
             .clone()
             .unwrap_or(json!({ "readFiles": [], "modifiedFiles": [] })),
     });
-    let mut event = json!({
+    json!({
         "type": "compaction_end",
         "reason": reason,
         "result": result,
         "aborted": false,
         "willRetry": will_retry,
-    });
-    if let Some(instructions) = custom_instructions {
-        event["customInstructions"] = json!(instructions);
-    }
-    event
+    })
 }
 
 impl TurnBoundary {
@@ -86,7 +76,6 @@ impl TurnBoundary {
         reason: CompactionOutcomeReason,
         outcome: CompactionOutcomeKind,
         message: &str,
-        custom_instructions: Option<&str>,
     ) {
         let row = engine
             .session
@@ -117,9 +106,6 @@ impl TurnBoundary {
         });
         if outcome == CompactionOutcomeKind::Skipped {
             event["errorSeverity"] = json!("warning");
-        }
-        if let Some(instructions) = custom_instructions {
-            event["customInstructions"] = json!(instructions);
         }
         self.emit_json(&event);
     }

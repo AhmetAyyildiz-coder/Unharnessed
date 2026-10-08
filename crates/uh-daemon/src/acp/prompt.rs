@@ -304,6 +304,16 @@ async fn run_prompt_turn(
     mode: AcpModeState,
     tx: producer::FrameSink,
 ) {
+    // Where the conversation stands before the prompt: going back there
+    // sends it again, changed.
+    let rewind_to = match &start {
+        TurnStart::Prompt { .. } => {
+            let persistence = mode.engine.session.shared_persistence();
+            let session = persistence.lock().await;
+            session.get_leaf_id().map(str::to_string)
+        }
+        TurnStart::Wake(_) => None,
+    };
     // What started the turn comes first in it: a client tells its own
     // prompt from a wake by it.
     let turn_start = meta::UnharnessedTurnStartMeta {
@@ -316,6 +326,7 @@ async fn run_prompt_turn(
             TurnStart::Prompt { .. } => None,
             TurnStart::Wake(wake) => Some(wake.kind().to_string()),
         },
+        rewind_to,
     };
     session
         .producer()
@@ -469,12 +480,10 @@ async fn run_prompt_turn(
         if boundary.contains_wire(&final_message) {
             break;
         }
-        // An aborted turn never services its boundary requests (TS
-        // `_checkCompaction`'s abort arm): drop the pending compaction
-        // request, reset the overflow machine, and settle.
+        // An aborted turn resets the overflow machine and settles (TS
+        // `_checkCompaction`'s abort arm).
         if final_message.stop_reason == uh_types::ai::StopReason::Aborted {
             session.reset_overflow_recovery();
-            session.clear_turn_boundary_requests(&mode.engine).await;
             break;
         }
         // A failed turn first goes through the provider retry/failover
@@ -503,8 +512,7 @@ async fn run_prompt_turn(
             session.reset_overflow_recovery();
         }
         // TS `_checkCompaction` at `agent_end`: the overflow arm (Case 1,
-        // with its compact-and-retry), then the requested arm (which
-        // stops the run on purpose), then the threshold arm (which, under
+        // with its compact-and-retry), then the threshold arm (which, under
         // the settled boundary's queue policy, mints the goal continuation
         // before it compacts — the held turn runs after the boundary like
         // the TS post-compaction continue).
@@ -550,11 +558,6 @@ async fn run_prompt_turn(
                     .clone()
                     .unwrap_or_else(|| "the model request failed".to_string()),
             );
-            break;
-        }
-        // A requested compaction stops the run on purpose: the model
-        // resumes on the next prompt.
-        if check == CompactionCheckRun::RequestedStop {
             break;
         }
         // The threshold arm's held goal continuation runs as the
@@ -695,6 +698,10 @@ async fn run_session_command_segment(
     // scheduled continuation prompts the model below, and the event
     // listener's per-message accounting must be able to take the same
     // mutex while that turn runs.
+    let compacts = command.name == "compact";
+    if compacts {
+        session.usage.compacting(true).await;
+    }
     let execution = {
         let mut autonomous = session.autonomous.lock().await;
         let mut params = SessionCommandParams {
@@ -704,6 +711,9 @@ async fn run_session_command_segment(
         };
         execute_session_command(&mode.engine, &mut params, command).await
     };
+    if compacts {
+        session.usage.compacting(false).await;
+    }
 
     // A compaction publishes its namespaced event whether it ran (result
     // fields present) or skipped (the TS compaction_end with an undefined
@@ -819,15 +829,7 @@ async fn publish_command_output(
 /// Publish one adapter event through the session producer at the active
 /// turn.
 async fn publish_engine_event(session: &Arc<AcpSession>, event: &events::AcpEngineEvent) {
-    let turn_id = session.producer().active_prompt_turn().await;
-    let mut mapping = events::MappingState::default();
-    let updates = events::acp_updates_for_event(event, &mut mapping);
-    for update in updates {
-        session
-            .producer()
-            .publish(&update, turn_id, UnharnessedEventPhase::Event, None)
-            .await;
-    }
+    session.publish_engine_event(event).await;
 }
 
 /// Settle one finished turn: the correlated boundary envelope, the response,

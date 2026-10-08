@@ -9,7 +9,6 @@
 
 pub mod auto_retry;
 pub mod auxiliary_model;
-pub mod branch_summarization;
 pub mod compact_session;
 pub mod compaction;
 pub mod compaction_exec;
@@ -66,6 +65,10 @@ pub enum StreamingBehavior {
     /// Queue the message for after the current turn (queue mode "followUp").
     FollowUp,
 }
+
+/// Builds the session's system prompt for a model: its `provider/id`
+/// selector, and whether it reads images.
+pub type SystemPromptFor = Arc<dyn Fn(&str, bool) -> String + Send + Sync>;
 
 /// What `prompt` did with the input.
 #[derive(Debug, PartialEq)]
@@ -172,6 +175,10 @@ pub struct AgentSession {
     /// summarizer completion — no deltas, no broadcast, no behavior
     /// change.
     compaction_summary_sink: std::sync::Mutex<Option<compaction_exec::SummaryDeltaSink>>,
+    /// The engine's prompt builder: a model switch rebuilds the prompt for
+    /// the new model. `None` keeps the prompt as it is (sessions built
+    /// directly, without the engine).
+    system_prompt_for: Option<SystemPromptFor>,
 }
 
 impl AgentSession {
@@ -228,6 +235,7 @@ impl AgentSession {
             skills: Vec::new(),
             image_model_router: None,
             compaction_summary_sink: std::sync::Mutex::new(None),
+            system_prompt_for: None,
         };
         Ok(this)
     }
@@ -306,9 +314,28 @@ impl AgentSession {
         )
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         self.agent.set_model(wire).await;
-        let mut session = self.session.lock().await;
-        session.append_model_change(provider, model_id)?;
+        self.session
+            .lock()
+            .await
+            .append_model_change(provider, model_id)?;
+        self.prompt_follows_model(model, provider, model_id).await;
         Ok(())
+    }
+
+    /// After a model switch, the next turn's system prompt is the new
+    /// model's: its own instructions (settings `modelInstructions`) and
+    /// image-input line. The switch drops the prompt cache anyway.
+    async fn prompt_follows_model(
+        &self,
+        model: &uh_types::ai::Model,
+        provider: &str,
+        model_id: &str,
+    ) {
+        if let Some(prompt_for) = &self.system_prompt_for {
+            let vision_capable = model.input.contains(&uh_types::ai::ModelInput::Image);
+            let prompt = prompt_for(&format!("{provider}/{model_id}"), vision_capable);
+            self.agent.set_system_prompt(prompt).await;
+        }
     }
 
     /// The atomic model-and-level switch: one agent-lock acquisition
@@ -336,8 +363,11 @@ impl AgentSession {
         self.agent
             .set_model_and_thinking_level(wire, thinking_level)
             .await;
-        let mut session = self.session.lock().await;
-        session.append_model_change(provider, model_id)?;
+        self.session
+            .lock()
+            .await
+            .append_model_change(provider, model_id)?;
+        self.prompt_follows_model(model, provider, model_id).await;
         Ok(())
     }
 

@@ -304,75 +304,8 @@ pub fn mcp_static_token_usable(
     Ok(())
 }
 
-/// Ownership of a reserved (legacy-builtin) id under a user settings
-/// shadow: one canonical owner across UI and dispatch.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ReservedOwnership {
-    /// No reserved service involved, or the settings match the canonical
-    /// entry.
-    Canonical,
-    Disabled,
-    Conflict(String),
-}
-
-/// Reserved definitions keep one canonical owner (TS `reservedMcpOwnership`).
-pub fn reserved_mcp_ownership(
-    service: Option<&McpServiceDescriptor>,
-    config: Option<&McpServerConfig>,
-) -> ReservedOwnership {
-    let Some(service) = service else {
-        return ReservedOwnership::Canonical;
-    };
-    if !service.legacy_builtin {
-        return ReservedOwnership::Canonical;
-    }
-    let Some(config) = config else {
-        return ReservedOwnership::Canonical;
-    };
-    let McpServerConfig::Http {
-        enabled,
-        url,
-        headers,
-        bearer_token_env_var,
-        ..
-    } = config
-    else {
-        return ReservedOwnership::Conflict(
-            "This name belongs to a built-in service. Rename or remove the conflicting server settings; saved accounts remain available for removal."
-                .to_string(),
-        );
-    };
-    if *enabled == Some(false) {
-        return ReservedOwnership::Disabled;
-    }
-    let canonical = service.transport.endpoint() == Some(url.as_str())
-        && config_uses_oauth(config)
-        && bearer_token_env_var.is_none()
-        && headers
-            .as_ref()
-            .is_none_or(std::collections::HashMap::is_empty);
-    if canonical {
-        ReservedOwnership::Canonical
-    } else {
-        ReservedOwnership::Conflict(
-            "This name belongs to a built-in service. Rename or remove the conflicting server settings; saved accounts remain available for removal."
-                .to_string(),
-        )
-    }
-}
-
-fn config_uses_oauth(config: &McpServerConfig) -> bool {
-    matches!(
-        config,
-        McpServerConfig::Http {
-            oauth: Some(true),
-            ..
-        }
-    )
-}
-
 /// Resolved login eligibility for one connection (TS `mcpLoginEligibility`,
-/// the paths the Rust port wires: ownership, disabled settings, setup
+/// the paths the Rust port wires: disabled settings, setup
 /// gating, endpoint repair from installed records/credentials — the pin —
 /// and fresh catalog discovery).
 #[derive(Debug, Clone, PartialEq)]
@@ -391,7 +324,6 @@ pub fn mcp_login_eligibility(
     connection_id: &str,
     service: Option<&McpServiceDescriptor>,
     user_config: Option<&McpServerConfig>,
-    reserved_config: Option<&McpServerConfig>,
     record: Option<&McpConnectionRecord>,
     credential: Option<&AuthCredential>,
     add_account: bool,
@@ -403,24 +335,10 @@ pub fn mcp_login_eligibility(
         setup_hint: Some(hint.to_string()),
         repair: false,
     };
-    let ownership = reserved_mcp_ownership(service, reserved_config);
-    if ownership != ReservedOwnership::Canonical {
-        return match ownership {
-            ReservedOwnership::Disabled => deny("Disabled in settings."),
-            ReservedOwnership::Conflict(hint) => deny(&hint),
-            ReservedOwnership::Canonical => unreachable!(),
-        };
-    }
     if record.is_some_and(|record| record.attempt_id.is_some()) {
         return deny("Login in progress. Finish it or remove the account to cancel.");
     }
-    // A legacy builtin owns its name; user settings for it are the reserved
-    // path handled above (dead shadows), not a config the login uses.
-    let config = if service.is_some_and(|service| service.legacy_builtin) {
-        None
-    } else {
-        user_config
-    };
+    let config = user_config;
     if let Some(
         McpServerConfig::Http {
             enabled: Some(false),

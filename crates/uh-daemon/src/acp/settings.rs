@@ -39,6 +39,8 @@ enum Kind {
     Model,
     /// The `mcpServers` map: server name to its config.
     McpServers,
+    /// The `modelInstructions` list: groups of models and their text.
+    ModelInstructions,
 }
 
 struct Key {
@@ -64,11 +66,6 @@ const KEYS: &[Key] = &[
     Key {
         name: "compaction.keepRecentTokens",
         kind: Kind::Count { max: 2_000_000 },
-        restart: true,
-    },
-    Key {
-        name: "compaction.agentCallable",
-        kind: Kind::Bool,
         restart: true,
     },
     Key {
@@ -153,6 +150,11 @@ const KEYS: &[Key] = &[
         kind: Kind::McpServers,
         restart: true,
     },
+    Key {
+        name: "modelInstructions",
+        kind: Kind::ModelInstructions,
+        restart: true,
+    },
 ];
 
 /// Serve a `_unharnessed/settings/*` request; `false` when `method` is
@@ -231,6 +233,7 @@ fn parse_set(params: &Value) -> Result<(&'static str, Option<Value>), String> {
             _ => return Err(format!("{name} takes a provider/model reference")),
         },
         Kind::McpServers => check_mcp_servers(value)?,
+        Kind::ModelInstructions => check_model_instructions(value)?,
     };
     Ok((key.name, Some(checked)))
 }
@@ -247,11 +250,6 @@ fn check_mcp_servers(value: &Value) -> Result<Value, String> {
                 "MCP server {name:?}: a name is 1 to 64 letters, digits, - or _, starting with a letter or digit"
             ));
         }
-        if uh_core::mcp::get_catalog_entry(name).is_some() {
-            return Err(format!(
-                "MCP server {name}: the name is taken by the built-in {name} server"
-            ));
-        }
         match serde_json::from_value::<uh_core::mcp::McpServerConfig>(config.clone()) {
             Ok(uh_core::mcp::McpServerConfig::Http { url, .. }) if url.trim().is_empty() => {
                 return Err(format!("MCP server {name}: the URL is empty"));
@@ -266,6 +264,51 @@ fn check_mcp_servers(value: &Value) -> Result<Value, String> {
         }
     }
     Ok(value.clone())
+}
+
+/// Each group needs a model and a text, or it would never reach a prompt.
+/// The models are `provider/model-id` references, trimmed, each once.
+fn check_model_instructions(value: &Value) -> Result<Value, String> {
+    let groups = value
+        .as_array()
+        .ok_or_else(|| "modelInstructions takes a list of groups".to_string())?;
+    let mut checked = Vec::with_capacity(groups.len());
+    for (at, group) in groups.iter().enumerate() {
+        let number = at + 1;
+        let models = group
+            .get("models")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("group {number}: models takes a list of models"))?;
+        let mut references: Vec<&str> = Vec::with_capacity(models.len());
+        for model in models {
+            let reference = model
+                .as_str()
+                .map(str::trim)
+                .filter(|reference| {
+                    reference
+                        .split_once('/')
+                        .is_some_and(|(provider, id)| !provider.is_empty() && !id.is_empty())
+                })
+                .ok_or_else(|| {
+                    format!("group {number}: {model} is not a provider/model reference")
+                })?;
+            if !references.contains(&reference) {
+                references.push(reference);
+            }
+        }
+        if references.is_empty() {
+            return Err(format!("group {number} has no model"));
+        }
+        let text = group
+            .get("text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("group {number}: text takes a string"))?;
+        if text.trim().is_empty() {
+            return Err(format!("group {number} has no text"));
+        }
+        checked.push(json!({ "models": references, "text": text }));
+    }
+    Ok(Value::Array(checked))
 }
 
 /// The names the agent can address a server by: `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`.
@@ -310,7 +353,6 @@ fn defaults() -> Value {
         "compaction.enabled": true,
         "compaction.reserveTokens": compaction::DEFAULT_RESERVE_TOKENS,
         "compaction.keepRecentTokens": compaction::DEFAULT_KEEP_RECENT_TOKENS,
-        "compaction.agentCallable": true,
         "auxiliaryModel": null,
         "retry.enabled": retry.enabled,
         "retry.maxRetries": retry.max_retries,
@@ -327,6 +369,7 @@ fn defaults() -> Value {
         "images.autoResize": true,
         "images.blockImages": false,
         "mcpServers": {},
+        "modelInstructions": [],
     })
 }
 

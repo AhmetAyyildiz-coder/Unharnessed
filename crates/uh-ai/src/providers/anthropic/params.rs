@@ -8,7 +8,7 @@ use crate::providers::anthropic::{
     get_anthropic_compat, is_always_on_adaptive_thinking_model, supports_adaptive_thinking,
     AnthropicOptions, AnthropicThinkingDisplay, CacheControl,
 };
-use crate::types::{Context, Model};
+use crate::types::{Context, Model, SESSION_TAIL_PREFIX};
 use crate::utils_inner::sanitize_unicode::sanitize_surrogates;
 
 // Long by design (a 1:1 port of the upstream provider shape); refactoring is out of scope for the zero-behavior pedantic sweep.
@@ -53,31 +53,14 @@ pub(crate) fn build_params(
                 .insert("cache_control".into(), cache_control.to_json());
         }
         if let Some(system_prompt) = &context.system_prompt {
-            let mut entry = json!({
-                "type": "text",
-                "text": sanitize_surrogates(system_prompt),
-            });
-            if let Some(cache_control) = cache_control {
-                entry
-                    .as_object_mut()
-                    .expect("system entry is an object")
-                    .insert("cache_control".into(), cache_control.to_json());
-            }
-            system.push(entry);
+            system.extend(system_prompt_blocks(system_prompt, cache_control));
         }
         params.insert("system".into(), json!(system));
     } else if let Some(system_prompt) = &context.system_prompt {
-        let mut entry = json!({
-            "type": "text",
-            "text": sanitize_surrogates(system_prompt),
-        });
-        if let Some(cache_control) = cache_control {
-            entry
-                .as_object_mut()
-                .expect("system entry is an object")
-                .insert("cache_control".into(), cache_control.to_json());
-        }
-        params.insert("system".into(), json!([entry]));
+        params.insert(
+            "system".into(),
+            json!(system_prompt_blocks(system_prompt, cache_control)),
+        );
     }
 
     // Temperature is incompatible with extended thinking (adaptive or
@@ -146,4 +129,29 @@ pub(crate) fn build_params(
     }
 
     Value::Object(params)
+}
+
+/// The system prompt as text blocks. With caching, the breakpoint ends the
+/// head before the per-session tail, so every session reuses the head; the
+/// tail is cached with the conversation by the last-user-message breakpoint.
+fn system_prompt_blocks(system_prompt: &str, cache_control: Option<&CacheControl>) -> Vec<Value> {
+    let text = sanitize_surrogates(system_prompt);
+    let Some(cache_control) = cache_control else {
+        return vec![json!({ "type": "text", "text": text })];
+    };
+    match text.rfind(&format!("\n{SESSION_TAIL_PREFIX}")) {
+        Some(at) if at > 0 => vec![
+            json!({
+                "type": "text",
+                "text": &text[..at],
+                "cache_control": cache_control.to_json(),
+            }),
+            json!({ "type": "text", "text": &text[at + 1..] }),
+        ],
+        _ => vec![json!({
+            "type": "text",
+            "text": text,
+            "cache_control": cache_control.to_json(),
+        })],
+    }
 }

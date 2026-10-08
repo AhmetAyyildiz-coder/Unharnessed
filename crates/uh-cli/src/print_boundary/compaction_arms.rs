@@ -1,7 +1,7 @@
 //! The divider logic: the TS `_checkCompaction` arms of the print
 //! runtime's turn boundary — the overflow compact-and-retry machine
-//! (Case 1) with its three state enums, and the requested/threshold
-//! compaction arms — the child cut of the `print_boundary` facade.
+//! (Case 1) with its three state enums, and the threshold arm — the
+//! child cut of the `print_boundary` facade.
 
 use super::{
     compaction_end_success_event, compaction_start_event, is_context_overflow_failure,
@@ -37,8 +37,8 @@ pub(super) enum OverflowBoundary {
 /// What the overflow arm decided for the settled turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum OverflowOutcome {
-    /// No arm fired (not an overflow, or a guard skipped it): the requested
-    /// compaction and threshold arms still get their turn.
+    /// No arm fired (not an overflow, or a guard skipped it): the
+    /// threshold arm still gets its turn.
     NotApplicable,
     /// The compact-and-retry ran: the turn re-issued on the compacted
     /// context, and the newly settled turn needs the same checks.
@@ -56,115 +56,53 @@ impl TurnBoundary {
         self.recovery = OverflowRecovery::Idle;
     }
 
-    /// The requested and threshold arms (TS `_checkCompaction` after Case
-    /// 1 stayed silent): a pending model-requested compaction consumes the
-    /// check — TS `_runAutoCompaction` emits the start event before the
-    /// summarizer runs, carrying the pending instructions — else the
-    /// threshold arm compacts when the live context crossed the reserve
-    /// headroom (Case 3: the settled turn's usage at `agent_end`, or the
-    /// resumed context before an admitted prompt). Both boundaries share
-    /// the body: the settled turn and the pre-turn check run the identical
-    /// arms (TS `_runPreTurnCompaction` is the same `_checkCompaction`
-    /// call; only the overflow arm's re-issue differs by boundary).
-    pub(super) async fn requested_and_threshold_arms(
+    /// The threshold arm (TS `_checkCompaction` Case 3, after Case 1 stayed
+    /// silent): the live context crossing the reserve headroom compacts —
+    /// the settled turn's usage at `agent_end`, or the resumed context
+    /// before an admitted prompt. Both boundaries share the body (TS
+    /// `_runPreTurnCompaction` is the same `_checkCompaction` call; only
+    /// the overflow arm's re-issue differs by boundary). The
+    /// `compaction_start` / `compaction_end` pair streams in json mode (the
+    /// outcome persists in the session entries the headless terminal
+    /// result reads in text mode).
+    pub(super) async fn threshold_arm(
         &mut self,
         engine: &SessionEngine,
         model: &Model,
         api_key: Option<String>,
     ) -> Result<(), String> {
-        let scheduled = engine.turn_boundary.scheduled_compaction().await;
-        if let Some(pending) = &scheduled {
-            self.emit_json(&compaction_start_event(
-                CompactionOutcomeReason::Requested.wire(),
-                pending.instructions.as_deref(),
-            ));
+        if !engine.session.auto_compaction_due(model).await {
+            return Ok(());
         }
-        match engine
-            .consume_pending_compaction(model, api_key.clone(), None)
-            .await
-        {
-            Some(Ok(CompactOutcome::Ran(run))) => {
+        self.emit_json(&compaction_start_event(
+            CompactionOutcomeReason::Threshold.wire(),
+        ));
+        match engine.session.compact(None, model, api_key, None).await {
+            Ok(CompactOutcome::Ran(run)) => {
                 self.emit_ipython_state_row(&run);
                 self.emit_json(&compaction_end_success_event(
-                    CompactionOutcomeReason::Requested.wire(),
+                    CompactionOutcomeReason::Threshold.wire(),
                     &run,
                     false,
-                    scheduled
-                        .as_ref()
-                        .and_then(|pending| pending.instructions.as_deref()),
                 ));
             }
-            // A skip consumed the request: the durable warning row plus the
-            // `compaction_end` event (TS `Requested compaction skipped:
-            // ...`, warning severity).
-            Some(Ok(CompactOutcome::Skipped(message))) => {
+            Ok(CompactOutcome::Skipped(message)) => {
                 self.end_unsuccessfully(
                     engine,
-                    CompactionOutcomeReason::Requested,
+                    CompactionOutcomeReason::Threshold,
                     CompactionOutcomeKind::Skipped,
-                    &format!("Requested compaction skipped: {message}"),
-                    scheduled
-                        .as_ref()
-                        .and_then(|pending| pending.instructions.as_deref()),
+                    &format!("Auto-compaction skipped: {message}"),
                 )
                 .await;
             }
-            Some(Err(error)) => {
+            Err(error) => {
                 self.end_unsuccessfully(
                     engine,
-                    CompactionOutcomeReason::Requested,
+                    CompactionOutcomeReason::Threshold,
                     CompactionOutcomeKind::Failed,
-                    &format!("Requested compaction failed: {error:#}"),
-                    scheduled
-                        .as_ref()
-                        .and_then(|pending| pending.instructions.as_deref()),
+                    &format!("Auto-compaction failed: {error:#}"),
                 )
                 .await;
-            }
-            None => {
-                // The threshold arm (TS `_checkCompaction` Case 3): the
-                // live context crossing the reserve headroom compacts
-                // before the next prompt. The `compaction_start` /
-                // `compaction_end` pair streams in json mode (the outcome
-                // persists in the session entries the headless terminal
-                // result reads in text mode).
-                if engine.session.auto_compaction_due(model).await {
-                    self.emit_json(&compaction_start_event(
-                        CompactionOutcomeReason::Threshold.wire(),
-                        None,
-                    ));
-                    match engine.session.compact(None, model, api_key, None).await {
-                        Ok(CompactOutcome::Ran(run)) => {
-                            self.emit_ipython_state_row(&run);
-                            self.emit_json(&compaction_end_success_event(
-                                CompactionOutcomeReason::Threshold.wire(),
-                                &run,
-                                false,
-                                None,
-                            ));
-                        }
-                        Ok(CompactOutcome::Skipped(message)) => {
-                            self.end_unsuccessfully(
-                                engine,
-                                CompactionOutcomeReason::Threshold,
-                                CompactionOutcomeKind::Skipped,
-                                &format!("Auto-compaction skipped: {message}"),
-                                None,
-                            )
-                            .await;
-                        }
-                        Err(error) => {
-                            self.end_unsuccessfully(
-                                engine,
-                                CompactionOutcomeReason::Threshold,
-                                CompactionOutcomeKind::Failed,
-                                &format!("Auto-compaction failed: {error:#}"),
-                                None,
-                            )
-                            .await;
-                        }
-                    }
-                }
             }
         }
         Ok(())
@@ -173,8 +111,7 @@ impl TurnBoundary {
     /// The shared Case-1 body (TS `_checkCompaction` Case 1). Guard order is
     /// the TS one: a settled non-error turn resets the recovery state, the
     /// message must come from the session's current model, may not predate
-    /// the latest compaction boundary, compaction must be enabled (or a
-    /// pending model request covers it — the run consumes it), and the
+    /// the latest compaction boundary, compaction must be enabled, and the
     /// shared overflow classifier must recognize it. On a retry the
     /// settled-turn arm re-issues the turn without a new user message (TS
     /// `agent.continue()`); the pre-turn arm leaves the loop to the
@@ -214,10 +151,8 @@ impl TurnBoundary {
         {
             return Ok(OverflowOutcome::NotApplicable);
         }
-        // Enablement: the compaction settings gate, or a pending model
-        // request (the run below consumes it and honors its instructions).
-        let pending_scheduled = engine.turn_boundary.compaction_scheduled().await;
-        if !engine.session.auto_compaction_enabled() && !pending_scheduled {
+        // Enablement: the compaction settings gate.
+        if !engine.session.auto_compaction_enabled() {
             return Ok(OverflowOutcome::NotApplicable);
         }
         // The shared overflow classifier (TS `isContextOverflow`).
@@ -239,7 +174,6 @@ impl TurnBoundary {
                     CompactionOutcomeReason::Overflow,
                     CompactionOutcomeKind::Failed,
                     OVERFLOW_RECOVERY_FAILED_MESSAGE,
-                    None,
                 )
                 .await;
                 return Ok(OverflowOutcome::Finished);
@@ -253,23 +187,12 @@ impl TurnBoundary {
             .session
             .drop_trailing_assistant(TrailingAssistantFilter::Any)
             .await;
-        // Any compaction consumes a pending model request and honors its
-        // instructions (overflow can fire first and take the request with it).
-        let custom_instructions = engine
-            .turn_boundary
-            .take_compaction()
-            .await
-            .and_then(|pending| pending.instructions);
         self.emit_json(&compaction_start_event(
             CompactionOutcomeReason::Overflow.wire(),
-            custom_instructions.as_deref(),
         ));
         // Headless compactions run unsignaled (TS print-mode compactions
         // have no abort trigger), so no abort race wraps the run.
-        let outcome = engine
-            .session
-            .compact(custom_instructions.as_deref(), model, api_key, None)
-            .await;
+        let outcome = engine.session.compact(None, model, api_key, None).await;
         match outcome {
             Ok(CompactOutcome::Ran(run)) => {
                 self.emit_ipython_state_row(&run);
@@ -279,7 +202,6 @@ impl TurnBoundary {
                     CompactionOutcomeReason::Overflow.wire(),
                     &run,
                     true,
-                    custom_instructions.as_deref(),
                 ));
                 // The compaction rebuild re-adds the error turn from the
                 // kept tail: drop it again so the retried request is free
@@ -315,7 +237,6 @@ impl TurnBoundary {
                     CompactionOutcomeReason::Overflow,
                     CompactionOutcomeKind::Skipped,
                     &format!("Auto-compaction skipped: {message}"),
-                    custom_instructions.as_deref(),
                 )
                 .await;
                 Ok(OverflowOutcome::Finished)
@@ -326,7 +247,6 @@ impl TurnBoundary {
                     CompactionOutcomeReason::Overflow,
                     CompactionOutcomeKind::Failed,
                     &format!("Context overflow recovery failed: {error:#}"),
-                    custom_instructions.as_deref(),
                 )
                 .await;
                 Ok(OverflowOutcome::Finished)

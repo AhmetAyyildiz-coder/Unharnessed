@@ -11,10 +11,6 @@ use crate::config::get_agent_dir;
 use uh_core::auth::AuthStorageBackend;
 use uh_core::settings::SettingsStorage;
 
-/// Built-in MCP integrations that reserve their server name
-/// (`BUILTIN_MCP_CATALOG` in packages/ai/src/mcp/catalog.ts).
-pub const BUILTIN_MCP_CATALOG: &[&str] = &["linear", "notion"];
-
 const NAME_PATTERN: fn(&str) -> bool = is_valid_server_name;
 
 fn is_valid_server_name(name: &str) -> bool {
@@ -174,9 +170,6 @@ fn remove_global_mcp_server(name: &str) -> Result<bool> {
 /// current document and writes it back inside `withLock`, so a concurrent TS
 /// credential refresh and a Rust credential drop never race on the file.
 fn drop_server_credentials(name: &str) -> Result<()> {
-    if BUILTIN_MCP_CATALOG.contains(&name) {
-        return Ok(());
-    }
     let backend = uh_core::auth::FileAuthStorageBackend::new(get_agent_dir().join("auth.json"));
     backend
         .with_lock(&mut |current| {
@@ -271,9 +264,6 @@ fn validate_name(name: &str) -> Result<&str> {
 
 fn parse_mcp_add_args(args: &[String]) -> Result<(&str, McpServerConfig, bool)> {
     let name = validate_name(args.first().map_or("", String::as_str))?;
-    if BUILTIN_MCP_CATALOG.contains(&name) {
-        bail!("MCP server name \"{name}\" is reserved for a built-in integration.");
-    }
     let separator = args.iter().position(|arg| arg == "--");
     let option_args = &args[1..separator.unwrap_or(args.len())];
     let command_args: &[String] = separator.map_or(&[], |sep| &args[sep + 1..]);

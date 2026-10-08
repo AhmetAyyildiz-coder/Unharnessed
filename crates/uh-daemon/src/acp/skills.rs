@@ -34,7 +34,6 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use uh_core::resource_paths::is_pattern;
 use uh_core::resources::{list_skills, ResourceLoaderOptions, SkillListing};
-use uh_core::session_engine::engine::builtin_skill_overrides;
 use uh_core::settings::SettingsManager;
 use uh_core::skills::{ResourceDiagnostic, Skill};
 
@@ -156,11 +155,8 @@ fn apply(cwd: &Path, agent_dir: &Path, action: Action) -> Result<Option<PathBuf>
 
 /// The skills as the agent resolves them when it starts.
 fn listing(cwd: &Path, agent_dir: &Path) -> SkillListing {
-    let settings = SettingsManager::create(cwd, agent_dir);
-    let compaction = settings.settings().compaction.clone().unwrap_or_default();
     list_skills(ResourceLoaderOptions {
-        settings: Some(settings),
-        extra_builtin_skill_overrides: builtin_skill_overrides(&compaction),
+        settings: Some(SettingsManager::create(cwd, agent_dir)),
         ..ResourceLoaderOptions::new(cwd, agent_dir)
     })
 }
@@ -200,7 +196,7 @@ fn view(cwd: &Path, agent_dir: &Path, active: &HashSet<PathBuf>) -> Value {
 }
 
 /// Where the skill comes from, as the screen groups them.
-fn source(skill: &Skill) -> &'static str {
+pub(super) fn source(skill: &Skill) -> &'static str {
     let info = &skill.source_info;
     match (info.source.as_str(), info.scope) {
         ("builtin", _) => "builtin",

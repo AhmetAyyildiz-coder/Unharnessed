@@ -298,6 +298,7 @@ mod tests {
                 super::super::session::AcpSession::new(
                     session_id.clone(),
                     engine.clone(),
+                    std::sync::Arc::new(Mutex::new(None)),
                     producer.clone(),
                     autonomous,
                     driver,

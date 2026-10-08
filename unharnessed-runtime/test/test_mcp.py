@@ -410,7 +410,7 @@ class McpRegistryTest(unittest.TestCase):
         self.assertEqual(
             str(caught.exception),
             "MCP credentials for 'github' are not available. Ask the user to connect it "
-            "(/plugins or /mcp login github); do not ask them to set environment variables.",
+            "in Settings > MCP; do not ask them to set environment variables.",
         )
         with mock.patch.object(mcp, "_read_auth", return_value=None):
             with self.assertRaises(mcp.McpCredentialsUnavailable):
@@ -896,62 +896,6 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
         self.assertIsNone(error.__context__)
         formatted = "".join(traceback.format_exception(type(error), error, error.__traceback__))
         self.assertNotIn("bridge is down", formatted)
-
-    def test_list_plugins_forwards_filters_limit_and_cursor(self):
-        captured = {}
-
-        async def host_request(request_type, payload):
-            captured["type"] = request_type
-            captured["payload"] = payload
-            return {
-                "plugins": [{"serviceId": "notion", "label": "Notion", "connectionStatus": "not_connected"}],
-                "nextCursor": "page-2",
-            }
-
-        with mock.patch.object(mcp, "host_request", host_request):
-            page = run(mcp.list_plugins(connection_status="not_connected", limit=5, cursor="page-1"))
-        self.assertEqual(captured["type"], "mcp.list_plugins")
-        self.assertEqual(
-            captured["payload"], {"connectionStatus": "not_connected", "limit": 5, "cursor": "page-1"}
-        )
-        self.assertEqual(page["nextCursor"], "page-2")
-        self.assertEqual(page["plugins"][0]["serviceId"], "notion")
-
-        with mock.patch.object(mcp, "host_request", host_request):
-            run(mcp.list_plugins())
-        self.assertEqual(captured["payload"], {"limit": 50})
-
-    def test_list_plugins_validates_inputs_and_host_shapes(self):
-        for kwargs in ({"connection_status": "maybe"}, {"limit": 0}, {"limit": 201}, {"limit": True}, {"cursor": "x" * 600}):
-            with self._patch_host({"mcp.list_plugins": {"plugins": []}}):
-                with self.assertRaises((ValueError, TypeError)):
-                    run(mcp.list_plugins(**kwargs))
-        for reply in ({"plugins": ["no"]}, {"plugins": [], "nextCursor": ""}):
-            with self._patch_host({"mcp.list_plugins": reply}):
-                with self.assertRaises(RuntimeError):
-                    run(mcp.list_plugins())
-
-    def test_search_plugins_sends_query_and_limit(self):
-        captured = {}
-
-        async def host_request(request_type, payload):
-            captured["type"] = request_type
-            captured["payload"] = payload
-            return {"plugins": [{"serviceId": "notion", "apiKey": "leak"}], "nextCursor": None}
-
-        with mock.patch.object(mcp, "host_request", host_request):
-            page = run(mcp.search_plugins("  Notion  "))
-        self.assertEqual(captured["type"], "mcp.search_plugins")
-        self.assertEqual(captured["payload"], {"query": "Notion", "limit": 10})
-        self.assertIsNone(page["nextCursor"])
-        self.assertNotIn("apiKey", page["plugins"][0])
-        for bad in ("", "   "):
-            with self._patch_host({"mcp.search_plugins": {"plugins": []}}):
-                with self.assertRaises(TypeError):
-                    run(mcp.search_plugins(bad))
-        with self._patch_host({"mcp.search_plugins": {"plugins": []}}):
-            with self.assertRaises(ValueError):
-                run(mcp.search_plugins("notion", limit=51))
 
     # -- live tool discovery ------------------------------------------------
 

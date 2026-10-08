@@ -36,8 +36,8 @@ use crate::print_goal::{NaturalContinuation, PrintGoalSurface};
 /// Install the composed natural-turn-end continuation hook (TS
 /// `_getContinuationMessages`): the goal arm runs first — an active goal's
 /// mint owns the turn, its gates end the run — and the autonomous arm
-/// consults only on the fall-through. The gates (queued input, a pending
-/// requested compaction, a threshold compaction due) apply to both arms;
+/// consults only on the fall-through. The gates (queued input, a threshold
+/// compaction due) apply to both arms;
 /// the threshold arm mints the owed continuation (the goal's, or the
 /// autonomous driver's) ahead of the loop stop and holds it for the
 /// post-compaction admission.
@@ -66,9 +66,7 @@ pub(crate) fn wire_continuation_hook(
                 return Ok(Vec::new());
             };
             match goal.natural_continuation(&engine, &model).await {
-                NaturalContinuation::QueuedInput | NaturalContinuation::RequestedCompaction => {
-                    Ok(Vec::new())
-                }
+                NaturalContinuation::QueuedInput => Ok(Vec::new()),
                 NaturalContinuation::ThresholdDue => {
                     // The autonomous continuation the threshold arm owes:
                     // minted (budget bumped) and held, the run ends, the

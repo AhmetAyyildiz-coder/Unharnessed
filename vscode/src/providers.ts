@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { errorText, type Agent } from "./agent";
-import type { LoginAnswer, LoginState, LoginUpdate, Provider } from "./protocol";
+import type { LocalProbe, LocalSave, LocalServer, LoginAnswer, LoginState, LoginUpdate, Provider } from "./protocol";
 
 // The agent's `_unharnessed/providers/*` extension methods
 // (crates/uh-daemon/src/acp/providers.rs).
@@ -12,6 +12,10 @@ const LOGIN_ANSWER = "_unharnessed/providers/login_answer";
 const LOGIN_OPEN = "_unharnessed/providers/login_open";
 const LOGIN_CANCEL = "_unharnessed/providers/login_cancel";
 const LOGIN_UPDATE = "_unharnessed/providers/login_update";
+const LOCAL_SCAN = "_unharnessed/providers/local_scan";
+const LOCAL_PROBE = "_unharnessed/providers/local_probe";
+const LOCAL_SAVE = "_unharnessed/providers/local_save";
+const LOCAL_REMOVE = "_unharnessed/providers/local_remove";
 
 /** What `set_api_key`, `logout` and `login` answer. */
 type Settled = {
@@ -78,6 +82,44 @@ export class Providers {
 
   logout(providerId: string): Promise<string | undefined> {
     return this.settle(`logout of ${providerId}`, LOGOUT, { providerId });
+  }
+
+  /** The local servers at their usual addresses; `null` when the agent could not look. */
+  async scanLocal(): Promise<LocalServer[] | null> {
+    try {
+      const { servers } = await this.agent.request<{ servers: LocalServer[] }>(LOCAL_SCAN);
+      const found = servers.map((server) => `${server.name} at ${server.baseUrl} (${count(server.models.length)})`);
+      this.log.info(`local: scan found ${found.join(", ") || "no server"}`);
+      return servers;
+    } catch (error) {
+      this.log.warn(`local: scan failed: ${errorText(error)}`);
+      return null;
+    }
+  }
+
+  async probeLocal(baseUrl: string, apiKey: string): Promise<LocalProbe> {
+    try {
+      const probe = await this.agent.request<LocalProbe>(LOCAL_PROBE, { baseUrl, ...(apiKey ? { apiKey } : {}) });
+      if ("server" in probe) {
+        const { server } = probe;
+        const models = server.models.map((model) => model.id).join(", ");
+        this.log.info(`local: ${baseUrl} is ${server.name} at ${server.baseUrl}, ${count(server.models.length)}${models ? `: ${models}` : ""}`);
+      } else {
+        this.log.info(`local: ${baseUrl}: ${probe.error.kind} (${probe.error.message})`);
+      }
+      return probe;
+    } catch (error) {
+      this.log.warn(`local: probe of ${baseUrl} failed: ${errorText(error)}`);
+      return { error: { kind: "invalid", message: errorText(error) } };
+    }
+  }
+
+  saveLocal(server: LocalSave): Promise<string | undefined> {
+    return this.settle(`local server ${server.providerId ?? server.name}`, LOCAL_SAVE, server);
+  }
+
+  removeLocal(providerId: string): Promise<string | undefined> {
+    return this.settle(`removal of local server ${providerId}`, LOCAL_REMOVE, { providerId });
   }
 
   /**
@@ -196,6 +238,10 @@ export class Providers {
   private changed(): void {
     for (const listener of this.listeners) listener();
   }
+}
+
+function count(models: number): string {
+  return `${models} model${models === 1 ? "" : "s"}`;
 }
 
 function connectedNames(providers: Provider[]): string {

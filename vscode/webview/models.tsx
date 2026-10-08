@@ -1,27 +1,32 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { ModelChoice, Provider } from "../src/protocol";
 import { IconCheck, IconImage, IconSearch, IconText } from "./icons";
-import { ProviderLogo } from "./logos";
+import { ProviderAvatar } from "./logos";
 
 /**
  * The models with a search, each with its provider's mark and name; the
  * selected model's provider first, then by provider. `keyOf` names a model
  * the way the caller stores it. With `none`, a first row picks no model.
+ * With `checked`, several are checked instead: a pick checks or unchecks.
  */
 export function ModelList({
   choices,
   selected,
+  checked,
   keyOf,
   providers,
   none,
+  autoFocus = true,
   onPick,
 }: {
   choices: ModelChoice[];
   selected: string | null;
+  checked?: ReadonlySet<string>;
   keyOf: (choice: ModelChoice) => string;
   providers: Provider[];
   /** The label of the row that picks no model. */
   none?: string;
+  autoFocus?: boolean;
   /** `null`: the `none` row. */
   onPick: (choice: ModelChoice | null) => void;
 }) {
@@ -30,7 +35,8 @@ export function ModelList({
   const matched = matching(choices, query, providers, current?.provider);
   // The `none` row heads the list while the search is empty.
   const rows: (Row | null)[] = none !== undefined && query.trim() === "" ? [null, ...matched] : matched;
-  const isSelected = (row: Row | null) => (row ? keyOf(row.choice) === selected : selected === null);
+  const isSelected = (row: Row | null) =>
+    checked ? row !== null && checked.has(keyOf(row.choice)) : row ? keyOf(row.choice) === selected : selected === null;
   const [active, setActive] = useState(() => Math.max(0, rows.findIndex(isSelected)));
   const list = useRef<HTMLUListElement>(null);
 
@@ -61,7 +67,7 @@ export function ModelList({
           type="search"
           placeholder="Search models"
           aria-label="Search models"
-          autoFocus
+          autoFocus={autoFocus}
           spellCheck={false}
           value={query}
           onChange={(event) => {
@@ -72,7 +78,7 @@ export function ModelList({
           onKeyDown={onKeyDown}
         />
       </label>
-      <ul className="menu-list" role="listbox" aria-label="Models" ref={list}>
+      <ul className="menu-list" role="listbox" aria-label="Models" aria-multiselectable={!!checked} ref={list}>
         {rows.map((row, at) => (
           <li key={row ? keyOf(row.choice) : ""} role="option" aria-selected={isSelected(row)}>
             <button
@@ -84,9 +90,12 @@ export function ModelList({
             >
               {row ? (
                 <>
-                  <span className="model-badge">
-                    <ProviderLogo provider={row.choice.provider} name={row.provider.name} />
-                  </span>
+                  <ProviderAvatar
+                    className="model-badge"
+                    provider={row.choice.provider}
+                    name={row.provider.name}
+                    local={row.provider.local}
+                  />
                   <span className="menu-row-main">
                     <span className="model-title">
                       <span className="menu-row-name">{row.choice.name}</span>
@@ -100,7 +109,13 @@ export function ModelList({
                   <span className="menu-row-name">{none}</span>
                 </span>
               )}
-              {isSelected(row) && <IconCheck className="menu-check" />}
+              {checked ? (
+                <span className={isSelected(row) ? "model-tick is-on" : "model-tick"}>
+                  <IconCheck />
+                </span>
+              ) : (
+                isSelected(row) && <IconCheck className="menu-check" />
+              )}
             </button>
           </li>
         ))}
@@ -145,7 +160,7 @@ function Specs({ choice, subscription }: { choice: ModelChoice; subscription: bo
   );
 }
 
-type Row = { choice: ModelChoice; provider: { name: string; subscription: boolean } };
+type Row = { choice: ModelChoice; provider: { name: string; subscription: boolean; local: boolean } };
 
 /** The models the search matches, the `first` provider's first, then by provider name. */
 function matching(choices: ModelChoice[], query: string, providers: Provider[], first: string | undefined): Row[] {
@@ -155,7 +170,8 @@ function matching(choices: ModelChoice[], query: string, providers: Provider[], 
     const name = providerName(providers, choice.provider);
     const haystack = `${choice.name} ${choice.id} ${name}`.toLowerCase();
     if (!words.every((word) => haystack.includes(word))) continue;
-    rows.push({ choice, provider: { name, subscription: subscription(providers, choice.provider) } });
+    const provider = { name, subscription: subscription(providers, choice.provider), local: isLocal(providers, choice.provider) };
+    rows.push({ choice, provider });
   }
   // Stable: each provider's models keep the agent's order.
   return rows.sort((a, b) => {
@@ -176,6 +192,11 @@ function connectedRow(providers: Provider[], id: string): Provider | undefined {
 
 export function providerName(providers: Provider[], id: string): string {
   return connectedRow(providers, id)?.name ?? id;
+}
+
+/** A server on this machine, added from the providers screen or by hand. */
+export function isLocal(providers: Provider[], id: string): boolean {
+  return providers.some((p) => p.id === id && p.local !== undefined);
 }
 
 /** A subscription pays for the models: no price per token to show. */

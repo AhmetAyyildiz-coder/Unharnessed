@@ -2,6 +2,9 @@ import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
 import type { Agent } from "./agent";
 import type { Chat } from "./chat";
+import type { Files } from "./files";
+import type { History } from "./history";
+import { connectedModels } from "./instructions";
 import type { HostMessage, WebviewMessage } from "./protocol";
 import type { Providers } from "./providers";
 import type { Session } from "./session";
@@ -21,6 +24,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly session: Session,
     private readonly settings: Settings,
     private readonly chat: Chat,
+    private readonly history: History,
+    private readonly files: Files,
     private readonly log: vscode.LogOutputChannel,
   ) {
     agent.onChange((state) => this.post({ type: "agent", agent: state }));
@@ -30,6 +35,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     session.onChange(() => this.post({ type: "session", session: session.current }));
     settings.onChange(() => this.post({ type: "settings", settings: settings.current }));
     chat.onPost((message) => this.post(message));
+    history.onChange(() => this.post({ type: "history", history: history.current }));
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -56,15 +62,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           session: this.session.current,
           settings: this.settings.current,
           chat: this.chat.current,
+          history: this.history.current,
         });
         this.splashPlayed = true;
         break;
       case "screen":
         this.log.info(`panel: ${message.screen}`);
         break;
+      case "crashed":
+        this.log.error(`panel: crashed: ${message.error}`);
+        break;
       case "restartAgent":
         this.log.info("agent restart requested from the panel");
-        void this.agent.restart();
+        void this.restartAgent();
         break;
       case "setApiKey": {
         const { providerId } = message;
@@ -77,6 +87,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const { providerId } = message;
         void this.providers.logout(providerId).then((error) => {
           this.post({ type: "providerResult", action: "logout", providerId, error });
+        });
+        break;
+      }
+      case "scanLocal":
+        void this.providers.scanLocal().then((servers) => this.post({ type: "localScan", servers }));
+        break;
+      case "probeLocal": {
+        const { baseUrl, apiKey } = message;
+        void this.providers
+          .probeLocal(baseUrl, apiKey)
+          .then((probe) => this.post({ type: "localProbe", baseUrl, apiKey, probe }));
+        break;
+      }
+      case "saveLocal": {
+        const providerId = message.rowId;
+        void this.providers.saveLocal(message.server).then((error) => {
+          this.post({ type: "providerResult", action: "local", providerId, error });
+        });
+        break;
+      }
+      case "removeLocal": {
+        const { providerId } = message;
+        void this.providers.removeLocal(providerId).then((error) => {
+          this.post({ type: "providerResult", action: "local", providerId, error });
         });
         break;
       }
@@ -111,9 +145,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
         break;
       }
+      case "setInstructions": {
+        const session = this.session.current;
+        const choices = session?.kind === "open" ? session.config.model?.choices : undefined;
+        const connected = choices ? new Set(connectedModels(choices, this.providers.providers ?? []).keys()) : null;
+        void this.settings
+          .setInstructions(message.index, message.group, connected)
+          .then((error) => this.post({ type: "settingResult", key: "modelInstructions", error }));
+        break;
+      }
       case "mcpSignIn":
         this.mcpSignIn(message.id, message.label);
         break;
+      case "mcpSetToken": {
+        const key = `mcp:${message.id}`;
+        void this.settings
+          .setToken(message.id, message.token)
+          .then((error) => this.post({ type: "settingResult", key, error }));
+        break;
+      }
       case "mcpSignOut": {
         const key = `mcp:${message.id}`;
         void this.settings.signOut(message.id).then((error) => this.post({ type: "settingResult", key, error }));
@@ -145,16 +195,39 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         void vscode.env.clipboard.writeText(message.text);
         break;
       case "send":
-        this.chat.send(message.text, message.images);
+        this.chat.send(message.text, message.images, message.edit);
+        break;
+      case "edit":
+        this.chat.edit(message.id);
+        break;
+      case "listFiles":
+        void this.files.list().then(({ files, open }) => this.post({ type: "files", files, open }));
         break;
       case "cancel":
         this.chat.cancel();
+        break;
+      case "goal":
+        if (message.action === "pause") this.chat.pauseGoal();
+        else if (message.action === "resume") this.chat.resumeGoal();
+        else this.chat.endGoal();
         break;
       case "unqueue":
         this.chat.unqueue(message.id);
         break;
       case "newChat":
         this.chat.newChat();
+        break;
+      case "listChats":
+        void this.history.list();
+        break;
+      case "openChat": {
+        // The conversation in the panel is already open.
+        const saved = this.history.saved(message.id);
+        if (saved) this.chat.open(saved);
+        break;
+      }
+      case "deleteChat":
+        void this.history.remove(message.id);
         break;
       case "openLink":
         // Web pages only: a message never opens anything else.
@@ -168,6 +241,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     void this.providers.startLogin(`mcp:${id}`, label).then((done) => {
       if (done) this.settings.signedIn(id);
     });
+  }
+
+  /** On the conversation in the panel, which comes back; before its first message, on a new one. */
+  private async restartAgent(): Promise<void> {
+    const saved = await this.history.inPanel();
+    if (saved) this.chat.open(saved);
+    else void this.agent.restart();
   }
 
   private async open(path: string): Promise<void> {

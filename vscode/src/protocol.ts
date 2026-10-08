@@ -25,6 +25,38 @@ export type Provider = {
   note?: string;
   /** The Anthropic subscription warning, on the row that uses it. */
   warning?: string;
+  /** A server on this machine, from the agent's models.json: its address and the models picked from it. */
+  local?: { baseUrl: string; models: string[] };
+};
+
+/** A model a local server serves, with what the server tells of it. */
+export type LocalModel = { id: string; contextWindow?: number; image: boolean; reasoning: boolean };
+
+/** A local server (`_unharnessed/providers/local_probe`, `local_scan`). */
+export type LocalServer = {
+  /** The provider id it gets, when it is not added yet. */
+  id: string;
+  /** What it is (`Ollama`), else its address. */
+  name: string;
+  baseUrl: string;
+  models: LocalModel[];
+};
+
+/** What a server serves, or why it could not be read. */
+export type LocalProbe =
+  | { server: LocalServer }
+  | { error: { kind: "invalid" | "unreachable" | "needsKey"; message: string } };
+
+/** A server to add, or one added whose models are picked again (`providerId`). */
+export type LocalSave = {
+  providerId?: string;
+  id: string;
+  name: string;
+  baseUrl: string;
+  /** Absent: the saved key stays. */
+  apiKey?: string;
+  /** A model added before needs only its id: it keeps its definition. */
+  models: (Pick<LocalModel, "id"> & Partial<LocalModel>)[];
 };
 
 /** One step of a running sign-in (`_unharnessed/providers/login_update`). */
@@ -113,11 +145,17 @@ export type SettingsView = {
   restart: string[];
 };
 
+/**
+ * One group of the `modelInstructions` setting: its text joins the agent's
+ * system prompt when it runs on one of its models (`provider/model-id`).
+ */
+export type ModelInstructions = { models: string[]; text: string };
+
 /** One MCP server, as the agent's `_unharnessed/mcp/list` gives it. */
 export type McpServer = {
   id: string;
   label: string;
-  /** `catalog`: a service the agent knows (Linear, Notion); `user`: one of the `mcpServers` setting. */
+  /** `catalog`: a service of Prime's catalog, the Marketplace; `user`: one of the `mcpServers` setting. */
   source: "catalog" | "user";
   /** `pending`: signed in, the connection not checked yet. */
   status: "connected" | "pending" | "not_connected" | "setup_required" | "disabled" | "error";
@@ -128,6 +166,12 @@ export type McpServer = {
   description?: string;
   /** What it needs, or why it fails. */
   hint?: string;
+  category?: string;
+  publisher?: string;
+  /** Other names to find it by. */
+  aliases?: string[];
+  /** A catalog service connected by a pasted token: what to paste ("GitHub personal access token"). */
+  token?: string;
 };
 
 /** One skill, as the agent's `_unharnessed/skills/list` gives it. */
@@ -210,7 +254,18 @@ export type TurnItem =
       images?: number;
       diffs?: number;
     }
-  /** A command's answer, a compaction, a goal's change. */
+  /**
+   * The conversation compacted into a summary: on its own (`auto`), or by
+   * `/compact`. Once done, the tokens it summarized and the summary.
+   */
+  | {
+      kind: "compaction";
+      state: "running" | "done";
+      auto: boolean;
+      tokensBefore?: number;
+      summary?: string;
+    }
+  /** A command's answer, a goal's change. */
   | { kind: "notice"; tone: "info" | "warning" | "error"; text: string };
 
 export type TurnHead = {
@@ -222,21 +277,84 @@ export type TurnHead = {
   wake?: "bash" | "quota" | "goal";
   state: "running" | "done" | "cancelled" | "failed";
   error?: string;
+  /** Where the agent goes back to send the prompt again, changed; absent when it cannot (an earlier agent's turn). */
+  rewindTo?: string;
 };
 
 /** A turn, or the line where the agent restarted: it remembers nothing above it. */
 export type EntryHead = TurnHead | { kind: "restart"; id: number };
 export type ChatEntry = (TurnHead & { items: TurnItem[] }) | { kind: "restart"; id: number };
 
+/** One saved conversation of the panel's folder, as the agent's `session/list` gives it. */
+export type SavedChat = {
+  id: string;
+  /** The start of its first prompt; absent when that had only images. */
+  title?: string;
+  /** When it last changed (ms since the epoch). */
+  updated: number;
+  /** The conversation in the panel. */
+  current: boolean;
+};
+
+/** The history menu's state. */
+export type HistoryState = {
+  /** `null` until the agent has answered. */
+  chats: SavedChat[] | null;
+  /** Why the list or a delete failed. */
+  error?: string;
+};
+
 /** A message waiting for the running turn to end. */
 export type QueuedMessage = { id: number; text: string; images: Thumb[] };
+
+/**
+ * What the conversation has used, as the agent reports it after each
+ * message (`_meta.unharnessed.usage`): its context against the model's
+ * window and the automatic compaction's threshold, and what it cost.
+ */
+export type Usage = {
+  /** The context's tokens; absent until a reply measures it, and again right after a compaction. */
+  tokens?: number;
+  /** The model's context window; 0 when unknown. */
+  window: number;
+  /** Past this, a compaction runs on its own; absent when that is off. */
+  compactAt?: number;
+  /** Dollars so far: the replies and the compaction summaries. */
+  cost: number;
+  /** The provider billed `cost` (OpenRouter); otherwise it is an estimate at the catalog's prices. */
+  billed: boolean;
+  /** Prompt tokens each reply could reuse from the provider's cache (the request before it), and those it did. */
+  cacheReusable: number;
+  cacheReused: number;
+  /** Dollars the cache reads saved, at each reply's own prices. */
+  cacheSaved: number;
+  /** A compaction runs. */
+  compacting: boolean;
+};
+
+/**
+ * The conversation's goal (`/goal`), as the agent reports it: what it is
+ * after, where it stands, and when it was set and last changed (Unix ms),
+ * for its timer. A goal reached or failed stays until the next message.
+ */
+export type Goal = {
+  status: "active" | "paused" | "budget_limited" | "complete" | "error";
+  objective: string;
+  createdAt?: number;
+  updatedAt?: number;
+};
 
 export type ChatState = {
   entries: ChatEntry[];
   /** A turn runs: one the panel sent, or one the agent started. */
   busy: boolean;
+  /** A saved conversation is coming back; the panel gets it once it is whole. */
+  loading?: boolean;
   queue: QueuedMessage[];
   commands: ChatCommand[];
+  /** `null` until the agent has reported it. */
+  usage: Usage | null;
+  goal: Goal | null;
 };
 
 /** What changed since the last post: entries without their items, then the items by entry id and index. */
@@ -246,6 +364,8 @@ export type ChatPatch = {
   busy: boolean;
   queue: QueuedMessage[];
   commands?: ChatCommand[];
+  usage?: Usage | null;
+  goal?: Goal | null;
 };
 
 export type HostMessage =
@@ -259,34 +379,52 @@ export type HostMessage =
       session: SessionState | null;
       settings: SettingsState;
       chat: ChatState;
+      history: HistoryState;
     }
   | { type: "chat"; chat: ChatState }
+  | { type: "history"; history: HistoryState }
   | { type: "chatPatch"; patch: ChatPatch }
   /** The waiting messages, back in the message box after a stop. */
   | { type: "chatDraft"; text: string; images: Attachment[] }
+  /** A sent prompt, back in the message box to be changed and sent again in place of turn `id`'s. */
+  | { type: "chatEdit"; id: number; text: string; images: Attachment[] }
   | { type: "agent"; agent: AgentState }
   /** `null` while the agent is not running. */
   | { type: "session"; session: SessionState | null }
   /** `providers` is `null` until the agent has listed them. */
   | { type: "providers"; providers: Provider[] | null; login: LoginState | null }
-  /** How a saved key or a disconnect went; `error` is shown on the row. */
-  | { type: "providerResult"; action: "apiKey" | "logout"; providerId: string; error?: string }
+  /** How a saved key, a disconnect or a local server's change went; `error` is shown on the row. */
+  | { type: "providerResult"; action: "apiKey" | "logout" | "local"; providerId: string; error?: string }
+  /** The local servers at their usual addresses; `null` when the agent could not look. */
+  | { type: "localScan"; servers: LocalServer[] | null }
+  /** What the server at `baseUrl`, as typed, serves with `apiKey`. */
+  | { type: "localProbe"; baseUrl: string; apiKey: string; probe: LocalProbe }
   | { type: "settings"; settings: SettingsState }
   /**
    * How a settings write went; `error` is shown under the setting. MCP and
    * skills actions answer under `mcp:<id>`, `skill:<path>`, `skills/create`
    * and `skills/folder`.
    */
-  | { type: "settingResult"; key: string; error?: string };
+  | { type: "settingResult"; key: string; error?: string }
+  /** The folder's files for the `@` menu, relative and `/`-separated; `open` are those in an editor. */
+  | { type: "files"; files: string[]; open: string[] };
 
 export type WebviewMessage =
   | { type: "ready" }
   /** The screen now on display, for the log. */
   | { type: "screen"; screen: Screen }
+  /** The panel crashed: what threw, and where. */
+  | { type: "crashed"; error: string }
   | { type: "restartAgent" }
   | { type: "setApiKey"; providerId: string; apiKey: string }
   | { type: "logout"; providerId: string }
   | { type: "login"; providerId: string }
+  /** Look for the local servers at their usual addresses. */
+  | { type: "scanLocal" }
+  | { type: "probeLocal"; baseUrl: string; apiKey: string }
+  /** `rowId` names the row that answers: the server's id, or the new server's row. */
+  | { type: "saveLocal"; rowId: string; server: LocalSave }
+  | { type: "removeLocal"; providerId: string }
   | { type: "loginAnswer"; promptId: number; answer: LoginAnswer }
   | { type: "loginCancel" }
   /** Leave a failed sign-in's screen. */
@@ -296,7 +434,15 @@ export type WebviewMessage =
   | ({ type: "setConfig" } & ConfigChange)
   /** `null` removes the key: its default applies again. */
   | { type: "setSetting"; key: string; value: unknown }
+  /**
+   * Save a group of instructions (`index` null: a new one), or delete it
+   * (`group` null). `models` are the ones checked among the connected
+   * providers' models; the group's others stay as they are.
+   */
+  | { type: "setInstructions"; index: number | null; group: ModelInstructions | null }
   | { type: "mcpSignIn"; id: string; label: string }
+  /** Add a Marketplace service connected by a pasted token. */
+  | { type: "mcpSetToken"; id: string; token: string }
   | { type: "mcpSignOut"; id: string }
   | { type: "setSkill"; path: string; enabled: boolean }
   /** The new skill's file opens once it is written. */
@@ -305,13 +451,27 @@ export type WebviewMessage =
   /** Open a skill's file in the editor. */
   | { type: "openFile"; path: string }
   | { type: "copy"; text: string }
-  /** Sent now, or queued while a turn runs. */
-  | { type: "send"; text: string; images: Attachment[] }
+  /**
+   * Sent now, or queued while a turn runs; its `@` mentions go as links.
+   * `edit` replaces that turn's prompt: the conversation goes back to before it.
+   */
+  | { type: "send"; text: string; images: Attachment[]; edit?: number }
+  /** A sent prompt, to change: it comes back as `chatEdit`. */
+  | { type: "edit"; id: number }
+  /** The folder's files, for the `@` menu. */
+  | { type: "listFiles" }
   /** Stop the running turn; the waiting messages come back to the box. */
   | { type: "cancel" }
+  /** The goal's pause (the running turn stops), play, and end (the running turn stops, the goal goes). */
+  | { type: "goal"; action: "pause" | "resume" | "end" }
   | { type: "unqueue"; id: number }
   /** A new conversation: the agent restarts. */
   | { type: "newChat" }
+  /** The saved conversations of the panel's folder. */
+  | { type: "listChats" }
+  /** A saved conversation: the agent restarts on it, and it comes back in the panel. */
+  | { type: "openChat"; id: string }
+  | { type: "deleteChat"; id: string }
   /** A link in a message: web pages open in the browser. */
   | { type: "openLink"; url: string };
 

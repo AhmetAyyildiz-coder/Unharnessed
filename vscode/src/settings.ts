@@ -1,12 +1,14 @@
 import type * as vscode from "vscode";
 import { errorText, type Agent } from "./agent";
-import type { McpServer, SettingsState, SettingsView, SkillsView } from "./protocol";
+import { savedGroups, withGroup } from "./instructions";
+import type { McpServer, ModelInstructions, SettingsState, SettingsView, SkillsView } from "./protocol";
 
 // The agent's `_unharnessed/settings/*`, `mcp/*` and `skills/*` extension
 // methods (crates/uh-daemon/src/acp/{settings,mcp_servers,skills}.rs).
 const GET = "_unharnessed/settings/get";
 const SET = "_unharnessed/settings/set";
 const MCP_LIST = "_unharnessed/mcp/list";
+const MCP_SET_TOKEN = "_unharnessed/mcp/set_token";
 const MCP_LOGOUT = "_unharnessed/mcp/logout";
 const SKILLS_LIST = "_unharnessed/skills/list";
 const SKILLS_SET = "_unharnessed/skills/set";
@@ -80,13 +82,48 @@ export class Settings {
     }
   }
 
+  /**
+   * Save the group of instructions at `index` (`null`: a new one), or
+   * delete it (`group` null). `connected`: the models the panel shows; the
+   * group keeps its others, whose provider is not connected now. Resolves
+   * the error to show, if any.
+   */
+  async setInstructions(
+    index: number | null,
+    group: ModelInstructions | null,
+    connected: ReadonlySet<string> | null,
+  ): Promise<string | undefined> {
+    const refuse = (reason: string) => {
+      this.log.warn(`settings: modelInstructions refused: ${reason}`);
+      return reason;
+    };
+    // Written over what the file holds: it must be read first.
+    if (!this.view) return refuse("The settings are not read yet.");
+    const groups = savedGroups(this.view);
+    if (index !== null && !groups[index]) return refuse("This group changed meanwhile; open it again.");
+    if (group === null) {
+      if (index === null) return undefined;
+      const rest = groups.filter((_, at) => at !== index);
+      return this.set("modelInstructions", rest.length > 0 ? rest : null);
+    }
+    if (!connected) return refuse("The models show once the session is open.");
+    const checked = [...new Set(group.models)].filter((model) => connected.has(model));
+    const text = group.text.trim();
+    if (checked.length === 0) return refuse("Check at least one model.");
+    if (!text) return refuse("Write the instructions.");
+    return this.set("modelInstructions", withGroup(groups, index, checked, text, connected));
+  }
+
   async refreshMcp(): Promise<void> {
     const run = this.run;
     try {
       const { servers } = await this.agent.request<{ servers: McpServer[] }>(MCP_LIST);
       if (run !== this.run) return;
       this.mcp = servers;
-      this.log.info(`mcp: ${servers.map((server) => `${server.id} (${server.status})`).join(", ") || "none"}`);
+      // Yours by name; the Marketplace, the catalog's other services, by count.
+      const yours = servers.filter((server) => server.source === "user" || server.signedIn);
+      const listed = yours.map((server) => `${server.id} (${server.status})`).join(", ") || "none";
+      this.log.info(`mcp: ${listed}; ${servers.length - yours.length} in the Marketplace`);
       this.changed();
     } catch (error) {
       this.log.warn(`mcp: list failed: ${errorText(error)}`);
@@ -98,6 +135,23 @@ export class Settings {
     this.log.info(`mcp: signed in to ${id}`);
     this.mcpChanged = true;
     void this.refreshMcp();
+  }
+
+  /** Add a Marketplace service by its token: the list shows it, a restart applies it. */
+  async setToken(id: string, token: string): Promise<string | undefined> {
+    const run = this.run;
+    try {
+      const { servers } = await this.agent.request<{ servers: McpServer[] }>(MCP_SET_TOKEN, { id, token });
+      this.log.info(`mcp: token stored for ${id}`);
+      if (run !== this.run) return undefined;
+      this.mcp = servers;
+      this.mcpChanged = true;
+      this.changed();
+      return undefined;
+    } catch (error) {
+      this.log.warn(`mcp: token for ${id} refused: ${errorText(error)}`);
+      return errorText(error);
+    }
   }
 
   async signOut(id: string): Promise<string | undefined> {

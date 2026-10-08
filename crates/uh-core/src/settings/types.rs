@@ -66,7 +66,6 @@ pub struct CompactionSettings {
     pub enabled: Option<bool>,
     pub reserve_tokens: Option<u64>,
     pub keep_recent_tokens: Option<u64>,
-    pub agent_callable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -119,6 +118,16 @@ pub struct RetrySettings {
 pub struct ImageSettings {
     pub auto_resize: Option<bool>,
     pub block_images: Option<bool>,
+}
+
+/// One group of the `modelInstructions` setting: its text joins the system
+/// prompt when the session runs one of its models.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ModelInstructions {
+    /// `provider/model-id` references.
+    pub models: Vec<String>,
+    pub text: String,
 }
 
 /// User-declared MCP server (settings `mcpServers` entry).
@@ -193,6 +202,9 @@ pub struct Settings {
     pub enable_skill_commands: Option<bool>,
     pub enable_builtin_skills: Option<bool>,
     pub images: Option<ImageSettings>,
+    /// Texts for the system prompt, each for some models: a session gets
+    /// the texts of the groups that list its model, in order.
+    pub model_instructions: Option<Vec<ModelInstructions>>,
     /// Rust-only daemon-level model allowlist: model patterns (the
     /// `--models` CLI scope grammar) the daemon may resolve to. Enforced at
     /// the daemon's model-resolution seams (`set_model`, RLM child-model

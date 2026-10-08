@@ -18,6 +18,10 @@ pub const IPYTHON_TOOL_NAME: &str = "ipython";
 pub struct MappingState {
     next_assistant_message_sequence: u64,
     active_assistant_message_id: Option<String>,
+    /// Reasoning blocks open in the streaming message. `OpenRouter` streams
+    /// its reasoning text and its `reasoning_details` as two overlapping
+    /// blocks; the client sees one reasoning while any is open.
+    open_thinking_blocks: u32,
 }
 
 impl MappingState {
@@ -28,6 +32,7 @@ impl MappingState {
             self.next_assistant_message_sequence
         );
         self.active_assistant_message_id = Some(id.clone());
+        self.open_thinking_blocks = 0;
         id
     }
 
@@ -89,6 +94,8 @@ pub enum AcpEngineEvent {
         objective: Option<String>,
         token_budget: Option<u64>,
         tokens_used: Option<u64>,
+        created_at: Option<u64>,
+        updated_at: Option<u64>,
     },
 }
 
@@ -131,6 +138,15 @@ pub fn acp_updates_for_event(
             }]
         }
         AcpEngineEvent::Thinking { started } => {
+            let was_open = state.open_thinking_blocks > 0;
+            state.open_thinking_blocks = if *started {
+                state.open_thinking_blocks + 1
+            } else {
+                state.open_thinking_blocks.saturating_sub(1)
+            };
+            if was_open == (state.open_thinking_blocks > 0) {
+                return Vec::new();
+            }
             vec![session_info_update(&UnharnessedSessionMeta {
                 thinking: Some(super::meta::UnharnessedThinkingMeta {
                     state: if *started { "start" } else { "end" }.to_string(),
@@ -141,6 +157,7 @@ pub fn acp_updates_for_event(
         }
         AcpEngineEvent::MessageEnd { role } if role == "assistant" => {
             state.active_assistant_message_id = None;
+            state.open_thinking_blocks = 0;
             Vec::new()
         }
         AcpEngineEvent::MessageStart { .. }
@@ -189,6 +206,8 @@ pub fn acp_updates_for_event(
             objective,
             token_budget,
             tokens_used,
+            created_at,
+            updated_at,
         } => {
             vec![session_info_update(&UnharnessedSessionMeta {
                 goal: Some(super::meta::UnharnessedGoalMeta {
@@ -196,6 +215,8 @@ pub fn acp_updates_for_event(
                     objective: objective.clone(),
                     token_budget: *token_budget,
                     tokens_used: *tokens_used,
+                    created_at: *created_at,
+                    updated_at: *updated_at,
                 }),
                 ..Default::default()
             })]
@@ -534,6 +555,8 @@ mod tests {
                 objective: Some("ship it".into()),
                 token_budget: Some(1000),
                 tokens_used: Some(42),
+                created_at: None,
+                updated_at: None,
             },
             &mut state,
         );

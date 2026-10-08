@@ -90,6 +90,54 @@ pub struct UnharnessedSessionMeta {
     pub command: Option<UnharnessedCommandMeta>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<UnharnessedThinkingMeta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_end: Option<UnharnessedTurnEndMeta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<UnharnessedUsageMeta>,
+}
+
+/// What the session has used, for the panel's context gauge: published
+/// when the session opens, after each message the loop settles, around a
+/// compaction and after a picker change, whenever it changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnharnessedUsageMeta {
+    /// The context's tokens: the latest reply's usage plus an estimate of
+    /// the messages after it. Absent until a reply measures it (and again
+    /// right after a compaction).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u64>,
+    /// The model's context window; 0 when unknown.
+    pub window: u64,
+    /// The context's tokens past which a compaction runs on its own;
+    /// absent when automatic compaction is off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compact_at: Option<u64>,
+    /// What the conversation has cost so far, in dollars: the replies and
+    /// the compaction summaries, at the catalog's prices.
+    pub cost: f64,
+    /// The provider reports what it billed (`OpenRouter`), so `cost` is
+    /// not an estimate.
+    pub billed: bool,
+    /// Prompt tokens each reply could reuse from the provider's cache (the
+    /// request before it), and those it did.
+    pub cache_reusable: u64,
+    pub cache_reused: u64,
+    /// Dollars the cache reads saved, at each reply's own prices.
+    pub cache_saved: f64,
+    /// A compaction runs.
+    pub compacting: bool,
+}
+
+/// How a turn of a loaded conversation ended (`session/load` replays it;
+/// a live turn ends with its prompt's answer or its response boundary).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnharnessedTurnEndMeta {
+    /// `done`, `cancelled` or `failed`.
+    pub state: String,
+    /// Why it failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// A reasoning block of the streaming assistant message opened or closed.
@@ -106,6 +154,7 @@ pub struct UnharnessedThinkingMeta {
 /// What started a prompt turn, published first in it: the client's
 /// `session/prompt`, or a wake the agent runs on its own.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UnharnessedTurnStartMeta {
     /// `prompt` or `wake`.
     pub origin: String,
@@ -113,6 +162,10 @@ pub struct UnharnessedTurnStartMeta {
     /// (a provider usage limit reset), `goal` (a goal backoff passed).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wake: Option<String>,
+    /// Where the conversation stood before the prompt: going back there
+    /// (`_unharnessed/session/rewind`) lets it be sent again, changed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rewind_to: Option<String>,
 }
 
 /// What a session command answered (the `/goal` status, `/autonomous
@@ -136,6 +189,13 @@ pub struct UnharnessedGoalMeta {
     pub token_budget: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tokens_used: Option<u64>,
+    /// When the goal was set, Unix ms: the panel's timer counts from it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+    /// The goal's last change, Unix ms: a paused or finished goal's timer
+    /// stands at it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<u64>,
 }
 
 /// One compaction that ran during the session.

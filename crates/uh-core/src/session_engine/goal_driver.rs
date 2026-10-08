@@ -12,26 +12,6 @@ use crate::goals::{
 };
 use crate::session::manager::SessionManager;
 
-/// The goal-state reload rule at a branch rebuild (TS
-/// `_reloadGoalStateFromBranch`'s `monotonicTokens` option): a context
-/// rebuild with a summary continues the same timeline, a plain branch
-/// move is time travel and keeps faithful branch semantics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GoalBranchReload {
-    /// A summary context rebuild (compaction-style cut): the rebuilt
-    /// branch's last persisted goal entry can lag the in-memory state
-    /// (queue/flush races; child-usage attribution landing late), so the
-    /// same goal's accounting counters clamp to the max and its status or
-    /// an already-fired gate (budget limit, pause, completion) never
-    /// regresses across the cold boundary. A different goal adopts
-    /// faithfully.
-    SameTimeline,
-    /// A plain branch move (tree navigation without a summary): the moved
-    /// branch's own latest persisted goal state adopts as-is, even when
-    /// it is older — the goal state follows the branch cut.
-    FaithfulBranch,
-}
-
 /// The goal timer's contract (operator ruling 2026-09-28):
 /// `time_used_seconds` is the goal's AGE — the plain wall clock since
 /// the goal's creation, computed fresh from `created_at` on every read.
@@ -165,73 +145,47 @@ impl GoalDriver {
         session.active_goal_state().unwrap_or_else(empty_goal_state)
     }
 
-    /// Reload the goal state from the session's current branch (TS
-    /// `_reloadGoalStateFromBranch` at the `_navigateTree` tail): the
-    /// branch's latest persisted entry adopts under [`rule`]. The timer
-    /// needs no anchor work here — the creation-based contract reads the
-    /// adopted state's `created_at` directly (TS re-anchors its
-    /// `_goalAccountingStartedAt` at the reload; see
-    /// [`creation_elapsed_seconds`]' divergence note).
-    pub fn reload_from_branch(&mut self, session: &SessionManager, rule: GoalBranchReload) {
-        let previous = self.state.clone();
+    /// Reload the goal state from the session's current branch, once the
+    /// conversation went back to an earlier message: the branch's latest
+    /// persisted entry adopts as-is, even when it is older — the goal
+    /// state follows the branch cut. The timer needs no anchor work here —
+    /// the creation-based contract reads the adopted state's `created_at`
+    /// directly (see [`creation_elapsed_seconds`]' divergence note).
+    pub fn reload_from_branch(&mut self, session: &SessionManager) {
         let reloaded = Self::latest_persisted_state(session);
-        self.state = match rule {
-            GoalBranchReload::SameTimeline
-                if reloaded.goal_id.is_some() && reloaded.goal_id == previous.goal_id =>
-            {
-                // The counters clamp to the max; every other field (status,
-                // objective, budget, an already-fired gate) keeps the
-                // in-memory state, mirroring the TS `{ ...previous, max }`
-                // spread (both sides are normalized, so `active` stays
-                // consistent with the kept status).
-                GoalState {
-                    tokens_used: previous.tokens_used.max(reloaded.tokens_used),
-                    continuations_used: previous
-                        .continuations_used
-                        .max(reloaded.continuations_used),
-                    time_used_seconds: previous.time_used_seconds.max(reloaded.time_used_seconds),
-                    ..previous
-                }
+        // The previous goal's pending mint and its armed deferral belong to
+        // the abandoned branch — keeping either would block (or
+        // mis-deliver) the adopted goal's continuations until the next
+        // pause/start/clear. Every other state-adoption site drops both
+        // with the replaced goal; the branch reload does the same.
+        self.continuation_consumed();
+        self.owed_continuation_for_rlm_work = false;
+        // The adopted goal's own durable streak applies (a different goal
+        // never inherits the previous goal's strikes); the backoff window
+        // does not survive the move.
+        self.no_progress_streak = reloaded.no_progress_streak.unwrap_or(0);
+        self.no_progress_backoff_until_ms = 0;
+        self.parked_refusal_until_ms = 0;
+        self.counted_no_progress_turn_ms = reloaded.no_progress_turn_ms;
+        // The restore-resurrection guard (the 402 diagnosis's (d)) applies
+        // to the branch move exactly as it does to `load_persisted`: an
+        // adopted `active` row with a terminal provider failure settled
+        // after it never resurrects — going back onto the branch must not
+        // revive a goal whose provider died before the settle's error row
+        // landed.
+        self.state = if reloaded.status == GoalStatus::Active {
+            match session.stale_active_goal_failure() {
+                Some(error) => GoalState {
+                    active: false,
+                    status: GoalStatus::Error,
+                    last_reason: Some(error.clone()),
+                    last_error: Some(error),
+                    ..reloaded
+                },
+                None => reloaded,
             }
-            _ => {
-                // A different goal (or none) adopts: the previous goal's
-                // pending mint and its armed deferral belong to the old
-                // timeline — keeping either would block (or mis-deliver)
-                // the adopted goal's continuations until the next
-                // pause/start/clear. Every other state-adoption site
-                // drops both with the replaced goal; the branch reload
-                // does the same.
-                self.continuation_consumed();
-                self.owed_continuation_for_rlm_work = false;
-                // The adopted goal's own durable streak applies (a
-                // different goal never inherits the previous goal's
-                // strikes); the backoff window does not survive the move.
-                self.no_progress_streak = reloaded.no_progress_streak.unwrap_or(0);
-                self.no_progress_backoff_until_ms = 0;
-                self.parked_refusal_until_ms = 0;
-                self.counted_no_progress_turn_ms = reloaded.no_progress_turn_ms;
-                // The restore-resurrection guard (the 402 diagnosis's
-                // (d)) applies to the branch move exactly as it does to
-                // `load_persisted` and the daemon's seed: an adopted
-                // `active` row with a terminal provider failure settled
-                // after it never resurrects — navigating back onto the
-                // branch must not revive a goal whose provider died
-                // before the settle's error row landed.
-                if reloaded.status == GoalStatus::Active {
-                    match session.stale_active_goal_failure() {
-                        Some(error) => GoalState {
-                            active: false,
-                            status: GoalStatus::Error,
-                            last_reason: Some(error.clone()),
-                            last_error: Some(error),
-                            ..reloaded
-                        },
-                        None => reloaded,
-                    }
-                } else {
-                    reloaded
-                }
-            }
+        } else {
+            reloaded
         };
     }
 

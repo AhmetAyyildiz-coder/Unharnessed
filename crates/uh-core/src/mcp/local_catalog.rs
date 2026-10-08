@@ -6,14 +6,11 @@
 //! The loader is deliberately narrow: a bounded read of a regular file +
 //! JSON parse + structural validation — no execution, no network, no
 //! credential access. A local file can never masquerade as trusted:
-//! provenance may only claim the `user` source, `legacyBuiltin` and
-//! `metadata-reviewed` review status cannot be self-asserted, audit-derived
-//! `setup.readiness` cannot be self-asserted, and ids colliding with the
-//! compiled built-ins are refused (no silent override/rebind of reserved
-//! ids). Errors are visible and bounded: they name the file and entry index
+//! provenance may only claim the `user` source, the `metadata-reviewed`
+//! review status cannot be self-asserted, and neither can audit-derived
+//! `setup.readiness`. Errors are visible and bounded: they name the file and entry index
 //! and never echo raw input values.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::catalog_schema::{McpServiceEntry, ProvenanceSource, VerificationStatus};
@@ -25,7 +22,7 @@ pub const MAX_LOCAL_CATALOG_ENTRIES: usize = 50;
 /// The local read chunk (bounds how far an oversized read can go).
 const READ_CHUNK: usize = 64 * 1024;
 
-/// Validated local entries in file order (ids unique and non-reserved).
+/// Validated local entries in file order (ids unique).
 #[derive(Debug, Clone, Default)]
 pub struct LocalCatalogLoadResult {
     pub entries: Vec<McpServiceEntry>,
@@ -44,15 +41,7 @@ struct LocalCatalogFile {
 /// Load and validate one local service source file. A missing file is not an
 /// error and yields zero entries; every problem with an existing file is a
 /// returned error naming the path (and entry index where applicable).
-///
-/// `reserved` maps every id this installation already owns (compiled
-/// built-ins plus the remote/bundled catalog) to its label; a local entry
-/// colliding with any of them is refused — local sources cannot shadow or
-/// rebind reserved ids.
-pub fn load_local_service_catalog(
-    path: &Path,
-    reserved: &HashMap<String, String>,
-) -> Result<LocalCatalogLoadResult, String> {
+pub fn load_local_service_catalog(path: &Path) -> Result<LocalCatalogLoadResult, String> {
     if !path.exists() {
         return Ok(LocalCatalogLoadResult::default());
     }
@@ -113,12 +102,7 @@ pub fn load_local_service_catalog(
                 "{at} ({id}): local entries need at least one provenance record with source \"user\""
             ));
         }
-        // Review status and legacy-builtin trust cannot be self-asserted.
-        if entry.legacy_builtin {
-            return Err(format!(
-                "{at} ({id}): local entries cannot claim legacyBuiltin; it is reserved for Prime built-ins"
-            ));
-        }
+        // Review status cannot be self-asserted.
         if entry.verification.status != VerificationStatus::Unverified {
             return Err(format!(
                 "{at} ({id}): local entries cannot claim \"{}\"; local sources are always unverified",
@@ -135,11 +119,6 @@ pub fn load_local_service_catalog(
         }
         if !seen_local.insert(id.clone()) {
             return Err(format!("{at}: duplicate local id \"{id}\""));
-        }
-        if let Some(label) = reserved.get(&id) {
-            return Err(format!(
-                "{at}: id \"{id}\" collides with the bundled catalog entry for \"{label}\"; local sources cannot shadow or rebind built-ins — pick another id"
-            ));
         }
         entries.push(entry.clone());
     }

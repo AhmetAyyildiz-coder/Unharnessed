@@ -1,17 +1,14 @@
-//! The merged MCP service catalog: resolution of the compiled legacy
-//! built-ins, declared local sources, and the remote (discovery-only)
-//! catalog, plus the durable endpoint pins for installed connections whose
+//! The merged MCP service catalog: resolution of the declared local
+//! sources and the remote (discovery-only) catalog, plus the durable endpoint pins for installed connections whose
 //! source vanished. Port of
 //! `packages/coding-agent/src/core/mcp/service-catalog.ts`
 //! (`resolveMcpServiceCatalog` + `mapCatalogEntry`) over the
 //! `packages/ai/src/mcp/local-catalog.ts` loader.
 //!
-//! Resolution order, first wins per id: compiled built-ins (linear, notion)
-//! -> declared local sources (`mcp-services.json`, trusted by construction)
-//! -> remote catalog entries (discovery-only). A local source can never
-//! shadow or rebind a builtin id (refused at load with a visible
-//! diagnostic); a remote id a local source already owns is dropped with a
-//! visible duplicate diagnostic. The SAME resolution feeds the host
+//! Resolution order, first wins per id: declared local sources
+//! (`mcp-services.json`, trusted by construction) -> remote catalog entries
+//! (discovery-only). A remote id a local source already owns is dropped
+//! with a visible duplicate diagnostic. The SAME resolution feeds the host
 //! integrations and the `/mcp` view so both views agree.
 
 use std::collections::HashMap;
@@ -50,8 +47,6 @@ pub struct McpServiceDescriptor {
     /// True only for entries whose provider OAuth metadata was reviewed
     /// (`verification.status`); never a runtime/interop claim.
     pub metadata_reviewed: bool,
-    /// True for pre-catalog legacy built-ins; their ids stay reserved.
-    pub legacy_builtin: bool,
     /// True when the entry came from a user-declared local source.
     pub local_source: bool,
     /// True when the service's source vanished; the descriptor is pinned to
@@ -132,7 +127,6 @@ impl McpServiceDescriptor {
                 fields: entry.setup.fields.clone().unwrap_or_default(),
             },
             metadata_reviewed: entry.verification.status == VerificationStatus::MetadataReviewed,
-            legacy_builtin: entry.legacy_builtin,
             local_source,
             pinned_from_record: false,
         }
@@ -165,14 +159,13 @@ impl McpServiceDescriptor {
                 fields: Vec::new(),
             },
             metadata_reviewed: false,
-            legacy_builtin: false,
             local_source: false,
             pinned_from_record: true,
         }
     }
 }
 
-/// Result of merging the compiled built-ins with local sources and remote
+/// Result of merging the local sources with the remote
 /// entries: the descriptors plus visible wiring diagnostics.
 #[derive(Debug, Clone, Default)]
 pub struct McpCatalogResolution {
@@ -193,8 +186,7 @@ pub struct LocalCatalogSource {
 /// discovery bounded while never trimming manageability.
 pub const MAX_TOTAL_CATALOG_ENTRIES: usize = 500;
 
-/// Resolve the merged service catalog: compiled legacy built-ins, every
-/// declared local source, the remote (discovery-only) entries, then the
+/// Resolve the merged service catalog: every declared local source, the remote (discovery-only) entries, then the
 /// durable pins from existing connection records. First source wins per id;
 /// problems surface as visible diagnostics, never as failures.
 pub fn resolve_mcp_service_catalog(
@@ -224,24 +216,13 @@ pub fn resolve_mcp_service_catalog(
         );
     };
 
-    // 1. Compiled legacy built-ins: their ids are reserved.
-    let builtins = super::catalog_schema::compiled_builtin_services();
-    let mut reserved: HashMap<String, String> = HashMap::new();
-    for entry in &builtins {
-        reserved.insert(entry.server.clone(), entry.label.clone());
-        add_entry(entry, false, &mut by_id, &mut order, &mut diagnostics);
-    }
-    // 2. Reserved ids = the COMPILED builtins only (spec §3.6 resolution:
-    //    first wins per id, and a local source can never shadow or rebind
-    //    a builtin). Remote entries are discovery-only and later in the
-    //    order, so a local id equal to a remote id wins and the dropped
-    //    remote entry surfaces as a visible duplicate diagnostic. A
-    //    dynamic remote refresh can therefore never break a user's local
-    //    file by claiming its id later.
-    // 3. Local sources: first source wins per id; one unreadable/invalid
-    //    source never blocks the rest.
+    // 1. Local sources: first source wins per id; one unreadable/invalid
+    //    source never blocks the rest. Remote entries come later, so a
+    //    local id equal to a remote id wins and the dropped remote entry
+    //    surfaces as a visible duplicate diagnostic: a remote refresh can
+    //    never break a user's local file by claiming its id later.
     for source in local_sources {
-        match load_local_service_catalog(&source.path, &reserved) {
+        match load_local_service_catalog(&source.path) {
             Ok(loaded) => {
                 if loaded.path.is_none() {
                     if source.declared {
@@ -270,13 +251,13 @@ pub fn resolve_mcp_service_catalog(
             }
         }
     }
-    // 4. Remote entries (discovery-only): dropped per id collision above.
+    // 2. Remote entries (discovery-only): dropped per id collision above.
     if let Some(remote_entries) = remote {
         for entry in remote_entries {
             add_entry(entry, false, &mut by_id, &mut order, &mut diagnostics);
         }
     }
-    // 5. Durable pins: records of services the catalog no longer defines.
+    // 3. Durable pins: records of services the catalog no longer defines.
     for record in records {
         if by_id.contains_key(&record.service_id) {
             continue;
@@ -293,9 +274,8 @@ pub fn resolve_mcp_service_catalog(
         .into_iter()
         .filter_map(|id| by_id.remove(&id))
         .collect();
-    // 6. The total cap: installed connections and built-ins are never
-    //    trimmed (dropping one would resurrect shadow entries or hide
-    //    credential-only accounts); only uninstalled candidates fill the
+    // 4. The total cap: installed connections are never trimmed (dropping
+    //    one would hide credential-only accounts); only uninstalled candidates fill the
     //    remaining budget, and an over-cap retained inventory still wins
     //    with an explicit diagnostic instead of silent truncation.
     if descriptors.len() > MAX_TOTAL_CATALOG_ENTRIES {
@@ -307,9 +287,7 @@ pub fn resolve_mcp_service_catalog(
         let mut fill: Vec<McpServiceDescriptor> = Vec::new();
         let mut ignored = 0usize;
         for descriptor in descriptors {
-            let retained =
-                installed.contains(descriptor.service_id.as_str()) || descriptor.legacy_builtin;
-            if retained {
+            if installed.contains(descriptor.service_id.as_str()) {
                 kept.push(descriptor);
             } else if kept.len() + fill.len() < MAX_TOTAL_CATALOG_ENTRIES {
                 fill.push(descriptor);
@@ -318,7 +296,7 @@ pub fn resolve_mcp_service_catalog(
             }
         }
         diagnostics.push(format!(
-            "MCP service catalog discovery capped at {MAX_TOTAL_CATALOG_ENTRIES} entries; {ignored} entries were ignored. Installed connections and built-in services are always kept{}.",
+            "MCP service catalog discovery capped at {MAX_TOTAL_CATALOG_ENTRIES} entries; {ignored} entries were ignored. Installed connections are always kept{}.",
             if kept.len() > MAX_TOTAL_CATALOG_ENTRIES {
                 format!(" (retained inventory alone exceeded the cap: {} kept)", kept.len())
             } else {

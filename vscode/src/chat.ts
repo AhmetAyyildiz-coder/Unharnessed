@@ -1,16 +1,20 @@
 import type * as vscode from "vscode";
-import { errorText, type Agent } from "./agent";
+import { errorText, type Agent, type SavedSession } from "./agent";
+import { withoutLinks, type Files } from "./files";
 import type {
   Attachment,
   ChatCommand,
   ChatEntry,
+  ChatPatch,
   ChatState,
   EntryHead,
+  Goal,
   HostMessage,
   QueuedMessage,
   Thumb,
   TurnHead,
   TurnItem,
+  Usage,
 } from "./protocol";
 import type { Session } from "./session";
 
@@ -25,28 +29,39 @@ const PANEL_COMMANDS: ChatCommand[] = [{ name: "new", description: "Start a new 
 const WAKES = { bash: "a background command ended", quota: "a usage limit reset", goal: "a goal's pause ended" };
 
 type Turn = TurnHead & { items: TurnItem[] };
-type Queued = { id: number; text: string; images: Attachment[] };
+/**
+ * `edit`: the turn whose prompt it replaces. `quiet`: the goal's pause or
+ * play, from the panel's buttons; shown neither waiting nor as a prompt.
+ */
+type Queued = { id: number; text: string; images: Attachment[]; edit?: number; quiet?: boolean };
 type Tool = Extract<TurnItem, { kind: "tool" }>;
-export type ChatMessage = Extract<HostMessage, { type: "chat" | "chatPatch" | "chatDraft" }>;
+type Compaction = Extract<TurnItem, { kind: "compaction" }>;
+/** A compaction's mark: its turn, and where in it. */
+type Mark = { turn: Turn; at: number };
+export type ChatMessage = Extract<HostMessage, { type: "chat" | "chatPatch" | "chatDraft" | "chatEdit" }>;
 
 /** `_meta.unharnessed` on an update (crates/uh-daemon/src/acp/meta.rs), the parts read here. */
 type Meta = {
   promptTurnId?: number;
   phase?: "event" | "responseBoundary" | "terminalQuiescence";
   outcome?: "result" | "error";
-  turnStart?: { origin: "prompt" | "wake"; wake?: keyof typeof WAKES };
+  turnStart?: { origin: "prompt" | "wake"; wake?: keyof typeof WAKES; rewindTo?: string };
   command?: { name: string; text: string; severity: string };
   thinking?: { state: "start" | "end"; messageId: string };
+  /** How a turn of a loaded conversation ended. */
+  turnEnd?: { state: "done" | "cancelled" | "failed"; error?: string };
   compaction?: { tokensBefore?: number; summary?: string };
-  goal?: { status: string; objective?: string };
+  goal?: { status: string; objective?: string; createdAt?: number; updatedAt?: number };
   ipython?: { attachments?: unknown[]; diffCount?: number };
+  usage?: Usage;
 };
 
 /** A `session/update`'s `update`, the parts read here. */
 type Update = {
   sessionUpdate: string;
   messageId?: string;
-  content?: { text?: string } | { content?: { text?: string } }[];
+  /** A chunk's block (text, or an image of a prompt), or a tool's output. */
+  content?: { type?: string; text?: string; mimeType?: string; data?: string } | { content?: { text?: string } }[];
   toolCallId?: string;
   title?: string;
   status?: string;
@@ -55,7 +70,7 @@ type Update = {
     name: string;
     description: string;
     input?: { hint?: string } | null;
-    _meta?: { unharnessed?: { kind?: string } };
+    _meta?: { unharnessed?: { kind?: string; source?: string } };
   }[];
   _meta?: { unharnessed?: Meta };
 };
@@ -64,8 +79,10 @@ type Update = {
  * The conversation in the session: what the user sent, what the agent
  * streamed back, the turns it started on its own (a background command
  * ending, a usage limit resetting). One turn runs at a time: a message
- * sent meanwhile waits, then goes when the turn ends. It outlives the
- * panel; the panel gets it whole when it opens, then what changed.
+ * sent meanwhile waits, then goes when the turn ends. A saved conversation
+ * comes back as the agent replays it, turn after turn, before its session
+ * opens. It outlives the panel; the panel gets it whole when it opens,
+ * then what changed.
  */
 export class Chat {
   private entries: ChatEntry[] = [];
@@ -78,14 +95,25 @@ export class Chat {
   private live: Turn | undefined;
   /** The agent's turn ids, ours for this process. */
   private turns = new Map<number, Turn>();
+  /** Each prompt's images, whole, for when it is edited: the panel holds their thumbnails. */
+  private images = new Map<number, Attachment[]>();
   /** The last streamed item: chunks of the same message and kind join it. */
   private streaming: { item: TurnItem; key: string } | undefined;
   /** The reasoning under way, timed from when it opened. */
   private thinking: { turn: Turn; at: number } | undefined;
   /** The goal's status, to tell when it changes. */
   private goal: string | undefined;
+  /** The goal the panel shows: one reached or failed stays until the next message. */
+  private goalState: Goal | null = null;
+  private goalChanged = false;
+  private usage: Usage | null = null;
+  private usageChanged = false;
+  /** The compaction under way, marked in the turn it runs in. */
+  private compacting: Mark | undefined;
   /** Bumped per agent process, so a late answer never lands on the next one. */
   private run = 0;
+  /** A saved conversation comes back: the panel gets it once it is whole. */
+  private loading = false;
   private dirtyHeads = new Set<number>();
   private dirtyItems = new Map<number, Set<number>>();
   private commandsChanged = false;
@@ -95,6 +123,7 @@ export class Chat {
   constructor(
     private readonly agent: Agent,
     private readonly session: Session,
+    private readonly files: Files,
     private readonly log: vscode.LogOutputChannel,
   ) {
     agent.onNotification("session/update", (params) => this.onUpdate(params));
@@ -103,13 +132,29 @@ export class Chat {
       this.turns.clear();
       this.streaming = undefined;
       this.goal = undefined;
+      this.showGoal(null);
       this.commands = PANEL_COMMANDS;
       this.commandsChanged = true;
+      // A new process reports its own conversation.
+      this.usage = null;
+      this.usageChanged = true;
       for (const turn of [this.sent, this.live]) {
         if (turn?.state === "running") this.end(turn, "failed", "The agent stopped.");
       }
+      this.compacting = undefined;
+      for (const entry of this.entries) {
+        if (entry.kind === "turn" && entry.rewindTo !== undefined) {
+          delete entry.rewindTo;
+          this.dirtyHeads.add(entry.id);
+        }
+      }
       this.sent = this.live = undefined;
       if (state.kind !== "ready") this.handBack();
+      // The agent stopped before the conversation came back.
+      if (state.kind === "failed" && this.loading) {
+        this.loading = false;
+        this.post({ type: "chat", chat: this.current });
+      }
       // A conversation went on before: the agent no longer remembers it.
       const last = this.entries.at(-1);
       if (state.kind === "ready" && last && last.kind !== "restart") {
@@ -119,16 +164,23 @@ export class Chat {
       }
       this.changed();
     });
-    // Messages sent before the session opened go once it is.
-    session.onChange(() => this.next());
+    session.onChange(() => {
+      const state = session.current;
+      if (this.loading && (state?.kind === "open" || state?.kind === "failed")) this.loaded();
+      // Messages sent before the session opened go once it is.
+      this.next();
+    });
   }
 
   get current(): ChatState {
     return {
       entries: this.entries,
       busy: this.busy,
+      loading: this.loading,
       queue: this.queued(),
       commands: this.commands,
+      usage: this.usage,
+      goal: this.goalState,
     };
   }
 
@@ -137,13 +189,19 @@ export class Chat {
     return { dispose: () => this.listeners.delete(listener) };
   }
 
-  /** `/new` starts a new conversation; anything else goes, now or after the running turn. */
-  send(text: string, images: Attachment[]): void {
+  /**
+   * `/new` starts a new conversation; anything else goes, now or after the
+   * running turn. An `edit` replaces that turn's prompt: the agent goes back
+   * to before it, and the turns from it on leave the conversation.
+   */
+  send(text: string, images: Attachment[], edit?: number): void {
     if (text.trim() === "/new" && images.length === 0) {
       this.newChat();
       return;
     }
-    const message = { id: this.nextId++, text, images };
+    const message = { id: this.nextId++, text, images, edit };
+    // A goal reached or failed leaves with the next message.
+    if (this.goalState?.status === "complete" || this.goalState?.status === "error") this.showGoal(null);
     if (this.busy || !this.session.sessionId) {
       this.queue.push(message);
       this.log.info(`chat: queued (${this.queue.length} waiting)`);
@@ -151,6 +209,17 @@ export class Chat {
       return;
     }
     void this.start(message);
+  }
+
+  /**
+   * `/name` for the skill `name`, as the agent takes it: `/skill:name`. A
+   * command or prompt of that name keeps it.
+   */
+  private skillCommand(text: string): string {
+    const name = /^\/([^\s:]+)(?=\s|$)/.exec(text)?.[1];
+    if (!name || this.commands.some((command) => command.name === name)) return text;
+    const skill = this.commands.some((command) => command.kind === "skill" && command.name === `skill:${name}`);
+    return skill ? `/skill:${text.slice(1)}` : text;
   }
 
   /** Stops the running turn; the waiting messages go back to the message box. */
@@ -164,6 +233,48 @@ export class Chat {
     if (this.live && this.live !== this.sent) this.end(this.live, "cancelled");
   }
 
+  /** The goal waits: the running turn stops, then `/goal pause` goes. */
+  pauseGoal(): void {
+    if (this.queue[0]?.quiet) return;
+    this.log.info("chat: goal paused from the panel");
+    this.cancel();
+    this.control("/goal pause");
+  }
+
+  /** The goal goes on: `/goal resume`, once nothing runs. */
+  resumeGoal(): void {
+    if (this.queue[0]?.quiet) return;
+    this.log.info("chat: goal resumed from the panel");
+    this.control("/goal resume");
+  }
+
+  /** The goal goes: the running turn stops, then `/goal clear`. One reached or failed just leaves the box. */
+  endGoal(): void {
+    if (this.goalState?.status === "complete" || this.goalState?.status === "error") {
+      this.showGoal(null);
+      return;
+    }
+    this.log.info("chat: goal ended from the panel");
+    this.cancel();
+    this.control("/goal clear");
+  }
+
+  /** A goal command from the panel's buttons: first in line. */
+  private control(text: string): void {
+    this.queue.unshift({ id: this.nextId++, text, images: [], quiet: true });
+    this.next();
+  }
+
+  /** A sent prompt back in the message box, to be changed and sent again. */
+  edit(id: number): void {
+    const turn = this.entries.find((entry) => entry.id === id);
+    if (turn?.kind !== "turn" || !turn.prompt || turn.rewindTo === undefined) return;
+    const { text } = turn.prompt;
+    const images = this.images.get(id) ?? [];
+    this.log.info(`chat: turn ${id} back in the message box to edit (${text.length} chars, ${count(images.length, "image")})`);
+    this.post({ type: "chatEdit", id, text, images });
+  }
+
   unqueue(id: number): void {
     this.queue = this.queue.filter((message) => message.id !== id);
     this.changed();
@@ -172,39 +283,86 @@ export class Chat {
   /** The agent restarts: a new process holds a new conversation. */
   newChat(): void {
     this.log.info("chat: new conversation");
+    this.clear(false);
+    void this.agent.restart();
+  }
+
+  /** The agent restarts on a saved conversation, which comes back here. */
+  open(saved: SavedSession): void {
+    this.log.info(`chat: opening conversation ${saved.id}`);
+    this.clear(true);
+    void this.agent.restart(saved);
+  }
+
+  private clear(loading: boolean): void {
     this.handBack();
-    // Nothing the stopping process still sends lands in the new conversation.
+    // Nothing the stopping process still sends lands in the next conversation.
     this.run++;
     this.turns.clear();
-    this.streaming = this.thinking = undefined;
+    this.images.clear();
+    this.streaming = this.thinking = this.compacting = undefined;
     this.entries = [];
     this.sent = this.live = undefined;
+    this.usage = null;
+    this.goal = undefined;
+    this.showGoal(null);
+    this.loading = loading;
     this.post({ type: "chat", chat: this.current });
-    void this.agent.restart();
+  }
+
+  /** The saved conversation is back (or the agent could not load it). */
+  private loaded(): void {
+    this.loading = false;
+    if (this.session.current?.kind === "open") {
+      const turns = this.entries.filter((entry) => entry.kind === "turn") as Turn[];
+      this.log.info(`chat: loaded ${count(turns.length, "turn")}; ${summary(turns.flatMap((turn) => turn.items))}`);
+    }
+    this.post({ type: "chat", chat: this.current });
   }
 
   private get busy(): boolean {
     return this.sent !== undefined || this.live !== undefined;
   }
 
-  private async start({ id, text, images }: Queued): Promise<void> {
+  private async start({ id, text, images, edit, quiet }: Queued): Promise<void> {
     const sessionId = this.session.sessionId;
     if (!sessionId) return;
     const run = this.run;
     const turn: Turn = {
       kind: "turn",
       id,
-      prompt: { text, images: images.map(thumbOf) },
+      prompt: quiet ? undefined : { text, images: images.map(thumbOf) },
       state: "running",
       items: [],
     };
-    this.entries.push(turn);
+    this.images.set(id, images);
     this.sent = turn;
-    this.dirtyHeads.add(id);
-    this.changed();
+    if (edit !== undefined) {
+      const error = await this.rewind(sessionId, edit);
+      if (run !== this.run) return;
+      if (error) {
+        this.entries.push(turn);
+        this.end(turn, "failed", `It could not go back to the message: ${error}`);
+        return;
+      }
+      // The edited turn and what came after leave; the panel gets the rest whole.
+      const at = this.entries.findIndex((entry) => entry.id === edit);
+      if (at >= 0) this.entries.splice(at);
+      this.entries.push(turn);
+      this.post({ type: "chat", chat: this.current });
+    } else {
+      this.entries.push(turn);
+      this.dirtyHeads.add(id);
+      this.changed();
+    }
     this.log.info(`chat: turn ${id} sent (${text.length} chars, ${count(images.length, "image")})`);
+    const links = this.files.links(text);
+    if (links.length > 0) this.log.info(`chat: turn ${id} links ${links.map((link) => link.name).join(", ")}`);
+    const skill = this.skillCommand(text);
+    if (skill !== text) this.log.info(`chat: turn ${id} runs ${skill.split(/\s/, 1)[0]}`);
     const prompt = [
-      { type: "text", text },
+      { type: "text", text: skill },
+      ...links,
       ...images.map(({ mimeType, data }) => ({ type: "image", mimeType, data })),
     ];
     try {
@@ -220,14 +378,35 @@ export class Chat {
     }
   }
 
+  /** The agent goes back to before `edited`'s prompt; why not, when it cannot. */
+  private async rewind(sessionId: string, edited: number): Promise<string | undefined> {
+    const turn = this.entries.find((entry) => entry.id === edited);
+    if (turn?.kind !== "turn" || turn.rewindTo === undefined) {
+      return "it is no longer in the agent's conversation.";
+    }
+    try {
+      await this.agent.request("_unharnessed/session/rewind", { sessionId, to: turn.rewindTo });
+    } catch (error) {
+      this.log.warn(`chat: going back to before turn ${edited} failed: ${errorText(error)}`);
+      return errorText(error);
+    }
+    this.log.info(`chat: back to before turn ${edited}`);
+    return undefined;
+  }
+
   private end(turn: Turn, state: Turn["state"], error?: string, reason?: string): void {
     if (this.thinking?.turn === turn) this.settle();
+    // Its compaction never said how it ended.
+    if (this.compacting?.turn === turn) this.unmark();
     if (turn.state === "running") {
       turn.state = state;
       if (error) turn.error = error;
       this.dirtyHeads.add(turn.id);
       const why = reason ? ` (${reason})` : "";
-      this.log.info(`chat: turn ${turn.id} ${state}${why}${error ? `: ${error}` : ""}; ${summary(turn)}`);
+      // A replayed turn: the load says it once for all.
+      if (!this.loading) {
+        this.log.info(`chat: turn ${turn.id} ${state}${why}${error ? `: ${error}` : ""}; ${summary(turn.items)}`);
+      }
     }
     if (this.sent === turn) this.sent = undefined;
     if (this.live === turn) this.live = undefined;
@@ -246,6 +425,8 @@ export class Chat {
 
   /** The waiting messages, back to the message box. */
   private handBack(): void {
+    // A goal command the buttons sent is not the user's to write again.
+    this.queue = this.queue.filter((message) => !message.quiet);
     if (this.queue.length === 0) return;
     const text = this.queue
       .map((message) => message.text)
@@ -260,11 +441,23 @@ export class Chat {
 
   private onUpdate(params: unknown): void {
     const { sessionId, update } = params as { sessionId: string; update: Update };
-    if (sessionId !== this.session.sessionId) return;
+    if (sessionId !== this.session.updatesFrom) return;
     const meta = update._meta?.unharnessed ?? {};
     if (update.sessionUpdate === "available_commands_update") {
       this.setCommands(update.availableCommands ?? []);
       return;
+    }
+    if (meta.usage) {
+      if (meta.usage.compacting && !this.usage?.compacting) this.mark();
+      this.usage = meta.usage;
+      this.usageChanged = true;
+      this.log.info(`chat: ${usageText(meta.usage)}`);
+      this.changed();
+      return;
+    }
+    if (meta.goal) {
+      const { status, objective, createdAt, updatedAt } = meta.goal;
+      this.showGoal(status === "idle" || !objective ? null : { status: status as Goal["status"], objective, createdAt, updatedAt });
     }
     if (meta.turnStart) {
       this.begin(meta.promptTurnId ?? 0, meta.turnStart);
@@ -273,6 +466,9 @@ export class Chat {
     const turn = this.turns.get(meta.promptTurnId ?? 0) ?? this.live;
     if (!turn) return;
     switch (update.sessionUpdate) {
+      case "user_message_chunk":
+        this.prompted(turn, update.content);
+        break;
       case "agent_thought_chunk":
       case "agent_message_chunk": {
         const text = !Array.isArray(update.content) ? (update.content?.text ?? "") : "";
@@ -300,9 +496,22 @@ export class Chat {
 
   /** What started a turn comes first in it: our prompt, or a wake. */
   private begin(agentTurn: number, start: NonNullable<Meta["turnStart"]>): void {
+    // A turn of the conversation the agent replays: its prompt follows.
+    if (this.loading) {
+      const turn: Turn = { kind: "turn", id: this.nextId++, wake: start.wake, state: "running", items: [] };
+      if (start.rewindTo !== undefined) turn.rewindTo = start.rewindTo;
+      this.turns.set(agentTurn, turn);
+      this.entries.push(turn);
+      return;
+    }
     if (start.origin === "prompt" && this.sent) {
       this.turns.set(agentTurn, this.sent);
       this.live = this.sent;
+      if (start.rewindTo !== undefined) {
+        this.sent.rewindTo = start.rewindTo;
+        this.dirtyHeads.add(this.sent.id);
+        this.changed();
+      }
       return;
     }
     const turn: Turn = { kind: "turn", id: this.nextId++, wake: start.wake, state: "running", items: [] };
@@ -321,6 +530,23 @@ export class Chat {
     this.changed();
   }
 
+  /** A block of a replayed prompt: its text, or one of its images. */
+  private prompted(turn: Turn, block: Update["content"]): void {
+    if (!block || Array.isArray(block)) return;
+    const prompt = (turn.prompt ??= { text: "", images: [] });
+    if (block.type === "image" && block.data && block.mimeType) {
+      const image = { data: block.data, mimeType: block.mimeType, thumb: `data:${block.mimeType};base64,${block.data}`, name: "image" };
+      prompt.images.push(thumbOf(image));
+      this.images.set(turn.id, [...(this.images.get(turn.id) ?? []), image]);
+    } else if (block.text) {
+      const text = withoutLinks(block.text);
+      const links = block.text.split("\n").length - text.split("\n").length;
+      if (links > 0) this.log.info(`chat: turn ${turn.id} replayed without its ${count(links, "link")}`);
+      prompt.text = prompt.text ? `${prompt.text}\n${text}` : text;
+    }
+    this.dirtyHeads.add(turn.id);
+  }
+
   private stream(turn: Turn, kind: "thought" | "text", key: string, text: string): void {
     if (!text) return;
     const last = turn.items.at(-1);
@@ -332,7 +558,8 @@ export class Chat {
       const item: TurnItem = kind === "thought" ? { kind, text, started: Date.now() } : { kind, text };
       this.push(turn, item);
       this.streaming = { item, key };
-      if (kind === "thought") this.thinking = { turn, at: turn.items.length - 1 };
+      // A replayed reasoning is not timed: how long it took was not kept.
+      if (kind === "thought" && !this.loading) this.thinking = { turn, at: turn.items.length - 1 };
     }
     this.changed();
   }
@@ -367,6 +594,12 @@ export class Chat {
     this.changed();
   }
 
+  /** Said once per turn: a `/goal` command's answer and the goal's change say the same. */
+  private notice(turn: Turn, tone: "info" | "warning" | "error", text: string): void {
+    if (turn.items.some((item) => item.kind === "notice" && item.text === text)) return;
+    this.push(turn, { kind: "notice", tone, text });
+  }
+
   private toolDone(turn: Turn, update: Update, meta: Meta): void {
     const at = turn.items.findIndex((item) => item.kind === "tool" && item.id === update.toolCallId);
     if (at < 0) return;
@@ -384,23 +617,25 @@ export class Chat {
     this.changed();
   }
 
-  /** Reasoning opening and closing, a command's answer, a compaction, a goal's change; the end of a turn the agent started. */
+  /** Reasoning opening and closing, a command's answer, a compaction, a goal's change; the end of a turn the agent started or replayed. */
   private info(turn: Turn, meta: Meta): void {
+    if (meta.turnEnd) {
+      this.end(turn, meta.turnEnd.state, meta.turnEnd.error);
+      return;
+    }
     if (meta.thinking?.state === "start") this.think(turn, meta.thinking.messageId);
     if (meta.thinking?.state === "end") this.settle();
     if (meta.command) {
       const { severity, text } = meta.command;
       const tone = severity === "error" || severity === "warning" ? severity : "info";
-      this.push(turn, { kind: "notice", tone, text });
+      this.notice(turn, tone, text);
     }
-    if (meta.compaction?.tokensBefore !== undefined) {
-      const before = meta.compaction.tokensBefore.toLocaleString("en-US");
-      this.push(turn, { kind: "notice", tone: "info", text: `Compacted the conversation (${before} tokens before).` });
-    }
+    if (meta.compaction) this.compacted(turn, meta.compaction);
     if (meta.goal && meta.goal.status !== this.goal) {
       this.goal = meta.goal.status;
       const objective = meta.goal.objective ? `: ${meta.goal.objective}` : "";
-      this.push(turn, { kind: "notice", tone: "info", text: `Goal ${meta.goal.status}${objective}` });
+      // A cleared goal: `/goal clear` says it.
+      if (meta.goal.status !== "idle") this.notice(turn, "info", `Goal ${meta.goal.status}${objective}`);
     }
     // Our prompt ends with its answer; a turn the agent started, here.
     if (meta.phase === "responseBoundary" && turn !== this.sent) {
@@ -409,15 +644,71 @@ export class Chat {
     }
   }
 
+  /** A compaction starts: it shows in the running turn, at its end. */
+  private mark(): void {
+    const turn = this.live ?? this.sent;
+    if (!turn || this.compacting) return;
+    const auto = !isCompact(turn);
+    this.push(turn, { kind: "compaction", state: "running", auto });
+    this.compacting = { turn, at: turn.items.length - 1 };
+    this.log.info(`chat: turn ${turn.id} compacting${auto ? " automatically" : ""}`);
+  }
+
+  /**
+   * A compaction ended: one that ran tells how much it summarized, and
+   * holds the summary; one that did not (skipped, failed, stopped) leaves.
+   * A replayed one comes done.
+   */
+  private compacted(turn: Turn, { tokensBefore, summary }: NonNullable<Meta["compaction"]>): void {
+    if (tokensBefore === undefined) {
+      this.unmark();
+      return;
+    }
+    const mark = this.compacting;
+    this.compacting = undefined;
+    const running = mark?.turn.items[mark.at];
+    const auto = running?.kind === "compaction" ? running.auto : !isCompact(turn);
+    const item: Compaction = { kind: "compaction", state: "done", auto, tokensBefore };
+    if (summary) item.summary = summary;
+    if (mark && running?.kind === "compaction") {
+      mark.turn.items[mark.at] = item;
+      this.dirtyItem(mark.turn, mark.at);
+      this.changed();
+    } else {
+      this.push(turn, item);
+    }
+    if (this.loading) return;
+    const where = mark?.turn ?? turn;
+    const kept = summary ? `, a summary of ${count(summary.length, "char")}` : ", no summary";
+    this.log.info(`chat: turn ${where.id} compacted (${tokensBefore.toLocaleString("en-US")} tokens summarized${kept})`);
+  }
+
+  /** The running compaction's mark leaves: it did not run. */
+  private unmark(): void {
+    const mark = this.compacting;
+    this.compacting = undefined;
+    if (mark?.turn.items[mark.at]?.kind !== "compaction") return;
+    mark.turn.items.splice(mark.at, 1);
+    this.streaming = undefined;
+    this.log.info(`chat: turn ${mark.turn.id} compaction did not run`);
+    // What followed it moved up: the panel gets the conversation whole.
+    this.post({ type: "chat", chat: this.current });
+  }
+
+  /** The agent's commands, prompts and skills; its built-in skills are its own business. */
   private setCommands(commands: NonNullable<Update["availableCommands"]>): void {
     const kinds = ["command", "prompt", "skill"] as const;
-    const agent = commands.map(({ name, description, input, _meta }): ChatCommand => {
-      const kind = kinds.find((k) => k === _meta?.unharnessed?.kind) ?? "command";
-      return { name, description, hint: input?.hint || undefined, kind };
-    });
+    const builtin = commands.filter(({ _meta }) => _meta?.unharnessed?.source === "builtin");
+    const agent = commands
+      .filter((command) => !builtin.includes(command))
+      .map(({ name, description, input, _meta }): ChatCommand => {
+        const kind = kinds.find((k) => k === _meta?.unharnessed?.kind) ?? "command";
+        return { name, description, hint: input?.hint || undefined, kind };
+      });
     this.commands = [...PANEL_COMMANDS, ...agent.filter((command) => command.name !== "new")];
     this.commandsChanged = true;
-    this.log.info(`chat: ${agent.length} commands: ${agent.map((command) => command.name).join(", ")}`);
+    const left = builtin.length > 0 ? `; ${count(builtin.length, "built-in skill")} left out` : "";
+    this.log.info(`chat: ${agent.length} commands: ${agent.map((command) => command.name).join(", ")}${left}`);
     this.changed();
   }
 
@@ -427,11 +718,21 @@ export class Chat {
   }
 
   private queued(): QueuedMessage[] {
-    return this.queue.map(({ id, text, images }) => ({ id, text, images: images.map(thumbOf) }));
+    return this.queue
+      .filter((message) => !message.quiet)
+      .map(({ id, text, images }) => ({ id, text, images: images.map(thumbOf) }));
   }
 
-  /** What changed goes to the panel together, a moment later. */
+  private showGoal(goal: Goal | null): void {
+    if (goal?.status !== this.goalState?.status) this.log.info(`chat: goal ${goalText(goal)}`);
+    this.goalState = goal;
+    this.goalChanged = true;
+    this.changed();
+  }
+
+  /** What changed goes to the panel together, a moment later; a conversation coming back, once whole. */
   private changed(): void {
+    if (this.loading) return;
     this.timer ??= setTimeout(() => this.flush(), FLUSH_MS);
   }
 
@@ -451,11 +752,16 @@ export class Chat {
       if (entry?.kind !== "turn") continue;
       for (const at of indexes) items.push([id, at, entry.items[at]]);
     }
-    const patch = { heads, items, busy: this.busy, queue: this.queued() };
-    this.post({ type: "chatPatch", patch: this.commandsChanged ? { ...patch, commands: this.commands } : patch });
+    const patch: ChatPatch = { heads, items, busy: this.busy, queue: this.queued() };
+    if (this.commandsChanged) patch.commands = this.commands;
+    if (this.usageChanged) patch.usage = this.usage;
+    if (this.goalChanged) patch.goal = this.goalState;
+    this.post({ type: "chatPatch", patch });
     this.dirtyHeads.clear();
     this.dirtyItems.clear();
     this.commandsChanged = false;
+    this.usageChanged = false;
+    this.goalChanged = false;
   }
 
   private post(message: ChatMessage): void {
@@ -464,13 +770,28 @@ export class Chat {
       this.dirtyHeads.clear();
       this.dirtyItems.clear();
       this.commandsChanged = false;
+      this.usageChanged = false;
+      this.goalChanged = false;
     }
     for (const listener of this.listeners) listener(message);
   }
 }
 
+/** For the log: `active: <objective>`, `paused, 12 s in`, `gone`. */
+function goalText(goal: Goal | null): string {
+  if (!goal) return "gone";
+  if (goal.status === "active") return `active: ${goal.objective}`;
+  const { createdAt, updatedAt } = goal;
+  return createdAt && updatedAt ? `${goal.status}, ${Math.round((updatedAt - createdAt) / 1000)} s in` : goal.status;
+}
+
 function thumbOf({ thumb, name }: Attachment): Thumb {
   return { thumb, name };
+}
+
+/** The turn is `/compact`. */
+function isCompact(turn: Turn): boolean {
+  return /^\/compact(?=\s|$)/.test(turn.prompt?.text.trim() ?? "");
 }
 
 /** A Python cell's code; another tool's input as JSON. */
@@ -484,10 +805,19 @@ function count(n: number, what: string): string {
   return `${n} ${what}${n === 1 ? "" : "s"}`;
 }
 
+/** For the log: `usage 12,345 of 200,000 tokens (compacts at 160,000), $0.0123, cache 96% saved $0.0456`. */
+function usageText({ tokens, window, compactAt, cost, cacheReusable, cacheReused, cacheSaved, compacting }: Usage): string {
+  const n = (count: number) => count.toLocaleString("en-US");
+  const context = tokens === undefined ? "not measured" : `${n(tokens)}`;
+  const compacts = compactAt === undefined ? "" : ` (compacts at ${n(compactAt)})`;
+  const cache = cacheReusable > 0 ? `, cache ${Math.round((cacheReused / cacheReusable) * 100)}% saved $${cacheSaved.toFixed(4)}` : "";
+  return `usage ${context} of ${n(window)} tokens${compacts}, $${cost.toFixed(4)}${cache}${compacting ? ", compacting" : ""}`;
+}
+
 /** For the log: `2 texts, 1 thought, 1 tool`. */
-function summary(turn: Turn): string {
+function summary(items: TurnItem[]): string {
   const counts = new Map<string, number>();
-  for (const item of turn.items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
+  for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
   const parts = [...counts].map(([kind, n]) => count(n, kind));
   return parts.length ? parts.join(", ") : "nothing streamed";
 }

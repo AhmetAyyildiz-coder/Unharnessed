@@ -1,6 +1,7 @@
 //! Layered system-prompt assembly: static layer files first (cacheable),
 //! every session-specific value last. See the parent module docs.
 
+use crate::settings::ModelInstructions;
 use crate::skills::{format_skills_for_prompt, Skill};
 
 use super::layers;
@@ -57,23 +58,25 @@ pub struct SystemPromptBreakdown {
     pub cached_prefix_len: usize,
 }
 
-/// Inputs for one session's prompt. Static inputs (`custom_prompt`, `model`)
-/// select the cached prefix; everything else feeds the dynamic tail.
+/// Inputs for one session's prompt. Static inputs (`custom_prompt`, `model`,
+/// `model_instructions`) select the cached prefix; everything else feeds the
+/// dynamic tail.
 #[derive(Debug, Default)]
 pub struct BuildSystemPromptOptions<'a> {
     /// Replaces the layered static prefix with user text. The dynamic tail
     /// still applies.
     pub custom_prompt: Option<String>,
-    /// Resolved model selector (`provider/id`), selecting per-model blocks.
+    /// Resolved model selector (`provider/id`), selecting its instructions.
     pub model: Option<&'a str>,
+    /// The `modelInstructions` groups: the texts of those listing `model`
+    /// follow the static prefix.
+    pub model_instructions: &'a [ModelInstructions],
     /// Whether the resolved model accepts image input, when known.
     pub vision_capable: Option<bool>,
     /// Active tools. Tool schemas carry tool descriptions outside the prompt.
     pub selected_tools: Option<Vec<&'a str>>,
     /// Additional guideline bullets appended to the dynamic tail.
     pub prompt_guidelines: Option<Vec<String>>,
-    /// Text appended to the end of the prompt.
-    pub append_system_prompt: Option<String>,
     /// Working directory.
     pub cwd: String,
     /// Conversation log path.
@@ -111,15 +114,16 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
                 layers::layer_source("core").unwrap_or_default(),
                 layers::CORE_LAYER.trim().to_string(),
             ));
-            let per_model = layers::per_model_text(options.model);
-            if !per_model.is_empty() {
-                segments.push(PromptSegment::static_segment(
-                    "per-model",
-                    layers::layer_source("per-model").unwrap_or_default(),
-                    per_model.join("\n\n"),
-                ));
-            }
         }
+    }
+    // Then the instructions the settings give the model, after either.
+    let instructions = model_instructions_for(options.model_instructions, options.model);
+    if !instructions.is_empty() {
+        segments.push(PromptSegment::static_segment(
+            "model-instructions",
+            "settings modelInstructions",
+            instructions.join("\n\n"),
+        ));
     }
     let cached_prefix_len = segments
         .iter()
@@ -129,7 +133,7 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
 
     // The dynamic tail, in fixed order: packages -> project context ->
     // skills inventory -> MCP servers -> environment -> session role ->
-    // additional guidance -> appended prompt.
+    // additional guidance.
     let tools: Vec<&str> = options
         .selected_tools
         .clone()
@@ -205,16 +209,6 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         ));
     }
 
-    if let Some(extra) = options.append_system_prompt.as_deref() {
-        if !extra.is_empty() {
-            segments.push(PromptSegment::dynamic_segment(
-                "appended-prompt",
-                "--append-system-prompt",
-                extra.to_string(),
-            ));
-        }
-    }
-
     let assembled = segments
         .iter()
         .map(|segment| segment.text.as_str())
@@ -225,6 +219,21 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         assembled,
         cached_prefix_len,
     }
+}
+
+/// The texts of the groups that list `model`, in order.
+#[must_use]
+pub fn model_instructions_for(groups: &[ModelInstructions], model: Option<&str>) -> Vec<String> {
+    let Some(model) = model else {
+        return Vec::new();
+    };
+    groups
+        .iter()
+        .filter(|group| group.models.iter().any(|listed| listed.trim() == model))
+        .map(|group| group.text.trim())
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn packages_section() -> String {
@@ -266,7 +275,6 @@ fn environment_section(options: &BuildSystemPromptOptions) -> String {
     let mut lines = vec![
         format!("Current date: {}", today()),
         format!("Working directory: {cwd}"),
-        format!("Conversation log: {messages_path}"),
     ];
     match options.vision_capable {
         Some(true) => lines.push(
@@ -278,6 +286,11 @@ fn environment_section(options: &BuildSystemPromptOptions) -> String {
         ),
         None => {}
     }
+    // Last: providers cut the cached system block before this line.
+    lines.push(format!(
+        "{}{messages_path}",
+        uh_types::ai::SESSION_TAIL_PREFIX
+    ));
     lines.join("\n")
 }
 
@@ -414,7 +427,7 @@ mod tests {
         // The cached prefix is exactly the static segments.
         assert_eq!(
             &prompt[..breakdown.cached_prefix_len],
-            layers::static_prefix(Some("mock/mock-1"))
+            layers::static_prefix()
         );
         // Dynamic values live strictly after the prefix.
         let tail = &prompt[breakdown.cached_prefix_len..];
@@ -483,10 +496,10 @@ mod tests {
     }
 
     #[test]
-    fn per_model_blocks_extend_the_cached_prefix() {
-        // The shipped map has no blocks, so a model-mapped block can only be
-        // verified through the parser; assert the composition contract here:
-        // any per-model text lands inside the cached prefix.
+    fn static_segments_sit_in_the_cached_prefix() {
+        // The composition contract: every static segment (the core layer,
+        // and the model's instructions when it has some) lands inside the
+        // cached prefix.
         let breakdown = system_prompt_breakdown(&base_options());
         let static_segments = breakdown
             .segments

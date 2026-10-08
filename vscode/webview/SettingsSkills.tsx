@@ -123,11 +123,7 @@ function SkillRow({ skill, actions }: { skill: Skill; actions: Actions }) {
             </span>
             <span className="skill-description">{skill.description}</span>
             {!builtin && <Location path={skill.location} />}
-            {builtin && !on && (
-              <span className="row-meta">
-                {skill.name === "compact" ? "Off: “Agent can compact” is off in General" : "Off in settings.json"}
-              </span>
-            )}
+            {builtin && !on && <span className="row-meta">Off in settings.json</span>}
           </span>
           <IconExternal className="row-end skill-open" />
         </button>

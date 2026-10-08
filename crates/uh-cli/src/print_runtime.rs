@@ -947,9 +947,8 @@ async fn settle_turn(
     api_key: Option<String>,
 ) -> Result<(), String> {
     // The settled-turn boundary (TS `agent_end`): the provider retry of a
-    // failed turn, the overflow compact-and-retry arm, the turn-boundary
-    // requests the kernel scheduled mid-turn (`compact.run`), and the
-    // threshold arm. The outcomes persist in the session entries the
+    // failed turn, the overflow compact-and-retry arm, and the threshold
+    // arm. The outcomes persist in the session entries the
     // terminal result reads.
     boundary
         .run_at_settled_turn(engine, model, api_key.clone())
@@ -986,8 +985,7 @@ async fn settle_turn(
 /// Admit prompts, stream json events when requested, and decide the exit code
 /// from the headless terminal result plus the autonomous gate contract.
 /// Shared by the real and faux paths. The turn-boundary compaction checks
-/// (the overflow compact-and-retry arm, the requested compaction
-/// consumption, and the threshold arm) run through
+/// (the overflow compact-and-retry arm and the threshold arm) run through
 /// [`crate::print_boundary::TurnBoundary`] at every prompt's quiescent
 /// boundaries. The autonomous continuation loop rides the agent's
 /// natural-turn-end hook (the TS in-run shape: continuations churn inside
@@ -1130,11 +1128,10 @@ async fn run_prompts_and_emit(
             continue;
         }
         // The pre-turn boundary (TS `_runPreTurnCompaction`, the full
-        // `_checkCompaction` pass): an aborted trailing turn drops pending
-        // requests, a stale overflow error from a previous run gets its
-        // recovery attempt, and a resumed context above the reserve
-        // headroom (or a pending model request) compacts before the
-        // admitted prompt runs on the compacted context.
+        // `_checkCompaction` pass): a stale overflow error from a previous
+        // run gets its recovery attempt, and a resumed context above the
+        // reserve headroom compacts before the admitted prompt runs on the
+        // compacted context.
         boundary
             .run_pre_turn(engine, model, api_key.clone())
             .await?;
@@ -1335,6 +1332,13 @@ async fn build_faux_engine_with(
         .get("tokensPerSecond")
         .and_then(serde_json::Value::as_f64)
         .filter(|rate| *rate > 0.0);
+    // The script prices the model in the catalog's shape (dollars per
+    // million tokens: `input`, `output`, `cacheRead`, `cacheWrite`), so
+    // what a conversation costs can be verified without a paid provider.
+    let cost = script
+        .get("cost")
+        .cloned()
+        .and_then(|cost| serde_json::from_value::<uh_types::ai::ModelCost>(cost).ok());
     // The stable faux identity (`api: "faux"`, `provider: "faux"`) the
     // daemon's scripted engine registers under: verification fixtures can
     // declare faux-provider models in models.json, and the ACP pickers'
@@ -1349,7 +1353,7 @@ async fn build_faux_engine_with(
                 name: Some("Faux Model".to_string()),
                 reasoning: Some(reasoning),
                 input: Some(vec![uh_types::ai::ModelInput::Text]),
-                cost: None,
+                cost,
                 context_window: Some(context_window),
                 max_tokens: Some(4_096),
             }]),

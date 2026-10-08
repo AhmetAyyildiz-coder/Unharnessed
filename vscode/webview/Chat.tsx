@@ -1,11 +1,24 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import type { ChatEntry, ChatPatch, ChatState, Thumb, TurnItem } from "../src/protocol";
-import { IconArrowDown, IconCell, IconCheck, IconChevron, IconCross, IconRestart } from "./icons";
+import { IconArrowDown, IconCell, IconCheck, IconChevron, IconCompact, IconCross, IconFlag, IconRestart } from "./icons";
 import { ThinkingOrb } from "thinking-orbs";
 import { Markdown } from "./Markdown";
+import { MentionText } from "./mentions";
+import { count } from "./Usage";
+import { post } from "./vscode";
 
 type Turn = Extract<ChatEntry, { kind: "turn" }>;
 type Tool = Extract<TurnItem, { kind: "tool" }>;
+type Compaction = Extract<TurnItem, { kind: "compaction" }>;
 
 /** How close to the end the view must be to follow what streams in. */
 const FOLLOW_PX = 48;
@@ -18,6 +31,8 @@ const FOLD_BEAT_MS = 360;
 const QUIET_MS = 900;
 /** How long an orb takes to leave once its state is over (styles.css, .orb). */
 const ORB_OUT_MS = 320;
+/** How long a compaction takes to land: its letters light up, its lines grow (styles.css, .compaction). */
+const LANDING_MS = 1800;
 
 const WAKES: Record<NonNullable<Turn["wake"]>, string> = {
   bash: "a background command ended",
@@ -25,7 +40,7 @@ const WAKES: Record<NonNullable<Turn["wake"]>, string> = {
   goal: "the goal's pause ended",
 };
 
-export const EMPTY_CHAT: ChatState = { entries: [], busy: false, queue: [], commands: [] };
+export const EMPTY_CHAT: ChatState = { entries: [], busy: false, queue: [], commands: [], usage: null, goal: null };
 
 /** What changed, onto the conversation; what did not change keeps its identity (and its render). */
 export function applyPatch(chat: ChatState, patch: ChatPatch): ChatState {
@@ -52,11 +67,33 @@ export function applyPatch(chat: ChatState, patch: ChatPatch): ChatState {
       entries[at] = { ...entry, items };
     }
   }
-  return { entries, busy: patch.busy, queue: patch.queue, commands: patch.commands ?? chat.commands };
+  return {
+    entries,
+    busy: patch.busy,
+    queue: patch.queue,
+    commands: patch.commands ?? chat.commands,
+    usage: patch.usage === undefined ? chat.usage : patch.usage,
+    goal: patch.goal === undefined ? chat.goal : patch.goal,
+  };
 }
 
-/** The conversation; it follows what streams in while it is scrolled to the end. */
-export function Transcript({ chat, children }: { chat: ChatState; children?: ReactNode }) {
+/** A sent prompt goes back to the message box, to be changed and sent again. */
+const edit = (id: number) => post({ type: "edit", id });
+
+/**
+ * The conversation; it follows what streams in while it is scrolled to the
+ * end. While turn `editing`'s prompt is being changed, what sending it
+ * would drop fades: its answer and the turns after it.
+ */
+export function Transcript({
+  chat,
+  editing,
+  children,
+}: {
+  chat: ChatState;
+  editing: number | null;
+  children?: ReactNode;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const [away, setAway] = useState(false);
@@ -95,12 +132,23 @@ export function Transcript({ chat, children }: { chat: ChatState; children?: Rea
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
   };
 
+  const cut = editing === null ? -1 : chat.entries.findIndex((entry) => entry.id === editing);
+  const dim = (at: number) => (cut < 0 || at < cut ? undefined : at === cut ? "answer" : "all");
   return (
     <div className="transcript-shell">
       <div className="transcript" ref={ref} onScroll={onScroll}>
         {children}
-        {chat.entries.map((entry) =>
-          entry.kind === "restart" ? <Restart key={entry.id} /> : <TurnView key={entry.id} turn={entry} />,
+        {chat.entries.map((entry, at) =>
+          entry.kind === "restart" ? (
+            <Restart key={entry.id} dimmed={dim(at) !== undefined} />
+          ) : (
+            <TurnView
+              key={entry.id}
+              turn={entry}
+              editable={!chat.busy && entry.rewindTo !== undefined && at !== cut}
+              dim={dim(at)}
+            />
+          ),
         )}
       </div>
       {away && (
@@ -112,29 +160,45 @@ export function Transcript({ chat, children }: { chat: ChatState; children?: Rea
   );
 }
 
-function Restart() {
+function Restart({ dimmed }: { dimmed: boolean }) {
   return (
-    <div className="restart-line">
+    <div className={dimmed ? "restart-line is-dimmed" : "restart-line"}>
       <IconRestart />
       The agent restarted: it no longer remembers the messages above.
     </div>
   );
 }
 
-const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
+/** `dim`: the turn fades while an edit would drop it, all of it or its answer only. */
+const TurnView = memo(function TurnView({
+  turn,
+  editable,
+  dim,
+}: {
+  turn: Turn;
+  editable: boolean;
+  dim?: "answer" | "all";
+}) {
   const running = turn.state === "running";
-  // Reasoning, a running cell and the answer as it streams show their own
-  // life; otherwise (a pause: the model writing a cell, say) the turn says it works.
+  // Reasoning, a running cell, a compaction and the answer as it streams show
+  // their own life; otherwise (a pause: the model writing a cell, say) the turn says it works.
   const last = turn.items.at(-1);
   const writing = useWriting(running && last?.kind === "text" ? last.text : undefined);
   const busy =
     writing ||
     (last?.kind === "thought" && last.ms === undefined) ||
-    (last?.kind === "tool" && last.status === "running");
+    (last?.kind === "tool" && last.status === "running") ||
+    (last?.kind === "compaction" && last.state === "running");
   const working = running && !busy;
   return (
-    <section className="turn">
-      {turn.prompt && <UserMessage text={turn.prompt.text} images={turn.prompt.images} />}
+    <section className={dim ? `turn is-dimmed-${dim}` : "turn"}>
+      {turn.prompt && (
+        <UserMessage
+          text={turn.prompt.text}
+          images={turn.prompt.images}
+          onEdit={editable ? () => edit(turn.id) : undefined}
+        />
+      )}
       {!turn.prompt && turn.wake && <p className="turn-wake">The agent went on by itself: {WAKES[turn.wake]}.</p>}
       {turn.items.map((item, at) => (
         <Item key={at} item={item} running={running} streaming={running && at === turn.items.length - 1} />
@@ -151,9 +215,23 @@ const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
   );
 });
 
-function UserMessage({ text, images }: { text: string; images: Thumb[] }) {
+/** The user's message; `onEdit`: a click on it brings it back to the message box, unless the click ended a selection. */
+function UserMessage({ text, images, onEdit }: { text: string; images: Thumb[]; onEdit?: () => void }) {
+  // `/goal` reads as the goal's flag.
+  const goal = /^\/goal(?=\s|$)/.exec(text);
+  const editable = onEdit && {
+    role: "button",
+    tabIndex: 0,
+    "aria-label": "Edit this message",
+    onClick: () => window.getSelection()?.isCollapsed !== false && onEdit(),
+    onKeyDown: (event: KeyboardEvent) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      onEdit();
+    },
+  };
   return (
-    <div className="user-message">
+    <div className={editable ? "user-message is-editable" : "user-message"} {...editable}>
       {images.length > 0 && (
         <div className="user-images">
           {images.map((image, at) => (
@@ -161,7 +239,17 @@ function UserMessage({ text, images }: { text: string; images: Thumb[] }) {
           ))}
         </div>
       )}
-      {text && <p className="user-text">{text}</p>}
+      {text && (
+        <p className="user-text">
+          {goal && (
+            <span className="goal-word">
+              <IconFlag />
+              goal
+            </span>
+          )}
+          <MentionText text={goal ? text.slice(goal[0].length) : text} />
+        </p>
+      )}
     </div>
   );
 }
@@ -187,6 +275,8 @@ const Item = memo(function Item({ item, running, streaming }: { item: TurnItem; 
       return <Thought thought={item} live={running && item.ms === undefined} />;
     case "tool":
       return <ToolCall tool={item} />;
+    case "compaction":
+      return <CompactionMark compaction={item} />;
     case "notice":
       return <p className={`notice is-${item.tone}`}>{item.text}</p>;
   }
@@ -362,6 +452,84 @@ function took(ms: number): string {
   if (seconds < 60) return `${seconds}s`;
   const rest = seconds % 60;
   return `${Math.floor(seconds / 60)}m${rest ? ` ${rest}s` : ""}`;
+}
+
+/**
+ * Where the conversation was compacted: what is above it now lives as a
+ * summary. A pill, its words shining while it runs; once done, a grey line
+ * on each side across the conversation. Landing here (not in a conversation
+ * coming back), its words light up one after another and the lines grow out
+ * of it. It opens on the summary.
+ */
+function CompactionMark({ compaction }: { compaction: Compaction }) {
+  const { state, auto, tokensBefore, summary } = compaction;
+  const done = state === "done";
+  const [open, setOpen] = useState(false);
+  // It lands once, done after it ran here; it comes done in a conversation coming back.
+  const ran = useRef(!done);
+  const [landing, setLanding] = useState(false);
+  useLayoutEffect(() => {
+    if (!done || !ran.current) return;
+    ran.current = false;
+    setLanding(true);
+    const timer = setTimeout(() => setLanding(false), LANDING_MS);
+    return () => clearTimeout(timer);
+  }, [done]);
+
+  if (!done) {
+    return (
+      <div className="compaction is-running">
+        <div className="compaction-row">
+          <span className="compaction-pill">
+            <svg className="mini-orbit" viewBox="0 0 14 14" aria-hidden="true">
+              <circle className="track" cx="7" cy="7" r="5.5" />
+              <circle className="arc" cx="7" cy="7" r="5.5" strokeDasharray="9 35" />
+            </svg>
+            <span className="working">Compacting the conversation</span>
+          </span>
+        </div>
+      </div>
+    );
+  }
+  const label = auto ? "Compacted automatically" : "Compacted";
+  const classes = ["compaction", "is-done", landing && "is-landing", open && "is-open"].filter(Boolean).join(" ");
+  return (
+    <div className={classes}>
+      <div className="compaction-row">
+        <span className="seam is-left" />
+        <button
+          className={summary ? "compaction-pill" : "compaction-pill is-still"}
+          type="button"
+          data-no-press
+          aria-expanded={summary ? open : undefined}
+          onClick={summary ? () => setOpen(!open) : undefined}
+        >
+          <IconCompact />
+          <span className="compaction-label">
+            {[...label].map((letter, at) => (
+              <span key={at} className="letter" style={{ "--i": at } as CSSProperties}>
+                {letter}
+              </span>
+            ))}
+          </span>
+          {tokensBefore !== undefined && (
+            <span className="compaction-detail">· {count(tokensBefore)} tokens summarized</span>
+          )}
+          {summary && <IconChevron className="compaction-chevron" />}
+        </button>
+        <span className="seam is-right" />
+      </div>
+      {summary && (
+        <div className="compaction-fold">
+          <div>
+            <div className="compaction-summary">
+              <Markdown text={summary} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** A cell the agent runs: its first line, then on demand the code and what it printed. */

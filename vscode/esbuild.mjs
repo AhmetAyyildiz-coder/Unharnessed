@@ -1,5 +1,5 @@
 // Bundles the extension host code into dist/extension.js and the panel's
-// React app into dist/webview/ (main.js, main.css, the font; the provider
+// React app into dist/webview/ (main.js, main.css, the fonts; the provider
 // logos are inlined in main.js).
 // `--watch` rebuilds on change; the start/end lines feed the background
 // problem matcher in .vscode/tasks.json, once per round of both bundles.
@@ -46,7 +46,7 @@ const contexts = await Promise.all([
     target: "chrome120",
     jsx: "automatic",
     // The provider logos are inlined as SVG markup.
-    loader: { ".woff2": "file", ".svg": "text" },
+    loader: { ".woff2": "file", ".woff": "file", ".svg": "text" },
     assetNames: "[name]",
     define: { "process.env.NODE_ENV": JSON.stringify(watch ? "development" : "production") },
     minify: !watch,

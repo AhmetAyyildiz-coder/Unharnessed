@@ -1,8 +1,8 @@
 //! The remote plugins-catalog snapshot source for resolution: the validated
 //! last-good disk cache (written by the fetch lane at
 //! `<agent-dir>/mcp-service-catalog.v2.json`), else the packaged bundled
-//! snapshot (`<package-dir>/mcp-services.bundled.json`), else nothing (the
-//! compiled linear/notion fallback still resolves). Read-only: fetching,
+//! snapshot (`<package-dir>/mcp-services.bundled.json`), else nothing (no
+//! catalog services). Read-only: fetching,
 //! cadence, and cache writing live in the fetch lane; this module only
 //! parses what is already on disk, fail-closed.
 //!
@@ -71,8 +71,9 @@ fn cache_candidates(agent_dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Read the best available remote snapshot (the validated disk cache, then
-/// the bundled asset). Every parse error yields `None` — the caller keeps
-/// the compiled built-ins and never surfaces the error into a session.
+/// the bundled asset). Every parse error yields `None` — the caller
+/// resolves no catalog services and never surfaces the error into a
+/// session.
 pub fn remote_plugins_snapshot(agent_dir: &Path) -> Option<PluginsCatalog> {
     cache_plugins_snapshot(agent_dir).or_else(bundled_plugins_snapshot)
 }

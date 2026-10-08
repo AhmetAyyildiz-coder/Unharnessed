@@ -7,12 +7,12 @@ The session engine.
 - `session_engine` — `create_session` assembles a `SessionEngine` (message in,
   events out): the agent loop wiring, the `ipython` tool, prompt admission and
   session slash commands (`/compact`, `/goal`, `/autonomous`), compaction
-  (threshold, overflow recovery, model-requested `compact.*`, manual), the goal
+  (threshold, overflow recovery, manual), the goal
   driver, provider retry/failover/park (`turn_retry`: the chain a host runs on a
   failed turn), the idle session's wakes (`wakes`: detached `bash()`
   completions, the goal backoff, a quota reset), auxiliary and image model routing,
   branch summaries, side questions, and the kernel host-request handlers
-  (`goal.*`, `compact.*`, `model.info`).
+  (`goal.*`, `model.info`).
 - `kernel` — the persistent IPython kernel: venv bootstrap (`uv`, the
   `unharnessed-runtime` sidecar, the runtime-ready probe), spawn/execute/
   interrupt/teardown, the host-request bridge, the bootstrap code injected at
@@ -23,13 +23,14 @@ The session engine.
 - `skills`, `resources`, `resource_paths` — skill and prompt-template loading
   from the settings arrays, auto-discovery and the bundled `skills/`;
   `AGENTS.md`/`CLAUDE.md` discovery.
-- `prompts` — the system prompt: the `core.md` layer plus the per-model map,
-  then the dynamic tail (packages, project context, skills, MCP servers,
+- `prompts` — the system prompt: the `core.md` layer plus the model's
+  instructions (settings `modelInstructions`), then the dynamic tail (packages, project context, skills, MCP servers,
   environment). `prompt_guards` keeps `core.md` equal to the real surface.
-- `mcp` — the host side of MCP: auth gating of built-in integrations, the
-  `mcpServers` setting, the service catalog and connection views, the OAuth
-  flow, and the `mcp.*` host requests the kernel's MCP client calls. The MCP
-  protocol itself runs in the kernel.
+- `mcp` — the host side of MCP: the `mcpServers` setting, Prime's service
+  catalog (the settings screen's Marketplace, fetched at most hourly) and the
+  connection views, the OAuth flow and pasted tokens, and the `mcp.*` host
+  requests the kernel's MCP client calls. The MCP protocol itself runs in the
+  kernel.
 - `autonomous` — autonomous-mode state, limits, quality gates (with
   `workspace_snapshot` for git worktree capture).
 - `auth`, `models`, `settings`, `goals`, `export_html`, `platform` (process

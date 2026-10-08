@@ -14,7 +14,6 @@ use super::catalog_status_views::{
 };
 use super::catalog_views::{
     fresh_mcp_login_allowed, is_pasteable_token_service, mcp_login_eligibility,
-    reserved_mcp_ownership, ReservedOwnership,
 };
 use super::connection_store::McpConnectionRecord;
 use super::service_catalog::{DescriptorTransport, McpServiceDescriptor};
@@ -219,7 +218,6 @@ fn base_catalog_service_view(
             &service.service_id,
             Some(service),
             None,
-            None,
             records.get(&service.service_id),
             credentials.get(&credential_key),
             false,
@@ -258,34 +256,6 @@ fn base_catalog_service_view(
         unverified: (!service.metadata_reviewed).then_some(true),
         verified_at: newest_connected.and_then(|account| account.verified_at),
         tool_count: newest_connected.and_then(|account| account.tool_count),
-    }
-}
-
-fn catalog_service_view(
-    service: &McpServiceDescriptor,
-    credentials: &SnapshotCredentials,
-    records: &HashMap<String, McpConnectionRecord>,
-    reserved_config: Option<&McpServerConfig>,
-    catalog_available: bool,
-) -> McpPluginView {
-    let mut view = base_catalog_service_view(service, credentials, records, catalog_available);
-    let ownership = reserved_mcp_ownership(Some(service), reserved_config);
-    match ownership {
-        ReservedOwnership::Canonical => view,
-        ReservedOwnership::Disabled => {
-            view.connection_status = McpConnectionStatus::Disabled;
-            view.connectable = false;
-            view.add_account_allowed = Some(false);
-            view.setup_hint = Some("Disabled in settings.".to_string());
-            view
-        }
-        ReservedOwnership::Conflict(hint) => {
-            view.connection_status = McpConnectionStatus::Error;
-            view.connectable = false;
-            view.add_account_allowed = Some(false);
-            view.setup_hint = Some(hint);
-            view
-        }
     }
 }
 
@@ -364,7 +334,6 @@ fn user_server_view(
             name,
             None,
             Some(config),
-            None,
             records.get(name),
             credentials.get(&credential_key),
             false,
@@ -418,21 +387,10 @@ fn user_server_view(
 
 /// Cards for the service-catalog view (TS `buildPluginViews`): the resolved
 /// services plus user-declared servers, deduplicated per id (a user entry
-/// owns its id unless the service is a legacy builtin — dead shadows are
-/// dropped), sorted connected-first then label, then id.
+/// owns its id), sorted connected-first then label, then id.
 pub fn build_plugin_views(inputs: &BuildViewsInputs<'_>) -> Vec<McpPluginView> {
-    let reserved: std::collections::HashSet<&str> = inputs
-        .services
-        .iter()
-        .filter(|service| service.legacy_builtin)
-        .map(|service| service.service_id.as_str())
-        .collect();
     let mut user_views: HashMap<String, McpPluginView> = HashMap::new();
     for (name, config) in inputs.user_servers.iter().flat_map(|m| m.iter()) {
-        // Dead shadows: a user entry cannot override a bundled catalog service.
-        if reserved.contains(name.as_str()) {
-            continue;
-        }
         user_views.insert(
             name.clone(),
             user_server_view(name, config, inputs.credentials, inputs.records),
@@ -440,16 +398,14 @@ pub fn build_plugin_views(inputs: &BuildViewsInputs<'_>) -> Vec<McpPluginView> {
     }
     let mut views: Vec<McpPluginView> = Vec::new();
     for service in inputs.services {
-        // A user-declared server owns the id for non-bundled services; no
-        // duplicate card.
-        if !service.legacy_builtin && user_views.contains_key(&service.service_id) {
+        // A user-declared server owns the id; no duplicate card.
+        if user_views.contains_key(&service.service_id) {
             continue;
         }
-        views.push(catalog_service_view(
+        views.push(base_catalog_service_view(
             service,
             inputs.credentials,
             inputs.records,
-            inputs.user_servers.and_then(|m| m.get(&service.service_id)),
             inputs.catalog_available,
         ));
     }
@@ -493,15 +449,6 @@ pub struct McpConnectionView {
     pub setup_hint: Option<String>,
 }
 
-/// The conflict hint of a reserved-ownership ruling (canonical and disabled
-/// carry none).
-fn ownership_setup_hint(ownership: &ReservedOwnership) -> Option<String> {
-    match ownership {
-        ReservedOwnership::Conflict(hint) => Some(hint.clone()),
-        _ => None,
-    }
-}
-
 /// An ACP session server for [`build_connection_views`]: name + transport.
 pub struct AcpServerRow {
     pub name: String,
@@ -533,42 +480,19 @@ pub fn build_connection_views(
 ) -> Vec<McpConnectionView> {
     let user_servers = inputs.user_servers;
     let mut views: Vec<McpConnectionView> = Vec::new();
-    let reserved: std::collections::HashSet<&str> = inputs
-        .services
-        .iter()
-        .filter(|service| service.legacy_builtin)
-        .map(|service| service.service_id.as_str())
-        .collect();
     let mut connected: std::collections::HashSet<String> = std::collections::HashSet::new();
     for service in inputs.services {
-        let ownership = reserved_mcp_ownership(
-            Some(service),
-            user_servers.and_then(|servers| servers.get(&service.service_id)),
-        );
-        let plugin = catalog_service_view(
+        // A user-declared server owns the id (as on the cards).
+        if user_servers.is_some_and(|servers| servers.contains_key(&service.service_id)) {
+            continue;
+        }
+        let plugin = base_catalog_service_view(
             service,
             inputs.credentials,
             inputs.records,
-            user_servers.and_then(|servers| servers.get(&service.service_id)),
             inputs.catalog_available,
         );
         if plugin.connection_ids.is_empty() {
-            if !matches!(ownership, ReservedOwnership::Canonical) {
-                views.push(McpConnectionView {
-                    connection_id: service.service_id.clone(),
-                    service_id: Some(service.service_id.clone()),
-                    label: service.label.clone(),
-                    status: match ownership {
-                        ReservedOwnership::Disabled => McpConnectionStatus::Disabled,
-                        _ => McpConnectionStatus::Error,
-                    },
-                    uses_oauth: plugin.uses_oauth,
-                    transport: "http".to_string(),
-                    login_pending: None,
-                    source: ViewSource::Catalog,
-                    setup_hint: ownership_setup_hint(&ownership),
-                });
-            }
             continue;
         }
         // One inventory row per account, each with the SAME centralized,
@@ -585,29 +509,20 @@ pub fn build_connection_views(
                 connection_id: account.connection_id.clone(),
                 service_id: Some(service.service_id.clone()),
                 label,
-                status: match ownership {
-                    ReservedOwnership::Disabled => McpConnectionStatus::Disabled,
-                    ReservedOwnership::Conflict(_) => McpConnectionStatus::Error,
-                    ReservedOwnership::Canonical => {
-                        if account.status == McpConnectionStatus::SetupRequired {
-                            McpConnectionStatus::NotConnected
-                        } else {
-                            account.status
-                        }
-                    }
+                status: if account.status == McpConnectionStatus::SetupRequired {
+                    McpConnectionStatus::NotConnected
+                } else {
+                    account.status
                 },
                 login_pending: account.login_pending.then_some(true),
                 uses_oauth: plugin.uses_oauth,
                 transport: "http".to_string(),
                 source: ViewSource::Catalog,
-                setup_hint: ownership_setup_hint(&ownership).or_else(|| account.setup_hint.clone()),
+                setup_hint: account.setup_hint.clone(),
             });
         }
     }
     for (name, config) in user_servers.iter().flat_map(|servers| servers.iter()) {
-        if reserved.contains(name.as_str()) {
-            continue;
-        }
         let plugin = user_server_view(name, config, inputs.credentials, inputs.records);
         if plugin.connection_ids.is_empty() {
             continue;
@@ -649,95 +564,12 @@ pub fn build_connection_views(
     views
 }
 
-/// Filter the plugin cards by an exact connection status (TS
-/// `filterPluginViewsByStatus`).
-pub fn filter_plugin_views_by_status(views: &[McpPluginView], status: &str) -> Vec<McpPluginView> {
-    views
-        .iter()
-        .filter(|view| view.connection_status.as_str() == status)
-        .cloned()
-        .collect()
-}
-
-/// Search the plugin cards by service ids, labels, aliases, account ids,
-/// descriptions, categories, publishers, and docs URLs (TS
-/// `searchPluginViews`); the page is bounded by `limit`.
-pub fn search_plugin_views(
-    views: &[McpPluginView],
-    query: &str,
-    limit: usize,
-) -> Vec<McpPluginView> {
-    let needle = query.trim().to_lowercase();
-    if needle.is_empty() {
-        return views.iter().take(limit).cloned().collect();
-    }
-    let mut matches = Vec::new();
-    for view in views {
-        let mut fields: Vec<String> = vec![
-            view.service_id.clone(),
-            view.label.clone(),
-            view.category.clone().unwrap_or_default(),
-        ];
-        fields.push(view.description.clone().unwrap_or_default());
-        fields.push(view.publisher.clone().unwrap_or_default());
-        fields.push(view.docs_url.clone().unwrap_or_default());
-        fields.extend(view.aliases.iter().flatten().cloned());
-        fields.extend(view.connection_ids.iter().cloned());
-        if fields
-            .iter()
-            .any(|field| field.to_lowercase().contains(&needle))
-        {
-            matches.push(view.clone());
-            if matches.len() >= limit {
-                break;
-            }
-        }
-    }
-    matches
-}
-
-/// Decode one page cursor (TS `decodePluginCursor`): digits only, `None`
-/// for the first page.
-pub fn decode_plugin_cursor(cursor: Option<&str>) -> Result<usize, String> {
-    let Some(cursor) = cursor else {
-        return Ok(0);
-    };
-    if cursor.is_empty() {
-        return Ok(0);
-    }
-    if !cursor.chars().all(|ch| ch.is_ascii_digit()) {
-        return Err("mcp.list_plugins received an invalid cursor".to_string());
-    }
-    cursor
-        .parse::<usize>()
-        .map_err(|_| "mcp.list_plugins received an invalid cursor".to_string())
-}
-
-/// Slice one bounded page out of the plugin cards (TS `pagePluginViews`).
-///
-/// A cursor at or past the end yields an empty page and no continuation —
-/// the TS float-arithmetic outcome for any oversized cursor, which `usize`
-/// addition would otherwise overflow on (`cursor + limit` panics checked
-/// builds and wraps in release to a bogus low cursor).
-pub fn page_plugin_views(
-    views: &[McpPluginView],
-    cursor: usize,
-    limit: usize,
-) -> (Vec<McpPluginView>, Option<String>) {
-    if cursor >= views.len() {
-        return (Vec::new(), None);
-    }
-    let page: Vec<McpPluginView> = views.iter().skip(cursor).take(limit).cloned().collect();
-    let next_cursor = (cursor + limit < views.len()).then(|| (cursor + limit).to_string());
-    (page, next_cursor)
-}
-
 #[cfg(test)]
 mod connection_view_tests {
     use super::*;
     use crate::mcp::service_catalog::McpServiceDescriptor;
 
-    fn http_descriptor(service_id: &str, legacy_builtin: bool) -> McpServiceDescriptor {
+    fn http_descriptor(service_id: &str) -> McpServiceDescriptor {
         McpServiceDescriptor::from_entry(
             &serde_json::from_value::<crate::mcp::catalog_schema::McpServiceEntry>(serde_json::json!({
                 "server": service_id, "service": service_id, "label": service_id,
@@ -747,7 +579,7 @@ mod connection_view_tests {
                 "auth": { "strategy": "oauth", "clientRegistration": "dynamic" },
                 "setup": { "status": "ready" },
                 "verification": { "status": "unverified" },
-                "legacyBuiltin": legacy_builtin,
+                "legacyBuiltin": false,
                 "provenance": [{ "source": "prime" }]
             }))
             .expect("fixture entry parses"),
@@ -815,15 +647,11 @@ mod connection_view_tests {
 
     /// The TS `buildConnectionViews` contract: one row per dispatchable
     /// account (the verified record wins), user-declared stdio servers get
-    /// rows, unshadowed ACP servers get rows, a legacy-builtin shadow (a
-    /// conflicting user entry) surfaces as an error row, and the whole
-    /// inventory sorts by connectionId.
+    /// rows, unshadowed ACP servers get rows, a user entry sharing a catalog
+    /// service's id owns it, and the whole inventory sorts by connectionId.
     #[test]
     fn connection_views_cover_accounts_user_and_acp_rows() {
-        let services = vec![
-            http_descriptor("alpha", false),
-            http_descriptor("linear", true),
-        ];
+        let services = vec![http_descriptor("alpha"), http_descriptor("linear")];
         let mut records = HashMap::new();
         records.insert("alpha".to_string(), connected_record("alpha", "alpha"));
         // A per-account record: its own dispatchable row.
@@ -843,15 +671,15 @@ mod connection_view_tests {
                 call_timeout_ms: None,
             },
         );
-        // A conflicting user entry shadowing the legacy builtin: the
-        // inventory reports the ownership error row, not a dispatchable id.
+        // A user entry sharing the catalog service's id: the user server
+        // owns it.
         user_servers.insert(
             "linear".to_string(),
-            McpServerConfig::Http {
-                url: "https://evil.example/mcp".to_string(),
-                headers: None,
-                bearer_token_env_var: None,
-                oauth: Some(true),
+            McpServerConfig::Stdio {
+                command: "linear-mcp".to_string(),
+                args: None,
+                cwd: None,
+                env: None,
                 enabled: None,
                 enabled_tools: None,
                 disabled_tools: None,
@@ -891,11 +719,14 @@ mod connection_view_tests {
         let alpha_two = &views[1];
         assert_eq!(alpha_two.label, "alpha (alpha-2)");
         assert_eq!(alpha_two.status, McpConnectionStatus::Connected);
-        // The conflicted legacy builtin: an error row with the hint, never a
-        // dispatchable connection id beyond the id itself.
-        let shadow = views.iter().find(|v| v.connection_id == "linear").unwrap();
-        assert_eq!(shadow.status, McpConnectionStatus::Error);
-        assert!(shadow.setup_hint.is_some());
+        // The shared id: one row, the user server's.
+        let shared: Vec<_> = views
+            .iter()
+            .filter(|v| v.connection_id == "linear")
+            .collect();
+        assert_eq!(shared.len(), 1);
+        assert_eq!(shared[0].source, ViewSource::User);
+        assert_eq!(shared[0].transport, "stdio");
         // The user stdio server reports connected with its transport.
         let local = views
             .iter()
@@ -913,50 +744,10 @@ mod connection_view_tests {
         assert_eq!(acp.source, ViewSource::Acp);
     }
 
-    /// An oversized cursor pages to an empty page with NO continuation
-    /// instead of overflowing `cursor + limit` (the TS float outcome; the
-    /// registered Macroscope finding on the review of the first push).
-    #[test]
-    fn oversized_cursor_yields_empty_page_without_overflow() {
-        let views: Vec<McpPluginView> = (0..4)
-            .map(|i| McpPluginView {
-                service_id: format!("s{i}"),
-                label: format!("s{i}"),
-                connection_status: McpConnectionStatus::NotConnected,
-                connectable: false,
-                add_account_allowed: None,
-                login_pending: None,
-                uses_oauth: false,
-                source: ViewSource::Catalog,
-                connection_ids: Vec::new(),
-                paste_token: None,
-                aliases: None,
-                description: None,
-                category: None,
-                publisher: None,
-                docs_url: None,
-                setup_hint: None,
-                unverified: None,
-                verified_at: None,
-                tool_count: None,
-            })
-            .collect();
-        let (page, next) = page_plugin_views(&views, 0, 2);
-        assert_eq!(page.len(), 2);
-        assert_eq!(next.as_deref(), Some("2"));
-        // A cursor past the end (incl. usize::MAX): empty page, no cursor.
-        for cursor in [views.len(), usize::MAX] {
-            let (page, next) = page_plugin_views(&views, cursor, 50);
-            assert!(page.is_empty(), "cursor {cursor} must page empty");
-            assert_eq!(next, None, "cursor {cursor} must end paging");
-        }
-    }
-
-    /// A service with no dispatchable accounts and no reserved conflict
-    /// produces NO row (TS skips the empty connectionIds path silently).
+    /// A service with no dispatchable accounts produces NO row (TS skips the empty connectionIds path silently).
     #[test]
     fn connection_views_skip_undispatchable_services() {
-        let services = vec![http_descriptor("beta", false)];
+        let services = vec![http_descriptor("beta")];
         let user_servers: HashMap<String, McpServerConfig> = HashMap::new();
         let records: HashMap<String, McpConnectionRecord> = HashMap::new();
         let credentials = empty_credentials();

@@ -432,7 +432,6 @@ fn repair_endpoint(
         connection_id,
         Some(service),
         None,
-        None,
         records.get(connection_id),
         credentials.get(&credential_key),
         false,

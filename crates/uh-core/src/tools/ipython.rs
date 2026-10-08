@@ -308,14 +308,14 @@ pub fn ipython_tool_schema() -> serde_json::Value {
         "properties": {
             "code": {
                 "type": "string",
-                "description": "Python code to execute in the persistent Python REPL. Use the target project's own environment for project imports, tests, scripts, CLIs, and dependency checks instead of direct kernel imports."
+                "description": "Python code to run."
             }
         }
     })
 }
 
 pub fn ipython_tool_description() -> &'static str {
-    "Execute Python code in a persistent Python REPL. Top-level `await` is supported. Variables, imports, and loaded data persist across calls, and are revived on a best-effort basis when a session is resumed (objects that cannot be serialized are dropped and reported). Run shell commands with `bash('cmd')` / `await bash('cmd')`. Project imports, tests, scripts, CLIs, and dependency checks should run through the target project's own environment."
+    "Run Python code in the persistent REPL."
 }
 
 /// Execute one ipython tool call against a provisioner.

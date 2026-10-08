@@ -77,7 +77,7 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
 and prints the per-layer breakdown (cached static layers, then the dynamic tail) followed by the full prompt text.",
     )
     .options(&[
-        "--model <selector>  Preview per-model instructions for a provider/id selector",
+        "--model <selector>  Assemble for this provider/id model, with its instructions",
         "--cwd <dir>         Assemble for this working directory (default: current)",
         "--json              Print segments and prompt as JSON",
     ]),

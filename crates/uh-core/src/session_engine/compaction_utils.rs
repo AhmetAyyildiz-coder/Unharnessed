@@ -319,9 +319,6 @@ pub fn serialize_conversation(messages: &[AgentMessage]) -> String {
             AgentMessage::BashExecution(bash) => {
                 parts.push(format!("[Bash execution]: {}", bash.command));
             }
-            AgentMessage::BranchSummary(summary) => {
-                parts.push(format!("[Branch summary]: {}", summary.summary));
-            }
             AgentMessage::CompactionSummary(summary) => {
                 parts.push(format!("[Compaction summary]: {}", summary.summary));
             }

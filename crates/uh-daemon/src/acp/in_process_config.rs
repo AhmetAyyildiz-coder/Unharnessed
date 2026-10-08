@@ -132,6 +132,8 @@ pub(super) async fn handle_set_config_option(
         }
     };
     let _ = tx.send(jsonrpc::response(&id, &config_options_value(&options)));
+    // A model brings its own window; a reasoning level moves the threshold.
+    session.usage.changed().await;
 }
 
 /// One failed config operation: the TS handler's `RequestError` shape.

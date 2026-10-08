@@ -1,19 +1,22 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { savedGroups } from "../src/instructions";
 import type { ModelChoice, Provider, SessionState, SettingsState, WebviewMessage } from "../src/protocol";
 import type { SettingResult } from "./App";
 import { IconBack, IconChevron, IconRestart } from "./icons";
 import { ProviderLogo } from "./logos";
-import { ModelList, providerName } from "./models";
+import { isLocal, ModelList, providerName } from "./models";
+import { InstructionsTab } from "./SettingsInstructions";
 import { McpTab } from "./SettingsMcp";
 import { SkillsTab } from "./SettingsSkills";
 import { post } from "./vscode";
 
-export type SettingsTab = "general" | "mcp" | "skills";
+export type SettingsTab = "general" | "mcp" | "skills" | "instructions";
 
 const TABS: [SettingsTab, string][] = [
   ["general", "General"],
   ["mcp", "MCP"],
   ["skills", "Skills"],
+  ["instructions", "Instructions"],
 ];
 
 /** How a number is shown and typed; the file holds tokens, counts or ms. */
@@ -35,36 +38,22 @@ type Group = {
 const GROUPS: Group[] = [
   {
     label: "Compaction",
-    help: "When a conversation nears the model's context limit, older messages are summarized to make room.",
+    help: "Summarizes older messages when the context fills up.",
     gate: "compaction.enabled",
     fields: [
       {
         kind: "switch",
         key: "compaction.enabled",
         label: "Compact automatically",
-        help: "Summarize older messages before the context is full.",
-      },
-      {
-        kind: "number",
-        key: "compaction.reserveTokens",
-        label: "Room kept free",
-        help: "Compaction starts when fewer tokens than this are left.",
-        unit: "tokens",
-        max: 2_000_000,
+        help: "Before the context is full.",
       },
       {
         kind: "number",
         key: "compaction.keepRecentTokens",
-        label: "Kept word for word",
-        help: "The most recent tokens are never summarized.",
+        label: "Kept as is",
+        help: "Recent tokens, never summarized.",
         unit: "tokens",
         max: 2_000_000,
-      },
-      {
-        kind: "switch",
-        key: "compaction.agentCallable",
-        label: "Agent can compact",
-        help: "The agent can see how full its context is and compact on its own.",
       },
       {
         kind: "model",
@@ -202,8 +191,9 @@ export function useSettled(key: string, { drafts, errors }: Actions, done: () =>
 
 /**
  * The agent's global settings (`~/.unharnessed/settings.json`), its MCP
- * servers and its skills, a tab each. A change is written at once; the ones
- * the agent reads when it starts wait for a restart, which the screen offers.
+ * servers, its skills and its instructions per model, a tab each. A change
+ * is written at once; the ones the agent reads when it starts wait for a
+ * restart, which the screen offers.
  */
 export function Settings({
   settings,
@@ -252,7 +242,23 @@ export function Settings({
     const stored = next !== null && JSON.stringify(next) === JSON.stringify(view?.defaults[key]) ? null : next;
     act(key, next ?? view?.defaults[key] ?? null, { type: "setSetting", key, value: stored });
   };
-  const at = TABS.findIndex(([id]) => id === tab);
+  const choices = session?.kind === "open" ? (session.config.model?.choices ?? null) : null;
+  // The light under the current tab: tabs are as wide as their label.
+  const track = useRef<HTMLDivElement>(null);
+  const [light, setLight] = useState<{ left: number; width: number } | null>(null);
+  useLayoutEffect(() => {
+    const tabs = track.current;
+    if (!tabs) return;
+    const place = () => {
+      const on = tabs.querySelector<HTMLElement>(".tab.is-on");
+      if (on) setLight({ left: on.offsetLeft, width: on.offsetWidth });
+    };
+    place();
+    // A label's width moves with the font and the side bar's.
+    const observer = new ResizeObserver(place);
+    for (const button of tabs.querySelectorAll(".tab")) observer.observe(button);
+    return () => observer.disconnect();
+  }, [tab]);
 
   return (
     <div className="screen">
@@ -272,8 +278,8 @@ export function Settings({
           <span>Settings</span>
         </div>
       </header>
-      <div className="tabs" role="tablist" aria-label="Settings">
-        <span className="tab-light" style={{ translate: `${at * 100}% 0` }} />
+      <div className="tabs" role="tablist" aria-label="Settings" ref={track}>
+        {light && <span className="tab-light" style={{ width: light.width, translate: `${light.left}px 0` }} />}
         {TABS.map(([id, label]) => (
           <button
             key={id}
@@ -289,7 +295,7 @@ export function Settings({
       </div>
       <main className="content">
         {settings.pending.length > 0 && (
-          <div className="notice">
+          <div className="restart-notice">
             <p className="note">Some changes apply when the agent restarts.</p>
             <button
               className="button"
@@ -323,6 +329,14 @@ export function Settings({
           />
         )}
         {tab === "skills" && <SkillsTab skills={settings.skills} actions={actions} />}
+        {tab === "instructions" && (
+          <InstructionsTab
+            groups={view ? savedGroups(view) : null}
+            choices={choices}
+            providers={providers}
+            actions={actions}
+          />
+        )}
       </main>
     </div>
   );
@@ -366,7 +380,6 @@ function General({
                     field={field}
                     value={value(field.key)}
                     fallback={view.defaults[field.key]}
-                    restart={view.restart.includes(field.key)}
                     // The gate itself stays live; the rest dims while it is off.
                     dim={gated && field.key !== group.gate}
                     disabled={!ready}
@@ -390,7 +403,6 @@ function FieldRow({
   field,
   value,
   fallback,
-  restart,
   dim,
   disabled,
   error,
@@ -403,7 +415,6 @@ function FieldRow({
   field: Field;
   value: unknown;
   fallback: unknown;
-  restart: boolean;
   dim: boolean;
   disabled: boolean;
   error?: string;
@@ -417,11 +428,6 @@ function FieldRow({
     <span className="row-main">
       <span className="row-name">
         {field.label}
-        {restart && (
-          <span className="tag" data-tip="Applies when the agent restarts">
-            restart
-          </span>
-        )}
       </span>
       {field.help && <span className="setting-help">{field.help}</span>}
     </span>
@@ -617,7 +623,13 @@ function ModelRow({
       >
         {label}
         <span className="setting-value">
-          {current && <ProviderLogo provider={current.provider} name={providerName(providers, current.provider)} />}
+          {current && (
+            <ProviderLogo
+              provider={current.provider}
+              name={providerName(providers, current.provider)}
+              local={isLocal(providers, current.provider)}
+            />
+          )}
           <span>{current?.name ?? value ?? field.none}</span>
           <IconChevron className="row-end" />
         </span>

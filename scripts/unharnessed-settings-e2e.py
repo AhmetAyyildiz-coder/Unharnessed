@@ -3,16 +3,19 @@
 binary (VSCODE_PLAN.md step 5): `_unharnessed/settings/get` and `set` on
 the global settings.json, what a write keeps and refuses, a live key (the
 retries) reaching the next request without a restart, a restart key
-(compaction.agentCallable) reaching the next process, the settings removed
+(modelInstructions) reaching the next process, the settings removed
 from the agent (terminal, themes, daemon...) loading and surviving
 untouched; the MCP servers (`_unharnessed/mcp/*`, a sign-in started as the
-provider login `mcp:<id>`) and the skills (`_unharnessed/skills/*`, each
-place the agent reads them from, under a throwaway HOME).
+provider login `mcp:<id>`), the Marketplace (Prime's MCP catalog, the
+uh-core fixture seeded as the agent's catalog cache) and the skills
+(`_unharnessed/skills/*`, each place the agent reads them from, under a
+throwaway HOME).
 
 usage: scripts/unharnessed-settings-e2e.py <out-dir>
 
 Nothing reaches the network: UNHARNESSED_OFFLINE is set, the model catalog
-is the uh-models test fixture seeded as the agent's catalog cache, and the
+is the uh-models test fixture seeded as the agent's catalog cache, the
+Marketplace's token service answers at a `.invalid` host, and the
 OpenAI requests go to a local server (models.json `baseUrl`) that records
 them and answers 503. Each scenario runs in its own agent dir
 (<out-dir>/<name>/agent) and writes <out-dir>/<name>.out: the command, then
@@ -45,12 +48,15 @@ ENV = {
 ENV.update(UNHARNESSED_KERNEL_VENV=str(OUT / "kernel-venv"), UNHARNESSED_OFFLINE="1", DO_NOT_TRACK="1")
 CATALOG = json.loads((ROOT / "crates/uh-models/tests/fixtures/catalog.v1.json").read_text())
 CATALOG_URL = "https://raw.githubusercontent.com/PrimeIntellect-ai/prime-agent-catalog/main/models/catalog.v1.json"
+MCP_CATALOG = json.loads((ROOT / "crates/uh-core/tests/fixtures/mcp/plugins-catalog.v2.json").read_text())
+MCP_CATALOG_URL = "https://raw.githubusercontent.com/PrimeIntellect-ai/prime-agent-catalog/main/plugins/catalog.v2.json"
 OPENAI_KEY = {"openai": {"type": "api_key", "key": "sk-e2e-test"}}
 FAILED = []
 
 GET = "_unharnessed/settings/get"
 SET = "_unharnessed/settings/set"
 MCP_LIST = "_unharnessed/mcp/list"
+MCP_SET_TOKEN = "_unharnessed/mcp/set_token"
 MCP_LOGOUT = "_unharnessed/mcp/logout"
 LOGIN = "_unharnessed/providers/login"
 LOGIN_CANCEL = "_unharnessed/providers/login_cancel"
@@ -228,8 +234,8 @@ def scenario_read_write():
           == (True, 16384, 20000, 3, 2000, 3, 86400000, True), defaults)
     check("read: the restart keys are the ones the engine keeps",
           sorted(view.get("restart", [])) == sorted(["compaction.enabled", "compaction.reserveTokens",
-                                                     "compaction.keepRecentTokens", "compaction.agentCallable",
-                                                     "mcpServers"]), view.get("restart"))
+                                                     "compaction.keepRecentTokens", "mcpServers",
+                                                     "modelInstructions"]), view.get("restart"))
     check("read: reading writes nothing", agent.settings() is None, agent.settings())
 
     answer = agent.set("compaction.reserveTokens", 32000)
@@ -327,29 +333,31 @@ def scenario_live():
 
 
 def scenario_restart():
-    """compaction.agentCallable is read when the agent starts: off, the
-    next process has no `compact` skill in its prompt."""
+    """modelInstructions is read when the agent starts: set, the next
+    process carries the text in its prompt, the running one does not."""
     requests = Requests(OUT / "restart" / "requests.json")
     (OUT / "restart").mkdir(parents=True, exist_ok=True)
     models_json = {"providers": {"openai": {"baseUrl": requests.base_url}}}
     settings = {"retry": {"enabled": False}}
+    marker = "E2E restart marker: answer in haiku."
     agent = Agent("restart", auth=OPENAI_KEY, models_json=models_json, settings=settings)
     agent.new_session()
     agent.prompt("before")
-    before = json.dumps(requests.bodies[-1]["body"]) if requests.bodies else ""
-    check("restart: by default the prompt offers the compact skill", "compact/SKILL.md" in before)
-    agent.set("compaction.agentCallable", False)
+    body = requests.bodies[-1]["body"] if requests.bodies else {}
+    before = json.dumps(body)
+    check("restart: the prompt starts without the instructions", marker not in before and body.get("model"), body)
+    answer = agent.set("modelInstructions", [{"models": [f"openai/{body.get('model')}"], "text": marker}])
+    check("restart: the instructions are saved", "result" in answer, answer)
     agent.prompt("same process")
     same = json.dumps(requests.bodies[-1]["body"]) if requests.bodies else ""
-    check("restart: the running process keeps it until it restarts", "compact/SKILL.md" in same)
+    check("restart: the running process keeps its prompt until it restarts", marker not in same)
     check("restart: the agent exits when stdin closes", agent.close() == 0)
 
     agent = Agent("restart", models_json=models_json, run=2)
     agent.new_session()
     agent.prompt("after")
     after = json.dumps(requests.bodies[-1]["body"]) if requests.bodies else ""
-    check("restart: the next process has no compact skill", "compact/SKILL.md" not in after and after != "")
-    check("restart: but still the other built-in skills", "goal/SKILL.md" in after)
+    check("restart: the next process has the instructions", marker in after)
     check("restart: the second agent exits when stdin closes", agent.close() == 0)
     requests.server.shutdown()
 
@@ -407,9 +415,8 @@ def scenario_mcp():
 
     listed = {server["id"]: server for server in agent.request(MCP_LIST).get("result", {}).get("servers", [])}
     pick = lambda server, *keys: tuple(listed.get(server, {}).get(key) for key in keys)
-    check("mcp: the built-in services are listed, ready for a sign-in",
-          [pick(name, "source", "status", "signIn", "signedIn") for name in ("linear", "notion")]
-          == [("catalog", "not_connected", True, False)] * 2, listed)
+    check("mcp: no catalog read, no service comes built in",
+          sorted(listed) == sorted(servers), sorted(listed))
     check("mcp: a signed-in server with a verified connection is connected",
           pick("docs", "source", "status", "signIn", "signedIn") == ("user", "connected", False, True), listed.get("docs"))
     check("mcp: a server turned off reads disabled", pick("tools", "status") == ("disabled",), listed.get("tools"))
@@ -460,15 +467,90 @@ def scenario_mcp():
           list(json.loads(auth_path.read_text())))
 
     before = agent.settings_path.read_text()
-    for name, expected in (("linear", "MCP server linear: the name is taken by the built-in linear server"),
-                           ("bad name", None), ("-x", None)):
+    for name in ("bad name", "-x"):
         answer = agent.set("mcpServers", {name: {"type": "stdio", "command": "echo"}})
         check(f"mcp: the server name {name!r} is refused",
-              answer.get("error", {}).get("code") == -32602
-              and (details(answer) == expected if expected else "a name is 1 to 64" in (details(answer) or "")),
+              answer.get("error", {}).get("code") == -32602 and "a name is 1 to 64" in (details(answer) or ""),
               answer.get("error") or answer.get("result"))
     check("mcp: nothing was written", agent.settings_path.read_text() == before)
+    answer = agent.set("mcpServers", {"linear": {"type": "stdio", "command": "echo"}})
+    check("mcp: a catalog service's name is free for a server of yours", "result" in answer,
+          answer.get("error") or answer.get("result"))
     check("mcp: the agent exits when stdin closes", agent.close() == 0)
+
+
+def scenario_marketplace():
+    """The Marketplace: Prime's catalog listed for the screen, a service
+    added by its token and removed again, the requests it refuses."""
+    agent = Agent("marketplace", auth=OPENAI_KEY, home=OUT / "marketplace" / "home",
+                  settings={"mcpServers": {"docs": {"type": "stdio", "command": "echo"}}})
+    # A token service of the catalog whose host never answers: the token is
+    # kept, its connection not verified yet.
+    entries = [entry for entry in MCP_CATALOG["entries"] if entry["server"] != "github"]
+    github = next(entry for entry in MCP_CATALOG["entries"] if entry["server"] == "github")
+    endpoint = "https://mcp.github-e2e.invalid/mcp"
+    entries.append(dict(github, url=endpoint, transport={"type": "http", "url": endpoint}))
+    payload = dict(MCP_CATALOG, entries=entries)
+    cache = {"url": MCP_CATALOG_URL, "scope": "public", "fetchedAt": int(time.time() * 1000), "payload": payload}
+    (agent.agent_dir / "mcp-service-catalog.v2.json").write_text(json.dumps(cache))
+    auth_path = agent.agent_dir / "auth.json"
+    records_path = agent.agent_dir / "mcp-connections.json"
+
+    servers = agent.request(MCP_LIST).get("result", {}).get("servers", [])
+    listed = {server["id"]: server for server in servers}
+    catalog = [server for server in servers if server["source"] == "catalog"]
+    check("marketplace: the catalog's 68 services are listed beside yours",
+          len(catalog) == 68 and listed.get("docs", {}).get("source") == "user", (len(catalog), sorted(listed)[:5]))
+    check("marketplace: none is added yet", not any(server["signedIn"] for server in catalog))
+    linear = listed.get("linear", {})
+    check("marketplace: Linear comes from the catalog, added by an OAuth sign-in",
+          (linear.get("label"), linear.get("category"), linear.get("aliases"), linear.get("signIn"), "token" in linear)
+          == ("Linear", "Productivity", ["linear-app"], True, False), linear)
+    check("marketplace: Notion too", listed.get("notion", {}).get("signIn") is True, listed.get("notion"))
+    github = listed.get("github", {})
+    check("marketplace: GitHub is added by a token, and says which",
+          (github.get("token"), github.get("signIn"), github.get("publisher"))
+          == ("GitHub personal access token", False, "GitHub"), github)
+
+    for params, expected in (({"id": "github"}, "token must be a non-empty string"),
+                             ({"id": "github", "token": "  "}, "token must be a non-empty string"),
+                             ({"token": "x"}, "id must be a non-empty string"),
+                             ({"id": "linear", "token": "x"},
+                              "linear does not collect a single credential; it is not pasteable."),
+                             ({"id": "docs", "token": "x"},
+                              "docs does not collect a single credential; it is not pasteable.")):
+        answer = agent.request(MCP_SET_TOKEN, params)
+        check(f"marketplace: a token add {params} is refused", details(answer) == expected,
+              answer.get("error") or answer.get("result"))
+    check("marketplace: no refused add stored anything", set(json.loads(auth_path.read_text())) == {"openai"},
+          list(json.loads(auth_path.read_text())))
+
+    answer = agent.request(MCP_SET_TOKEN, {"id": "github", "token": "ghp_e2e"}, timeout=60)
+    listed = {server["id"]: server for server in answer.get("result", {}).get("servers", [])}
+    stored = json.loads(auth_path.read_text())
+    check("marketplace: GitHub added by its token is yours, its connection not verified yet",
+          (listed.get("github", {}).get("signedIn"), listed.get("github", {}).get("status")) == (True, "pending"),
+          listed.get("github") or answer.get("error"))
+    check("marketplace: the token is stored bound to the service's address",
+          stored.get("mcp:github") == {"type": "mcp_static_token", "bearer": "ghp_e2e", "endpoint": endpoint},
+          stored.get("mcp:github"))
+    check("marketplace: with its connection record", "github" in json.loads(records_path.read_text())["connections"])
+
+    listed = {server["id"]: server for server in
+              agent.request(MCP_LOGOUT, {"id": "github"}).get("result", {}).get("servers", [])}
+    check("marketplace: removed, GitHub is back in the Marketplace",
+          (listed.get("github", {}).get("signedIn"), listed.get("github", {}).get("status")) == (False, "setup_required"),
+          listed.get("github"))
+    check("marketplace: its token and record are gone",
+          "mcp:github" not in json.loads(auth_path.read_text())
+          and "github" not in json.loads(records_path.read_text()).get("connections", {}))
+
+    agent.set("mcpServers", {"linear": {"type": "stdio", "command": "echo"}})
+    listed = agent.request(MCP_LIST).get("result", {}).get("servers", [])
+    check("marketplace: a server of yours named like a service takes its place",
+          [server["source"] for server in listed if server["id"] == "linear"] == ["user"],
+          [server for server in listed if server["id"] == "linear"])
+    check("marketplace: the agent exits when stdin closes", agent.close() == 0)
 
 
 def skill(folder, name, description=None):
@@ -598,7 +680,7 @@ def scenario_skills_at_home():
 
 
 for scenario in (scenario_read_write, scenario_removed_keys, scenario_live, scenario_restart, scenario_nulls,
-                 scenario_broken_file, scenario_mcp, scenario_skills, scenario_skills_at_home):
+                 scenario_broken_file, scenario_mcp, scenario_marketplace, scenario_skills, scenario_skills_at_home):
     try:
         scenario()
     except Exception as error:  # a crash fails the scenario, the others still run

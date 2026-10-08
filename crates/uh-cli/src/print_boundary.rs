@@ -15,13 +15,10 @@
 //! previous run gets its recovery attempt on the resumed context.
 //!
 //! The pre-turn check is the full TS `_checkCompaction` call, not just the
-//! overflow arm: an aborted trailing turn drops any pending
-//! model-requested compaction (the `skipAbortedCheck=false`
-//! pass), and when Case 1 stays silent the requested and threshold arms
-//! run too — a session resumed above the reserve headroom compacts before
-//! its first admitted prompt, and a pending model request consumes the
-//! check. A pre-turn compaction never re-issues: the admitted prompt
-//! continues the loop on the compacted context.
+//! overflow arm: when Case 1 stays silent the threshold arm runs too — a
+//! session resumed above the reserve headroom compacts before its first
+//! admitted prompt. A pre-turn compaction never re-issues: the admitted
+//! prompt continues the loop on the compacted context.
 //!
 //! Every turn the print loop issues crosses the boundary pair, not just
 //! the CLI prompts: the autonomous continuation loop admits its follow-up
@@ -129,14 +126,12 @@ impl TurnBoundary {
 
     /// The pre-turn check before an admitted prompt: the full TS
     /// `_runPreTurnCompaction` -> `_checkCompaction(lastAssistant,
-    /// skipAbortedCheck=false, queueAutonomousContinuation=false)`. An
-    /// aborted trailing turn first drops any pending model request (the
-    /// turn that would service it never ran); then the same arm order as
-    /// the settled boundary: the overflow recovery first (a stale overflow
-    /// error from a previous run gets its compact-and-retry attempt here),
-    /// and — only when Case 1 stayed silent — the model-requested
-    /// compaction and the threshold arm (a resumed session above the
-    /// reserve headroom compacts before its first admitted prompt). A
+    /// skipAbortedCheck=false, queueAutonomousContinuation=false)`: the
+    /// same arm order as the settled boundary — the overflow recovery
+    /// first (a stale overflow error from a previous run gets its
+    /// compact-and-retry attempt here), and — only when Case 1 stayed
+    /// silent — the threshold arm (a resumed session above the reserve
+    /// headroom compacts before its first admitted prompt). A
     /// pre-turn compaction never re-issues (TS
     /// `resumeAfterFailure`/`_runPreTurnCompaction` leave the loop to the
     /// admitted prompt, which continues on the compacted context). The
@@ -148,28 +143,13 @@ impl TurnBoundary {
         model: &Model,
         api_key: Option<String>,
     ) -> Result<(), String> {
-        // TS abort arm (skipAbortedCheck=false): an aborted trailing
-        // assistant drops any pending model-requested compaction — the
-        // turn that would service it never ran, and a stale request must
-        // not leak into the admitted turn. The check
-        // then continues to the later arms (the pre-prompt path never
-        // returns early).
-        if matches!(
-            engine.session.last_assistant_message().await,
-            Some(SessionAgentMessage::Assistant(wire))
-                if wire.stop_reason == uh_types::ai::StopReason::Aborted
-        ) {
-            engine.turn_boundary.clear_pending().await;
-        }
         // Case 1 (overflow): when it fires, TS returns from the check and
-        // the requested/threshold arms never run in the same pass (the
-        // overflow run itself consumes a pending model request).
+        // the threshold arm never runs in the same pass.
         let outcome = self
             .overflow_recovery_attempt(engine, model, api_key.clone(), OverflowBoundary::PreTurn)
             .await?;
         if matches!(outcome, OverflowOutcome::NotApplicable) {
-            self.requested_and_threshold_arms(engine, model, api_key)
-                .await?;
+            self.threshold_arm(engine, model, api_key).await?;
         }
         self.reset();
         Ok(())
@@ -177,10 +157,8 @@ impl TurnBoundary {
 
     /// The settled-turn boundary (TS `agent_end`): the overflow arm with
     /// its retry loop (a retried turn settles before the arm re-checks it),
-    /// then — when the arm did not fire — the model-requested compaction
-    /// and the threshold arm (the order TS keeps inside `_checkCompaction`:
-    /// a requested run consumes the check, so the threshold is not
-    /// re-evaluated after it).
+    /// then — when the arm did not fire — the threshold arm (the order TS
+    /// keeps inside `_checkCompaction`).
     pub(crate) async fn run_at_settled_turn(
         &mut self,
         engine: &SessionEngine,
@@ -202,8 +180,7 @@ impl TurnBoundary {
             }
         };
         if !arm_finished {
-            self.requested_and_threshold_arms(engine, model, api_key)
-                .await?;
+            self.threshold_arm(engine, model, api_key).await?;
         }
         Ok(())
     }

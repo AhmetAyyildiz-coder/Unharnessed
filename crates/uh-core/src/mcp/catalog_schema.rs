@@ -88,8 +88,9 @@ pub struct McpServiceEntry {
     pub auth: McpServiceAuth,
     pub setup: McpServiceSetup,
     pub verification: McpServiceVerification,
-    /// True only for legacy built-in integrations (linear, notion); their ids
-    /// stay reserved — local sources can never shadow them.
+    /// Prime's marker for its former built-ins (linear, notion): part of
+    /// the wire contract, read and ignored — they are catalog services like
+    /// the others.
     pub legacy_builtin: bool,
     pub provenance: Vec<McpServiceProvenance>,
     /// OAuth-strategy entries only; never carries a client id or secret
@@ -516,58 +517,19 @@ pub fn parse_plugins_catalog(bytes: &[u8]) -> Result<PluginsCatalog, String> {
     })
 }
 
-/// The compiled legacy built-ins (the offline fallback when no snapshot is
-/// available): the pre-catalog integrations whose ids stay reserved. Data
-/// mirrors the catalog entries for `linear` and `notion` (metadata-reviewed
-/// OAuth dynamic-client services).
-pub fn compiled_builtin_services() -> Vec<McpServiceEntry> {
-    let json = serde_json::json!([
-        {
-            "server": "linear",
-            "service": "linear",
-            "label": "Linear",
-            "url": "https://mcp.linear.app/mcp",
-            "description": "Search, create and update Linear issues, projects, and initiatives. Draft PRDs, write updates, analyze customer requests, and keep plans up to date \u{2014} all from within ChatGPT",
-            "category": "Productivity",
-            "publisher": "Linear",
-            "homepage": "https://linear.app/",
-            "privacyUrl": "https://linear.app/privacy",
-            "supportUrl": "https://linear.app/contact",
-            "aliases": ["linear-app"],
-            "transport": { "type": "http", "url": "https://mcp.linear.app/mcp" },
-            "auth": { "strategy": "oauth", "clientRegistration": "dynamic" },
-            "setup": { "status": "ready", "readiness": "oauth-ready" },
-            "verification": { "status": "metadata-reviewed" },
-            "legacyBuiltin": true,
-            "provenance": [{ "source": "prime" }],
-            "oauth": { "kind": "oauth" }
-        },
-        {
-            "server": "notion",
-            "service": "notion",
-            "label": "Notion",
-            "url": "https://mcp.notion.com/mcp",
-            "description": "Notion workflows for implementation planning, research synthesis, meeting preparation, and knowledge capture.",
-            "category": "Productivity",
-            "publisher": "Notion",
-            "homepage": "https://www.notion.so/",
-            "privacyUrl": "https://www.notion.com/help/privacy",
-            "aliases": ["notion-workspace"],
-            "transport": { "type": "http", "url": "https://mcp.notion.com/mcp" },
-            "auth": { "strategy": "oauth", "clientRegistration": "dynamic" },
-            "setup": { "status": "ready", "readiness": "oauth-ready" },
-            "verification": { "status": "metadata-reviewed" },
-            "legacyBuiltin": true,
-            "provenance": [{ "source": "prime" }],
-            "oauth": { "kind": "oauth" }
-        }
-    ]);
-    let entries: Vec<McpServiceEntry> =
-        serde_json::from_value(json).expect("compiled builtin catalog entries are valid");
-    for entry in &entries {
-        entry.validate().expect("compiled builtin entries validate");
-    }
-    entries
+/// The given services of the real shipped catalog fixture (Prime's
+/// `plugins/catalog.v2.json`), as a remote snapshot: tests stand catalog
+/// services up with it.
+#[cfg(test)]
+pub(crate) fn fixture_catalog(servers: &[&str]) -> PluginsCatalog {
+    let mut catalog = parse_plugins_catalog(
+        include_str!("../../tests/fixtures/mcp/plugins-catalog.v2.json").as_bytes(),
+    )
+    .expect("the catalog fixture parses");
+    catalog
+        .entries
+        .retain(|entry| servers.contains(&entry.server.as_str()));
+    catalog
 }
 
 #[cfg(test)]
@@ -743,22 +705,5 @@ mod tests {
             "provenance": [{ "source": "prime" }],
             "oauth": { "kind": "oauth" }
         })
-    }
-
-    /// The compiled legacy built-ins match the shipped catalog entries for
-    /// linear/notion (reserved ids, metadata-reviewed, OAuth dynamic).
-    #[test]
-    fn compiled_builtins_match_the_catalog_entries() {
-        let catalog = parse(REAL_PAYLOAD.as_bytes());
-        let builtins = compiled_builtin_services();
-        for builtin in &builtins {
-            let shipped = catalog
-                .entries
-                .iter()
-                .find(|e| e.server == builtin.server)
-                .expect("builtin in the shipped catalog");
-            assert_eq!(builtin, shipped, "compiled fallback mirrors the payload");
-        }
-        assert_eq!(builtins.len(), 2);
     }
 }

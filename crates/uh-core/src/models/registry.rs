@@ -663,6 +663,12 @@ impl ModelRegistry {
         self.catalog
             .refresh_with_credentials(force, credentials.as_ref())
             .await;
+        if self
+            .auth
+            .has_auth(uh_models::openrouter::OPENROUTER_PROVIDER)
+        {
+            self.catalog.refresh_openrouter(force).await;
+        }
         self.load_models();
         self.refresh_private_prime_inference_authorization(
             previous_ids,

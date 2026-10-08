@@ -48,7 +48,7 @@ impl McpLoginContext {
 
 impl McpManager {
     /// The server's OAuth config when the integration exists and uses
-    /// OAuth (builtin catalog entries and `--oauth` user servers).
+    /// OAuth (catalog services and `--oauth` user servers).
     pub fn oauth_config(&self, server: &str) -> Option<McpOAuthConfig> {
         let integration = self.integrations().get(server)?;
         if !integration.uses_oauth {
@@ -313,6 +313,16 @@ mod tests {
         user_servers: Option<HashMap<String, McpServerConfig>>,
         http: Arc<dyn OAuthHttp>,
     ) -> Arc<Mutex<McpManager>> {
+        catalog_manager(agent_dir, user_servers, &[], http)
+    }
+
+    /// A manager whose remote catalog holds `services` of the fixture.
+    fn catalog_manager(
+        agent_dir: &std::path::Path,
+        user_servers: Option<HashMap<String, McpServerConfig>>,
+        services: &'static [&'static str],
+        http: Arc<dyn OAuthHttp>,
+    ) -> Arc<Mutex<McpManager>> {
         let manager = McpManager::new(McpManagerOptions {
             auth_storage: AuthStorage::create_with_oauth(
                 agent_dir,
@@ -322,7 +332,9 @@ mod tests {
             begin_login: None,
             agent_dir: None,
             get_catalog_sources: None,
-            remote_source: None,
+            remote_source: Some(Box::new(move || {
+                Some(crate::mcp::catalog_schema::fixture_catalog(services))
+            })),
             probe_override: None,
         });
         Arc::new(Mutex::new(manager))
@@ -445,10 +457,11 @@ mod tests {
         assert!(after.1.uses_oauth);
     }
 
-    /// The builtin linear integration: `begin_login` removes its skill
-    /// override; notion stays disabled.
+    /// A catalog service (Linear, from Prime's catalog): `begin_login` makes
+    /// it a generic server the prompt names; notion, not signed in, stays
+    /// out.
     #[tokio::test]
-    async fn begin_login_unlocks_builtin_skill_gating() {
+    async fn begin_login_enables_a_catalog_service() {
         let agent = tempfile::tempdir().unwrap();
         let http = Arc::new(ScriptedHttp::new(vec![
             ("https://mcp.linear.app/mcp", 404, ""),
@@ -473,23 +486,22 @@ mod tests {
                 r#"{"access_token":"linear-access","expires_in":3600}"#,
             ),
         ]));
-        let manager = manager(agent.path(), None, Arc::clone(&http) as Arc<dyn OAuthHttp>);
+        let manager = catalog_manager(
+            agent.path(),
+            None,
+            &["linear", "notion"],
+            Arc::clone(&http) as Arc<dyn OAuthHttp>,
+        );
         let gating_manager = Arc::clone(&manager);
         let before = tokio::task::spawn_blocking(move || {
             gating_manager
                 .lock()
                 .unwrap()
-                .get_disabled_builtin_skill_overrides()
+                .get_enabled_persistent_generic_servers()
         })
         .await
         .unwrap();
-        assert_eq!(
-            before,
-            vec![
-                "-linear/SKILL.md".to_string(),
-                "-notion/SKILL.md".to_string()
-            ]
-        );
+        assert!(before.is_empty());
 
         let ui = Arc::new(PasteUi {
             auth_url: Arc::new(std::sync::Mutex::new(String::new())),
@@ -504,17 +516,16 @@ mod tests {
         })
         .await
         .unwrap();
-        // Only notion stays gated.
         let gating_manager = Arc::clone(&manager);
         let after = tokio::task::spawn_blocking(move || {
             gating_manager
                 .lock()
                 .unwrap()
-                .get_disabled_builtin_skill_overrides()
+                .get_enabled_persistent_generic_servers()
         })
         .await
         .unwrap();
-        assert_eq!(after, vec!["-notion/SKILL.md".to_string()]);
+        assert_eq!(after, vec!["linear".to_string()]);
     }
 
     /// Unknown servers and non-OAuth servers error with the TS wording;

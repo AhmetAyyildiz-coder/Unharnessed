@@ -78,6 +78,13 @@ pub fn prime_credentials_for_dir(agent_dir: &Path) -> Option<PrimeCredentials> {
     Some(PrimeCredentials { api_key, team_id })
 }
 
+/// Whether the auth stored under `agent_dir` (or the environment) signs in
+/// to `OpenRouter`: only then does the catalog fetch `OpenRouter`'s live list.
+#[must_use]
+pub fn openrouter_signed_in(agent_dir: &Path) -> bool {
+    AuthStorage::create(agent_dir).has_auth(uh_models::openrouter::OPENROUTER_PROVIDER)
+}
+
 /// The daemon's warm-up: the shared catalog for `agent_dir` with a forced
 /// [`RefreshTrigger::Startup`] refresh fired (fire-and-forget: the disk
 /// caches fill in the background and every registry resolves the

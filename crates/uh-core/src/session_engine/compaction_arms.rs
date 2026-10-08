@@ -1,8 +1,8 @@
 use super::compact_session::CompactOutcome;
 use super::{
     compaction, compaction_trace, ipython_state, provider_adapter, rebuilt_loop_messages,
-    session_message_to_loop, standard_message, AgentMessage, AgentSession, FileEntry,
-    SessionAgentMessage, TrailingAssistantFilter,
+    session_message_to_loop, standard_message, AgentMessage, AgentSession, SessionAgentMessage,
+    TrailingAssistantFilter,
 };
 
 impl AgentSession {
@@ -51,6 +51,40 @@ impl AgentSession {
             ),
             &self.compaction_settings(),
         )
+    }
+
+    /// What the session has used ([`compaction::SessionUsage`]): the
+    /// context as the latest reply measured it, over `model`'s window and
+    /// the threshold the automatic compaction checks (with the output
+    /// budget [`Self::auto_compaction_due`] reserves), and what the active
+    /// branch cost. Read from the persisted session, never the agent's
+    /// state: the loop's event listeners, which hold that state's lock,
+    /// can ask.
+    pub async fn usage(&self, model: &uh_types::ai::Model) -> compaction::SessionUsage {
+        let session = self.session.lock().await;
+        let context = session.active_context();
+        let settings = self.compaction_settings();
+        let thinking = uh_types::ai::thinking_levels::thinking_level_from_str(&context.thinking_level)
+            .unwrap_or(uh_types::ai::ModelThinkingLevel::Off);
+        let compact_at = (settings.enabled && model.context_window > 0)
+            .then(|| {
+                compaction::compaction_threshold(
+                    model.context_window,
+                    compaction::request_output_budget(model, thinking),
+                    &settings,
+                )
+            })
+            .filter(|threshold| *threshold > 0);
+        let (cache_reusable, cache_reused, cache_saved) = session.branch_cache();
+        compaction::SessionUsage {
+            tokens: compaction::measured_context_tokens(&context.messages),
+            context_window: model.context_window,
+            compact_at,
+            cost: session.branch_cost(),
+            cache_reusable,
+            cache_reused,
+            cache_saved,
+        }
     }
 
     /// Remove the trailing assistant message from the loop context (TS retry:
@@ -320,23 +354,26 @@ impl AgentSession {
         Ok(row)
     }
 
-    /// Rebuild the live loop context from a durable branch (TS
-    /// `navigateTree`'s context rebuild: `sessionManager.branch(newLeafId)`
-    /// then `agent.state.messages = buildSessionContext().messages`). The
-    /// session adopts the branch entries and the agent's message list is
-    /// rebuilt from the post-navigation session state.
+    /// Move the session back to `entry_id`, an entry on its current
+    /// branch, and rebuild the live loop context from there: the next
+    /// prompt follows it, and what came after stays in the file on a
+    /// branch of its own.
     ///
     /// # Errors
     ///
-    /// Returns an error when the post-navigation history cannot be read.
-    pub async fn rebuild_branch_context(
-        &self,
-        branch_entries: Vec<FileEntry>,
-    ) -> anyhow::Result<()> {
+    /// Returns an error when the full history cannot be read, or when
+    /// `entry_id` is not on the current branch.
+    pub async fn rewind_to(&self, entry_id: &str) -> anyhow::Result<()> {
         let rebuilt = {
             let mut session = self.session.lock().await;
-            session.adopt_entries(branch_entries);
-            crate::session_engine::compact_session::rebuilt_context_after_compaction(&session)
+            session.ensure_full_history().await?;
+            let on_branch = session
+                .get_branch(None)
+                .iter()
+                .any(|entry| entry.id() == Some(entry_id));
+            anyhow::ensure!(on_branch, "{entry_id} is not in the conversation");
+            session.branch(entry_id);
+            session.active_context().messages
         };
         self.agent
             .set_messages(rebuilt_loop_messages(rebuilt))

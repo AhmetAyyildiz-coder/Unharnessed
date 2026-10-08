@@ -2,6 +2,8 @@ import { homedir } from "node:os";
 import * as vscode from "vscode";
 import { Agent } from "./agent";
 import { Chat } from "./chat";
+import { Files } from "./files";
+import { History } from "./history";
 import { Providers } from "./providers";
 import { Session } from "./session";
 import { Settings } from "./settings";
@@ -21,8 +23,20 @@ export function activate(context: vscode.ExtensionContext): void {
   const providers = new Providers(agent, log);
   const session = new Session(agent, cwd, log);
   const settings = new Settings(agent, log);
-  const chat = new Chat(agent, session, log);
-  const view = new ChatViewProvider(context.extensionUri, agent, providers, session, settings, chat, log);
+  const files = new Files(cwd, log);
+  const chat = new Chat(agent, session, files, log);
+  const history = new History(agent, cwd, log);
+  const view = new ChatViewProvider(
+    context.extensionUri,
+    agent,
+    providers,
+    session,
+    settings,
+    chat,
+    history,
+    files,
+    log,
+  );
 
   context.subscriptions.push(log, vscode.window.registerWebviewViewProvider(ChatViewProvider.viewId, view));
   // The E2E drives the panel's messages from its suite (test/e2e/suite.cjs).

@@ -400,6 +400,7 @@ fn common_prefix_length(a: &str, b: &str) -> usize {
 
 fn with_usage_estimate(
     mut message: AssistantMessage,
+    model: &Model,
     context: &Context,
     options: Option<&StreamOptions>,
     prompt_cache: &Mutex<HashMap<String, String>>,
@@ -443,6 +444,9 @@ fn with_usage_estimate(
         total_tokens: input + output_tokens + cache_read + cache_write,
         cost: UsageCost::default(),
     };
+    // Priced at the model's rates like a real provider's usage (a free
+    // model, the default, costs nothing).
+    crate::models::calculate_cost(model, &mut message.usage, None);
     message
 }
 
@@ -792,6 +796,7 @@ pub fn register_faux_provider(options: RegisterFauxProviderOptions) -> FauxProvi
                     );
                     message = with_usage_estimate(
                         message,
+                        &model,
                         &context,
                         options.as_ref(),
                         &state.prompt_cache,
@@ -854,6 +859,7 @@ pub fn register_faux_provider(options: RegisterFauxProviderOptions) -> FauxProvi
                         let mut message = clone_message(&resolved, &api, &provider, &model.id);
                         message = with_usage_estimate(
                             message,
+                            &model,
                             &context,
                             options.as_ref(),
                             &state.prompt_cache,

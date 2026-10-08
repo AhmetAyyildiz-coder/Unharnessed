@@ -22,6 +22,7 @@ use super::meta::{
 };
 use super::producer::UpdateProducer;
 use super::types::{parse_prompt_blocks, AcpSessionUpdate, ImageBlock, PromptBlockError};
+use super::usage::UsageReporter;
 
 /// One hosted ACP session: the producer, the engine event subscription, the
 /// autonomous run state, and the prompt-lifecycle bookkeeping.
@@ -49,6 +50,8 @@ pub struct AcpSession {
     /// (the usage listener arms it on `BudgetReached`, the settle loop's
     /// goal boundary consumes it): TS `_shouldStopAfterTurn`'s budget arm.
     goal_budget_crossed: Arc<AtomicBool>,
+    /// The context gauge's reports (`_meta.unharnessed.usage`).
+    pub(super) usage: Arc<UsageReporter>,
 }
 
 impl AcpSession {
@@ -58,6 +61,7 @@ impl AcpSession {
     pub async fn new(
         id: String,
         engine: Arc<uh_core::session_engine::engine::SessionEngine>,
+        model: Arc<Mutex<Option<uh_types::ai::Model>>>,
         producer: Arc<UpdateProducer>,
         autonomous: Arc<Mutex<uh_core::autonomous::AutonomousRuntimeState>>,
         autonomous_driver: Arc<dyn uh_core::autonomous::AutonomousDriver>,
@@ -70,6 +74,7 @@ impl AcpSession {
         // recovery machine at its `message_start` (TS `startsAgentRun`).
         let arms = Arc::new(CompactionArms::new());
         let goal_budget_crossed = Arc::new(AtomicBool::new(false));
+        let usage = UsageReporter::new(engine.clone(), model, producer.clone());
         let subscription = subscribe_engine_events(
             &engine,
             producer.clone(),
@@ -79,6 +84,7 @@ impl AcpSession {
             last_published_goal.clone(),
             arms.clone(),
             goal_budget_crossed.clone(),
+            usage.clone(),
         )
         .await;
         AcpSession {
@@ -93,6 +99,7 @@ impl AcpSession {
             last_published_goal,
             arms,
             goal_budget_crossed,
+            usage,
         }
     }
 
@@ -175,11 +182,26 @@ impl AcpSession {
         if !changed {
             return;
         }
+        self.publish_goal(&goal).await;
+    }
+
+    /// A loaded conversation's goal, published once it is back (nothing
+    /// changed, so the update above stays quiet): the panel shows it.
+    pub async fn publish_loaded_goal(&self) {
+        let goal = self.engine.goal_driver.lock().await.state().clone();
+        if goal.status != uh_core::goals::GoalStatus::Idle {
+            self.publish_goal(&goal).await;
+        }
+    }
+
+    async fn publish_goal(&self, goal: &uh_core::goals::GoalState) {
         self.publish_engine_event(&AcpEngineEvent::GoalUpdate {
             status: goal.status.slug().to_string(),
             objective: goal.objective.clone(),
             token_budget: goal.token_budget,
             tokens_used: Some(goal.tokens_used),
+            created_at: goal.created_at,
+            updated_at: goal.updated_at,
         })
         .await;
     }
@@ -193,6 +215,10 @@ impl AcpSession {
             self.producer
                 .publish(&update, turn_id, UnharnessedEventPhase::Event, None)
                 .await;
+        }
+        // A compaction rebuilt the context and paid for its summary.
+        if matches!(event, AcpEngineEvent::CompactionEnd { .. }) {
+            self.usage.changed().await;
         }
     }
 }
@@ -212,6 +238,7 @@ async fn subscribe_engine_events(
     last_published_goal: Arc<Mutex<uh_core::goals::GoalState>>,
     arms: Arc<CompactionArms>,
     goal_budget_crossed: Arc<AtomicBool>,
+    usage: Arc<UsageReporter>,
 ) -> Subscription {
     let agent = engine.session.agent().clone();
     let goal_driver = engine.goal_driver.clone();
@@ -227,6 +254,7 @@ async fn subscribe_engine_events(
             let last_published_goal = last_published_goal.clone();
             let arms = arms.clone();
             let goal_budget_crossed = goal_budget_crossed.clone();
+            let usage = usage.clone();
             Box::pin(async move {
                 // A user row that starts an agent run resets the overflow
                 // recovery machine (TS `startsAgentRun` at
@@ -250,6 +278,11 @@ async fn subscribe_engine_events(
                             .publish(&update, turn_id, UnharnessedEventPhase::Event, None)
                             .await;
                     }
+                }
+                // Each settled message grows the context; a reply also
+                // measures it and adds what it cost.
+                if let AgentEvent::MessageEnd { .. } = &event {
+                    usage.changed().await;
                 }
                 if let uh_agent::types::AgentEvent::MessageEnd {
                     message:
@@ -323,6 +356,8 @@ async fn subscribe_engine_events(
                         objective: goal_now.objective.clone(),
                         token_budget: goal_now.token_budget,
                         tokens_used: Some(goal_now.tokens_used),
+                        created_at: goal_now.created_at,
+                        updated_at: goal_now.updated_at,
                     };
                     for update in acp_updates_for_event(&event, &mut mapping) {
                         producer
