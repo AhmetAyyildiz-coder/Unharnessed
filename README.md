@@ -1,4 +1,4 @@
-# Unharnessed
+<p align="center"><img src=".github/banner.png" alt="Unharnessed"></p>
 
 Unharnessed is a minimal agent harness stripped down from
 [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) (MIT). The model
