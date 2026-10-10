@@ -16,7 +16,7 @@ fn cut_and_tokens_computed_from_entries() {
 }
 
 #[test]
-fn message_extraction_skips_compaction_and_tool_results() {
+fn message_extraction_skips_compaction_keeps_tool_results() {
     let mut compaction = FileEntry::Compaction {
         payload: uh_types::session::CompactionEntry {
             summary: "s".to_string(),
@@ -55,7 +55,11 @@ fn message_extraction_skips_compaction_and_tool_results() {
             rest: serde_json::Map::default(),
         },
     };
-    assert!(message_from_entry(&tool_result).is_none());
+    // Tool results are summarizer input: they hold what the cells observed.
+    assert!(matches!(
+        message_from_entry(&tool_result),
+        Some(AgentMessage::ToolResult(_))
+    ));
 }
 
 /// A usage-less error turn never anchors `tokensBefore`: the estimate

@@ -528,10 +528,13 @@ async fn run_prompt_turn(
             }
             break;
         }
-        if check == CompactionCheckRun::OverflowRetry {
-            // The compacted context re-issues the turn without a new
-            // user message (TS `agent.continue()`); the settled retry
-            // re-enters this loop through its own boundary.
+        // The overflow arm compacted, or the threshold stopped the run
+        // mid tool chain: the compacted context re-issues the turn without
+        // a new user message (TS `agent.continue()`); the settled run
+        // re-enters this loop through its own boundary.
+        if check == CompactionCheckRun::OverflowRetry
+            || mode.engine.session.take_threshold_stop().await
+        {
             if let Err(error) = mode.engine.session.agent().continue_run().await {
                 turn_failure = Some(format!("{error:#}"));
                 break;

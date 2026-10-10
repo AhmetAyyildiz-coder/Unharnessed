@@ -75,7 +75,9 @@ runtime keeps serving. Closing stdin is equivalent to `shutdown`.
   cap, same trailing marker).
 - `{"event":"done","id":str,"status":"ok"|"error"}` — exactly one per id'd
   request, always after all of that request's other events. A snapshot `done`
-  adds `saved`, `skipped`, `pruned`, `bytes`; a restore `done` adds `restored`,
+  adds `saved`, `skipped`, `pruned`, `bytes`, and `background` (a task, loop
+  callback or thread a cell started may still change the namespace, so the
+  host must not reuse this snapshot later); a restore `done` adds `restored`,
   `failed`; a `list_names` `done` adds `names`; a failed snapshot/restore adds
   `reason`. Bash activity `done` carries `activities` (list), `tail` (tail),
   or `killed` (kill); `status:"error"` with `reason` on unknown IDs.

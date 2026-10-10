@@ -138,8 +138,14 @@ pub struct AgentSession {
     /// Compaction settings from the session's settings.json (TS
     /// `_performCompaction` reads `getCompactionSettings()` on every
     /// compaction path, `/compact` included); defaults until the engine
-    /// wiring resolves them.
-    compaction: std::sync::RwLock<compaction::CompactionSettings>,
+    /// wiring resolves them. Shared with the threshold stop hook.
+    compaction: Arc<std::sync::RwLock<compaction::CompactionSettings>>,
+    /// Set by the threshold stop hook when it ended a run mid tool chain:
+    /// the turn boundary compacts, then re-issues the turn.
+    threshold_stop: Arc<std::sync::atomic::AtomicBool>,
+    /// The full registry model the loop runs (the loop keeps a minimal
+    /// one): the threshold stop hook reads its window and output budget.
+    live_model: Arc<std::sync::RwLock<Option<uh_types::ai::Model>>>,
     /// The auxiliary-model routing context (TS `_resolveAuxiliaryModel`'s
     /// settings/registry access): compaction summaries resolve their model
     /// through the `auxiliaryModel` setting, falling back to the session
@@ -228,7 +234,11 @@ impl AgentSession {
             session,
             prompt_templates,
             slash_commands: SlashCommandRegistry::builtin(),
-            compaction: std::sync::RwLock::new(compaction::CompactionSettings::default()),
+            compaction: Arc::new(std::sync::RwLock::new(
+                compaction::CompactionSettings::default(),
+            )),
+            threshold_stop: Arc::default(),
+            live_model: Arc::default(),
             auxiliary_model: None,
             kernel_state: None,
             pending_next_turn_rows: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -318,6 +328,7 @@ impl AgentSession {
             .lock()
             .await
             .append_model_change(provider, model_id)?;
+        self.set_live_model(Some(model.clone()));
         self.prompt_follows_model(model, provider, model_id).await;
         Ok(())
     }
@@ -367,6 +378,7 @@ impl AgentSession {
             .lock()
             .await
             .append_model_change(provider, model_id)?;
+        self.set_live_model(Some(model.clone()));
         self.prompt_follows_model(model, provider, model_id).await;
         Ok(())
     }

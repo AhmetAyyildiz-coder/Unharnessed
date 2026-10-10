@@ -1,3 +1,6 @@
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+
 use super::compact_session::CompactOutcome;
 use super::{
     compaction, compaction_trace, ipython_state, provider_adapter, rebuilt_loop_messages,
@@ -32,24 +35,87 @@ impl AgentSession {
     /// from before the latest compaction never re-triggers.
     pub async fn auto_compaction_due(&self, model: &uh_types::ai::Model) -> bool {
         let state = self.agent.state().await;
-        // The live loop context is the agent's message list (the same JSON
-        // round-trip `compact` uses for its rebuilt context).
-        let messages: Vec<SessionAgentMessage> = state
-            .messages
-            .iter()
-            .filter_map(|message| serde_json::to_value(message).ok())
-            .filter_map(|value| serde_json::from_value(value).ok())
-            .collect();
-        compaction::threshold_compaction_due(
-            &messages,
-            model.context_window,
-            // The live thinking level decides whether the request folds a
-            // thinking budget on top of the base output budget.
-            compaction::request_output_budget(
-                model,
-                provider_adapter::model_thinking_level(state.thinking_level),
-            ),
+        threshold_due(
+            &state.messages,
+            model,
+            state.thinking_level,
             &self.compaction_settings(),
+        )
+    }
+
+    /// Record the full model the loop now runs (engine build and every
+    /// model switch): the threshold stop hook measures against it.
+    pub fn set_live_model(&self, model: Option<uh_types::ai::Model>) {
+        *self
+            .live_model
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = model;
+    }
+
+    /// Install the loop's after-turn stop (TS `_shouldStopAfterTurn`): a
+    /// queued steer (`steering`), or a tool turn whose context crossed the
+    /// compaction threshold (TS `_shouldStopForThresholdCompaction`) —
+    /// the loop would otherwise send the next request over it. That stop
+    /// leaves the tool results unanswered; the turn boundary compacts,
+    /// then re-issues the turn ([`Self::take_threshold_stop`]).
+    pub fn install_stop_after_turn(&self, steering: Option<Arc<dyn Fn() -> bool + Send + Sync>>) {
+        let agent = Arc::downgrade(&self.agent);
+        let settings = Arc::clone(&self.compaction);
+        let live_model = Arc::clone(&self.live_model);
+        let stopped = Arc::clone(&self.threshold_stop);
+        let hook: uh_agent::agent_loop::ShouldStopAfterTurnFn = Arc::new(move |context| {
+            let (agent, settings, live_model, stopped, steering) = (
+                agent.clone(),
+                Arc::clone(&settings),
+                Arc::clone(&live_model),
+                Arc::clone(&stopped),
+                steering.clone(),
+            );
+            Box::pin(async move {
+                // Describes this turn only: a stale stop never resumes a run.
+                stopped.store(false, Ordering::SeqCst);
+                if steering.as_ref().is_some_and(|probe| probe()) {
+                    return Ok(true);
+                }
+                // A final reply ends the loop anyway: its boundary checks.
+                if context.tool_results.is_empty() {
+                    return Ok(false);
+                }
+                let model = live_model
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                let (Some(model), Some(agent)) = (model, agent.upgrade()) else {
+                    return Ok(false);
+                };
+                let thinking_level = agent.state().await.thinking_level;
+                let settings = *settings
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let due =
+                    threshold_due(&context.context.messages, &model, thinking_level, &settings);
+                stopped.store(due, Ordering::SeqCst);
+                Ok(due)
+            })
+        });
+        self.agent.set_stop_after_turn_hook(Some(hook));
+    }
+
+    /// Whether the threshold stop ended the last run with tool results the
+    /// model has not answered yet: the boundary re-issues the turn once it
+    /// compacted (TS `_continueAfterThresholdCompaction`, kept even when
+    /// the compaction skipped or failed — the stop was ours). Consumed.
+    /// The context then ends with those results or the compaction's
+    /// notice, never with a reply (TS `lastMessage.role !== "assistant"`).
+    pub async fn take_threshold_stop(&self) -> bool {
+        if !self.threshold_stop.swap(false, Ordering::SeqCst) {
+            return false;
+        }
+        !matches!(
+            self.agent.state().await.messages.last(),
+            None | Some(AgentMessage::Standard(uh_agent::types::Message::Assistant(
+                _
+            )))
         )
     }
 
@@ -64,8 +130,9 @@ impl AgentSession {
         let session = self.session.lock().await;
         let context = session.active_context();
         let settings = self.compaction_settings();
-        let thinking = uh_types::ai::thinking_levels::thinking_level_from_str(&context.thinking_level)
-            .unwrap_or(uh_types::ai::ModelThinkingLevel::Off);
+        let thinking =
+            uh_types::ai::thinking_levels::thinking_level_from_str(&context.thinking_level)
+                .unwrap_or(uh_types::ai::ModelThinkingLevel::Off);
         let compact_at = (settings.enabled && model.context_window > 0)
             .then(|| {
                 compaction::compaction_threshold(
@@ -380,4 +447,32 @@ impl AgentSession {
             .await;
         Ok(())
     }
+}
+
+/// The threshold decision over loop messages: the context against the
+/// model's window with its request output budget.
+fn threshold_due(
+    messages: &[AgentMessage],
+    model: &uh_types::ai::Model,
+    thinking_level: uh_agent::types::ThinkingLevel,
+    settings: &compaction::CompactionSettings,
+) -> bool {
+    // The live loop context in session shape (the same JSON round-trip
+    // `compact` uses for its rebuilt context).
+    let messages: Vec<SessionAgentMessage> = messages
+        .iter()
+        .filter_map(|message| serde_json::to_value(message).ok())
+        .filter_map(|value| serde_json::from_value(value).ok())
+        .collect();
+    compaction::threshold_compaction_due(
+        &messages,
+        model.context_window,
+        // The live thinking level decides whether the request folds a
+        // thinking budget on top of the base output budget.
+        compaction::request_output_budget(
+            model,
+            provider_adapter::model_thinking_level(thinking_level),
+        ),
+        settings,
+    )
 }

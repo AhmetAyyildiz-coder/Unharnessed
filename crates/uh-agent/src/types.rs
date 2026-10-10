@@ -458,6 +458,10 @@ pub struct AgentToolResult {
     /// Hint that the agent should stop after the current tool batch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminate: Option<bool>,
+    /// The tool returned normally but reports a failure (a cell that
+    /// raised): the result message carries `isError` like a thrown error.
+    #[serde(skip)]
+    pub is_error: bool,
 }
 
 impl AgentToolResult {
@@ -466,6 +470,7 @@ impl AgentToolResult {
             content: vec![ToolResultContent::text(s)],
             details: serde_json::Value::Null,
             terminate: None,
+            is_error: false,
         }
     }
 
@@ -475,6 +480,7 @@ impl AgentToolResult {
             content: vec![ToolResultContent::text(s)],
             details: serde_json::Value::Object(serde_json::Map::new()),
             terminate: None,
+            is_error: true,
         }
     }
 }

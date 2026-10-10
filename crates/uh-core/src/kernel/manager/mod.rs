@@ -241,7 +241,10 @@ struct RestoredNamespaceSkip {
 /// kernel request — a full-namespace re-dump serialized on the kernel's
 /// single request queue — is skipped wholesale. The same witness class as
 /// the shipped post-restore skip and boot hold, held across every capture:
-/// the compact-time prune, the dispose flush, and the debounced fire.
+/// the compact-time prune, the dispose flush, and the debounced fire. A
+/// capture that found a task, loop callback or thread a cell started still
+/// alive (`background`) never arms: that work mutates the namespace between
+/// cells.
 #[derive(Clone)]
 struct CaptureFreshness {
     /// Settled USER-execution count at the commit; any later user settle

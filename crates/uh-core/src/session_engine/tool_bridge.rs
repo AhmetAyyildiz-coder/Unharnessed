@@ -79,19 +79,21 @@ impl AgentTool for ToolDefinitionBridge {
         let definition = self.definition.clone();
         Box::pin(async move {
             let abort = crate::tools::tool_definition::AbortSignal::new();
+            // Ends the relay below when the call settles or is dropped: a
+            // completed call must leave no task parked on the run's signal.
+            let settled = tokio_util::sync::CancellationToken::new();
+            let _settled_guard = settled.clone().drop_guard();
             {
                 // Wire the loop's signal into the tool's cancellation token.
                 let abort = abort.clone();
                 let signal = signal.clone();
                 tokio::spawn(async move {
                     // Park on the signal's watch channel: an abort fires the
-                    // cancellation token immediately (tighter than the loop's
-                    // old few-ms poll contract), and an uninterrupted call
-                    // leaves no wake-up work behind — a completed tool call
-                    // must not keep a 10 ms polling task alive for the
-                    // session's lifetime.
-                    signal.aborted().await;
-                    abort.cancel();
+                    // cancellation token immediately.
+                    tokio::select! {
+                        () = signal.aborted() => abort.cancel(),
+                        () = settled.cancelled() => {}
+                    }
                 });
             }
             // Streamed tool updates become `tool_execution_update` events:
@@ -105,6 +107,7 @@ impl AgentTool for ToolDefinitionBridge {
                         content: convert_content_blocks(update.content),
                         details: update.details.unwrap_or(serde_json::Value::Null),
                         terminate: None,
+                        is_error: false,
                     });
                 }));
             let f = definition.execute.clone();
@@ -112,11 +115,11 @@ impl AgentTool for ToolDefinitionBridge {
                 f(&tool_call_id, params, Some(abort), tool_on_update).await?;
             let details = result.details.clone().unwrap_or(serde_json::Value::Null);
             let is_error = result.is_error;
-            let _ = is_error;
             Ok(AgentToolResult {
                 content: convert_content(result),
                 details,
                 terminate: None,
+                is_error,
             })
         })
     }

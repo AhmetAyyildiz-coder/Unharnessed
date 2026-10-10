@@ -73,9 +73,13 @@ impl AbortSignal {
         let merged = AbortSignal::new();
         for token in live {
             let merged_clone = merged.clone();
+            // Each relay also ends once the merged signal fired (any source,
+            // or the owner aborting it when done): no task outlives it.
             tokio::spawn(async move {
-                token.cancelled().await;
-                merged_clone.abort();
+                tokio::select! {
+                    () = token.cancelled() => merged_clone.abort(),
+                    () = merged_clone.cancelled() => {}
+                }
             });
         }
         Some(merged)

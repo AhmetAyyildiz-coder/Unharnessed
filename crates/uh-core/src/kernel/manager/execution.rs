@@ -188,12 +188,10 @@ impl Inner {
                 );
             }
             if let Some(text) = &result {
-                if text.len() > execution.max_chars {
-                    let mut clipped = text[..execution.max_chars.clamp(0, text.len())].to_string();
-                    // Trim at a char boundary when max_chars split a multi-byte char.
-                    while !clipped.is_char_boundary(clipped.len()) {
-                        clipped.pop();
-                    }
+                // Counted in Unicode scalars like the streams: a byte index
+                // could split a multi-byte char and panic the reader.
+                if let Some((end, _)) = text.char_indices().nth(execution.max_chars) {
+                    let mut clipped = text[..end].to_string();
                     let _ = write!(
                         clipped,
                         "\n[... output truncated at {} chars ...]",

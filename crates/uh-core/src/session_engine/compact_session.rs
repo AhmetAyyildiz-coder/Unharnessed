@@ -86,12 +86,11 @@ pub struct CompactOptions<'a> {
 }
 
 /// The model-visible message produced by a session entry (summarizer input).
+/// Tool results are kept: they hold what the cells observed, which the
+/// summary must carry (the serializer bounds each one).
 fn message_from_entry(entry: &FileEntry) -> Option<AgentMessage> {
     match entry {
-        FileEntry::Message { message, .. } => match message {
-            AgentMessage::ToolResult(_) => None,
-            _ => Some(message.clone()),
-        },
+        FileEntry::Message { message, .. } => Some(message.clone()),
         FileEntry::CustomMessage { payload, .. } => {
             Some(AgentMessage::Custom(uh_types::session::CustomMessage {
                 custom_type: payload.custom_type.clone(),

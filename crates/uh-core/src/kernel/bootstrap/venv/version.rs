@@ -6,7 +6,10 @@ use super::{default_rlm_extra_uv_args, BootstrapPythonSkill, BootstrapVersion, P
 
 /// Schema of `.bootstrap-version`; a mismatch rebuilds the venv.
 pub(super) const BOOTSTRAP_SCHEMA: u64 = 9;
-pub(super) const STATE_SNAPSHOT_REQUIREMENT: &str = "dill";
+/// Pinned: the snapshot restore patches dill's private rebuilders
+/// (`rlm/repl.py` `_hook_restore_unpickling`); a release that renames them
+/// would silently bring back frozen globals and deadlocked locks.
+pub(super) const STATE_SNAPSHOT_REQUIREMENT: &str = "dill==0.4.1";
 const BOOTSTRAP_VERSION_FILE: &str = ".bootstrap-version";
 pub(super) fn read_bootstrap_version(venv: &Path) -> Option<BootstrapVersion> {
     let raw = std::fs::read_to_string(venv.join(BOOTSTRAP_VERSION_FILE)).ok()?;

@@ -165,24 +165,39 @@ impl TurnBoundary {
         model: &Model,
         api_key: Option<String>,
     ) -> Result<(), String> {
-        self.retry_failed_turn(engine).await?;
-        let arm_finished = loop {
-            let outcome = self
-                .overflow_recovery_attempt(
-                    engine,
-                    model,
-                    api_key.clone(),
-                    OverflowBoundary::SettledTurn,
-                )
-                .await?;
-            if !matches!(outcome, OverflowOutcome::RetryTurn) {
-                break matches!(outcome, OverflowOutcome::Finished);
+        loop {
+            self.retry_failed_turn(engine).await?;
+            let arm_finished = loop {
+                let outcome = self
+                    .overflow_recovery_attempt(
+                        engine,
+                        model,
+                        api_key.clone(),
+                        OverflowBoundary::SettledTurn,
+                    )
+                    .await?;
+                if !matches!(outcome, OverflowOutcome::RetryTurn) {
+                    break matches!(outcome, OverflowOutcome::Finished);
+                }
+            };
+            if !arm_finished {
+                self.threshold_arm(engine, model, api_key.clone()).await?;
             }
-        };
-        if !arm_finished {
-            self.threshold_arm(engine, model, api_key).await?;
+            // The threshold stopped the run mid tool chain: the model
+            // answers the tool results on the compacted context (TS
+            // post-compaction `agent.continue()`), and that run settles
+            // through the same checks.
+            if !engine.session.take_threshold_stop().await {
+                return Ok(());
+            }
+            engine
+                .session
+                .agent()
+                .continue_run()
+                .await
+                .map_err(|error| format!("{error:#}"))?;
+            engine.session.agent().wait_for_idle().await;
         }
-        Ok(())
     }
 
     /// The provider retry of a turn that settled with an error: the

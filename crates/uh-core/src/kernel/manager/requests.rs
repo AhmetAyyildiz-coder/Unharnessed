@@ -127,9 +127,12 @@ impl ReplKernelManager {
         let timeout_signal = execution_timeout_ms.map(|ms| {
             let signal = AbortSignal::new();
             let timer_signal = signal.clone();
+            // The abort below, once the execution settled, ends the timer.
             tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(ms)).await;
-                timer_signal.abort();
+                tokio::select! {
+                    () = tokio::time::sleep(Duration::from_millis(ms)) => timer_signal.abort(),
+                    () = timer_signal.cancelled() => {}
+                }
             });
             signal
         });
@@ -137,6 +140,7 @@ impl ReplKernelManager {
         let mut opts = opts;
         opts.signal = merged;
         let result = self.execute_inner(request, code, opts, started).await;
+        // Also fires a merged signal, which ends its relay to the caller's.
         if let Some(signal) = &timeout_signal {
             signal.abort();
         }

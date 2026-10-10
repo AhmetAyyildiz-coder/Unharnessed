@@ -1011,7 +1011,7 @@ def _revive_with_live_globals(
         if items == value:
             items = value
         return memo.setdefault(id(value), items)
-    if not isinstance(value, types.FunctionType) or value.__module__ != "__main__":
+    if not isinstance(value, types.FunctionType) or value.__module__ != "__main__" or value.__globals__ is ns:
         return value
     # Defaults and cell contents are revived only after the rebound function is memoized, so a
     # function reachable from its own defaults or closure resolves to it. Cells are revived in
@@ -1063,6 +1063,59 @@ def _restore_state(
         import dill
     except Exception as err:  # noqa: BLE001
         return {"error": f"dill unavailable: {err}"}
+    saved_globals: list[dict[str, Any]] = []
+    unhook = _hook_restore_unpickling(dill, ns, saved_globals)
+    try:
+        return _restore_loaded(ns, path, committed, max_bytes, max_variable_bytes, dill, saved_globals)
+    finally:
+        unhook()
+
+
+def _hook_restore_unpickling(dill: Any, ns: dict[str, Any], saved_globals: list[dict[str, Any]]) -> Callable[[], None]:
+    """Patch dill's rebuilders for the restore's unpickling; returns the undo.
+
+    Every lock revives free: dill rebuilds an RLock nobody held as one that
+    can never be acquired again (owner 0 still takes it), and a lock held at
+    the snapshot would stay held by a thread of the dead process.
+
+    Every __main__ function revives onto the live namespace, wherever it sits
+    (a bound method, a slot, a library object no walk reaches); the globals
+    it was saved with go to `saved_globals` for the backfill. Without these
+    hooks (a dill that renamed them) the restore walk rebinds what it reaches."""
+    impl = getattr(dill, "_dill", None)
+    names = ("_create_lock", "_create_rlock", "_create_function")
+    if not all(callable(getattr(impl, name, None)) for name in names):
+        return lambda: None
+    originals = {name: getattr(impl, name) for name in names}
+    create_function = originals["_create_function"]
+
+    def create_live_function(fcode: Any, fglobals: Any, *args: Any, **kwargs: Any) -> Any:
+        # dill fills the saved globals into this dict after the function exists.
+        if isinstance(fglobals, dict) and fglobals is not ns and fglobals.get("__name__") == "__main__":
+            saved_globals.append(fglobals)
+            fglobals = ns
+        return create_function(fcode, fglobals, *args, **kwargs)
+
+    impl._create_lock = lambda *_args: threading.Lock()
+    impl._create_rlock = lambda *_args: threading.RLock()
+    impl._create_function = create_live_function
+
+    def undo() -> None:
+        for name, original in originals.items():
+            setattr(impl, name, original)
+
+    return undo
+
+
+def _restore_loaded(
+    ns: dict[str, Any],
+    path: str,
+    committed: list[dict[str, Any]] | None,
+    max_bytes: int | None,
+    max_variable_bytes: int | None,
+    dill: Any,
+    saved_globals: list[dict[str, Any]],
+) -> dict[str, Any]:
     try:
         with open(path, "rb") as fh:
             if fh.read(len(_SNAPSHOT_MAGIC)) == _SNAPSHOT_MAGIC:
@@ -1085,14 +1138,25 @@ def _restore_state(
         return {"error": "corrupt snapshot: not a dict"}
 
     staged: dict[str, Any] = {}
+    # Per name: the saved globals its functions carried that ns lacks.
+    saved_backfill: dict[str, list[tuple[str, Any]]] = {}
     failed: list[dict[str, str]] = []
     for name, blob in payload.items():
         if name in _RESTORE_SKIP:
             continue
+        saved_globals.clear()
         try:
             staged[name] = dill.loads(blob)
         except Exception as err:  # noqa: BLE001 - revive every other name regardless
             failed.append({"name": name, "reason": f"{type(err).__name__}: {_safe_str(err)[:200]}"})
+            continue
+        saved_backfill[name] = [
+            (dep_name, dep)
+            for fglobals in saved_globals
+            for dep_name, dep in fglobals.items()
+            # Snapshots never save _-prefixed or skip-listed names; backfill must not smuggle them past that policy.
+            if not (dep_name in ns or dep_name.startswith("_") or dep_name in _ALWAYS_SKIP or dep_name in _RESTORE_SKIP)
+        ]
     # Revive every staged name before parking: a failure must never abort the
     # apply halfway and leave the namespace half old, half new.
     prepared: dict[str, Any] = {}
@@ -1102,7 +1166,7 @@ def _restore_state(
         # The backfill entries a name's revival produced merge only if THAT
         # name revives: a failed revival adds nothing (its saved globals
         # would partially restore state the failure report says failed).
-        name_backfill: list[tuple[str, Any]] = []
+        name_backfill: list[tuple[str, Any]] = list(saved_backfill.get(name, ()))
         try:
             prepared[name] = _revive_with_live_globals(value, ns, name_backfill)
         except Exception as err:  # noqa: BLE001 - one broken revival must not abort the restore
@@ -1127,6 +1191,53 @@ def _restore_state(
     return result
 
 
+# The runtime's own sources: its tasks, threads and callbacks (the request
+# reader, the pumps, bash(), MCP) never change the user namespace.
+_RUNTIME_DIR = os.path.dirname(os.path.abspath(__file__)) + os.sep
+
+
+def _foreign_code(code: Any) -> bool:
+    filename = getattr(code, "co_filename", None)
+    return not (isinstance(filename, str) and os.path.abspath(filename).startswith(_RUNTIME_DIR))
+
+
+def _user_background_work() -> bool:
+    """Whether code a cell started can still change the namespace with no cell
+    settling: a pending task, a queued loop callback or a live thread that is
+    not the runtime's own. Unknown shapes count as user work: a false alarm
+    costs the host one re-dump, a miss lets it replay a stale snapshot."""
+    import functools
+
+    if _loop is not None:
+        for task in asyncio.all_tasks(_loop):
+            coro = task.get_coro()
+            if not task.done() and _foreign_code(getattr(coro, "cr_code", None) or getattr(coro, "gi_code", None)):
+                return True
+        for handle in [*getattr(_loop, "_ready", ()), *getattr(_loop, "_scheduled", ())]:
+            callback = getattr(handle, "_callback", None)
+            while isinstance(callback, functools.partial):
+                callback = callback.func
+            # Task steps and asyncio's own wake-ups belong to the tasks checked above.
+            module = getattr(callback, "__module__", None) or ""
+            if (
+                handle.cancelled()
+                or isinstance(getattr(callback, "__self__", None), asyncio.Future)
+                or module == "asyncio"
+                or module.startswith("asyncio.")
+            ):
+                continue
+            if _foreign_code(getattr(callback, "__code__", None)):
+                return True
+    for thread in threading.enumerate():
+        if thread is threading.current_thread() or thread is threading.main_thread():
+            continue
+        target = getattr(thread, "_target", None)
+        run = target if target is not None else type(thread).run
+        if _foreign_code(getattr(run, "__code__", None)):
+            return True
+    return False
+
+
 async def _handle_state(req: dict[str, Any], ns: dict[str, Any]) -> None:
     """Run snapshot/restore as an interruptible task and reply in the done event."""
     rid = req["id"]
@@ -1147,7 +1258,9 @@ async def _handle_state(req: dict[str, Any], ns: dict[str, Any]) -> None:
             # realpath resolves symlinks, so aliased paths cannot silently clobber the payload.
             if os.path.realpath(req["path"]) == os.path.realpath(req["manifest_path"]):
                 return {"error": "path and manifest_path must differ"}
-            return _snapshot_state(
+            # Checked on both sides of the dump: a thread can mutate while it runs.
+            background = _user_background_work()
+            result = _snapshot_state(
                 ns,
                 req["path"],
                 req["manifest_path"],
@@ -1156,6 +1269,9 @@ async def _handle_state(req: dict[str, Any], ns: dict[str, Any]) -> None:
                 prune,
                 committed,
             )
+            if "error" not in result:
+                result["background"] = background or _user_background_work()
+            return result
         return _restore_state(
             ns,
             req["path"],

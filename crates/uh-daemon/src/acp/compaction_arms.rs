@@ -254,10 +254,13 @@ impl AcpSession {
             return None;
         }
         // TS's queue-site guard: error and aborted turns never queue the
-        // goal continuation.
+        // goal continuation. Nor does a tool turn the threshold stopped:
+        // that run resumes after the compaction and ends naturally.
         let settled_turn = !matches!(
             assistant.stop_reason,
-            uh_types::ai::StopReason::Error | uh_types::ai::StopReason::Aborted
+            uh_types::ai::StopReason::Error
+                | uh_types::ai::StopReason::Aborted
+                | uh_types::ai::StopReason::ToolUse
         );
         let held = match goal_queue {
             ThresholdGoalQueue::Queue if settled_turn => {

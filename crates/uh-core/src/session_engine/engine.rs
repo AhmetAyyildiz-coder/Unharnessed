@@ -520,15 +520,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         )),
         // TS `_steeringStopPending`: both the after-turn and the
         // before-turn hooks consult the same probe (a queued steer stops
-        // the run at the boundary; the pump delivers it next).
-        should_stop_after_turn: config.queued_steering_probe.take().map(|probe| {
-            let probe: uh_agent::agent_loop::ShouldStopAfterTurnFn =
-                std::sync::Arc::new(move |_context| {
-                    let probe = std::sync::Arc::clone(&probe);
-                    Box::pin(async move { Ok(probe()) })
-                });
-            probe
-        }),
+        // the run at the boundary; the pump delivers it next). The
+        // after-turn hook is the session's (see `install_stop_after_turn`).
         should_stop_before_turn: config.queued_steering_probe.clone(),
         // TS `sdk.ts`: the Agent's steering/follow-up queues drain per
         // the session's configured modes (default "one-at-a-time").
@@ -544,6 +537,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         resources.prompts.clone(),
     )
     .await?;
+    session.set_live_model(config.model_info.clone());
+    session.install_stop_after_turn(config.queued_steering_probe.take());
     // Every compaction path reads the session's resolved compaction
     // settings (TS `getCompactionSettings`).
     session.set_compaction_settings(crate::session_engine::compaction::CompactionSettings {

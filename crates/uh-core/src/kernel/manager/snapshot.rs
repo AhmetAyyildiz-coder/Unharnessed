@@ -104,6 +104,13 @@ impl Inner {
                     g.capture_sequence += 1;
                     g.capture_sequence
                 };
+                // A task or thread a cell started can still change the
+                // namespace with no cell settling: no capture then vouches
+                // for a later one.
+                if fields.get("background").and_then(Value::as_bool) == Some(true) {
+                    lock(&self.guarded).capture_freshness = None;
+                    return Some(committed);
+                }
                 self.record_capture_freshness(
                     &cfg,
                     &committed,

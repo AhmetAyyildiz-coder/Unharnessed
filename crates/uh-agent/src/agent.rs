@@ -343,7 +343,9 @@ struct AgentInner {
     get_api_key: Option<crate::agent_loop::GetApiKeyFn>,
     before_tool_call: Option<BeforeToolCallFn>,
     after_tool_call: Option<AfterToolCallFn>,
-    should_stop_after_turn: Option<ShouldStopAfterTurnFn>,
+    /// Settable after construction like the continuation hook below (the
+    /// session installs its threshold stop once it exists).
+    should_stop_after_turn: Mutex<Option<ShouldStopAfterTurnFn>>,
     should_stop_before_turn: Option<ShouldStopBeforeTurnFn>,
     /// The natural-turn-end continuation hook (TS `agent.getContinuationMessages`):
     /// settable after construction so embeddings that assemble the session
@@ -555,7 +557,7 @@ impl AgentInner {
             }) as PollMessagesFn
         };
         let continuation = self.get_continuation_messages.lock().unwrap().clone();
-        let should_stop_after_turn = self.should_stop_after_turn.clone();
+        let should_stop_after_turn = self.should_stop_after_turn.lock().unwrap().clone();
 
         // A routed run serves every LLM request on the override model with
         // its own thinking level (TS `createLoopConfig`'s `modelOverride`
@@ -813,7 +815,7 @@ impl Agent {
             get_api_key: options.get_api_key,
             before_tool_call: options.before_tool_call,
             after_tool_call: options.after_tool_call,
-            should_stop_after_turn: options.should_stop_after_turn,
+            should_stop_after_turn: Mutex::new(options.should_stop_after_turn),
             should_stop_before_turn: options.should_stop_before_turn,
             get_continuation_messages: Mutex::new(options.get_continuation_messages),
             model_override: Mutex::new(None),
@@ -1004,6 +1006,17 @@ impl Agent {
     /// thread panicked while holding it).
     pub fn set_continuation_hook(&self, hook: Option<GetContinuationMessagesFn>) {
         *self.inner.get_continuation_messages.lock().unwrap() = hook;
+    }
+
+    /// Install or replace the after-turn stop hook (read at each run's
+    /// config build). `None` uninstalls it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the `should_stop_after_turn` mutex is poisoned (another
+    /// thread panicked while holding it).
+    pub fn set_stop_after_turn_hook(&self, hook: Option<ShouldStopAfterTurnFn>) {
+        *self.inner.should_stop_after_turn.lock().unwrap() = hook;
     }
 
     /// Set the follow-up queue's mode.
