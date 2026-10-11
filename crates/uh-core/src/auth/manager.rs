@@ -68,7 +68,7 @@ fn now_epoch_ms() -> i64 {
 }
 
 /// One OAuth refresh in flight per provider: the token fetch in
-/// [`AuthStorage::refresh_oauth`] runs outside every lock, so the
+/// [`AuthStorage::refresh_oauth`] runs outside the document lock, so the
 /// in-process single-flight that TS gets from its single-threaded runtime
 /// needs its own gate. The registry mirrors the storage backend's
 /// process-lock registry (created once, lives for the process, recovered

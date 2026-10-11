@@ -96,6 +96,7 @@ export function Status({
             onClick={() => setBrowsing(!browsing)}
           >
             <IconHistory />
+            {history.unread && <span className="icon-dot" />}
           </button>
           <button
             className="icon-button"
@@ -105,12 +106,12 @@ export function Status({
             data-tip-side="below"
             data-tip-align="end"
             disabled={agent.kind === "starting"}
-            onClick={() => post({ type: "newChat" })}
+            onClick={() => post({ type: "newChat", draft })}
           >
             <IconNewChat />
           </button>
         </div>
-        {browsing && <HistoryMenu history={history} onClose={() => setBrowsing(false)} />}
+        {browsing && <HistoryMenu history={history} draft={draft} onClose={() => setBrowsing(false)} />}
       </header>
       <Transcript chat={chat} editing={editing}>
         {kind && (

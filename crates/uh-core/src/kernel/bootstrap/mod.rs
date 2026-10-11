@@ -237,7 +237,11 @@ async fn ensure_kernel_python_uncached(
         return Ok(python);
     }
 
-    let release_lock = acquire_bootstrap_lock(&venv).await;
+    // No build without the lock: another agent may be building the same
+    // venv, and this one would delete it under it.
+    let release_lock = acquire_bootstrap_lock(&venv)
+        .await
+        .with_context(|| format!("locking {} for its setup", venv.display()))?;
     let result = async {
         if kernel_ready(&python_str, &venv, &runtime_identity, python_skills) {
             return Ok(python);

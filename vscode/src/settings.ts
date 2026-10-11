@@ -1,7 +1,8 @@
 import type * as vscode from "vscode";
-import { errorText, type Agent } from "./agent";
+import { errorText } from "./agent";
 import { savedGroups, withGroup } from "./instructions";
 import type { McpServer, ModelInstructions, SettingsState, SettingsView, SkillsView } from "./protocol";
+import type { ShownAgent } from "./shown";
 
 // The agent's `_unharnessed/settings/*`, `mcp/*` and `skills/*` extension
 // methods (crates/uh-daemon/src/acp/{settings,mcp_servers,skills}.rs).
@@ -19,28 +20,32 @@ const SKILLS_REMOVE_FOLDER = "_unharnessed/skills/remove_folder";
 /**
  * The agent's global settings, its MCP servers and its skills, for the
  * settings screen. They outlive an agent restart, so the screen stays put
- * while the new process starts; they are read again once it is ready.
+ * while the new process starts; they are read again once it is ready, and
+ * when the panel shows another conversation. What a restart would apply is
+ * each process's own: what it started with.
  */
 export class Settings {
   private view: SettingsView | null = null;
   private mcp: McpServer[] | null = null;
   private skills: SkillsView | null = null;
-  /** The restart keys' values when the running process started. */
-  private started: Record<string, unknown> | null = null;
-  /** An MCP sign-in or sign-out since the process started: the agent keeps the ones it started with. */
-  private mcpChanged = false;
+  /** Each process's restart keys when it started, and the MCP sign-ins and sign-outs before it. */
+  private readonly started = new WeakMap<object, { values: Record<string, unknown>; mcp: number }>();
+  /** MCP sign-ins and sign-outs: an agent keeps the servers it started with. */
+  private mcpChanges = 0;
   /** Bumped per agent process, so a late answer never lands on the next one. */
   private run = 0;
+  /** What a restart would apply, as last logged. */
+  private logged = "";
   private readonly listeners = new Set<() => void>();
 
   constructor(
-    private readonly agent: Agent,
+    private readonly agent: ShownAgent,
     private readonly log: vscode.LogOutputChannel,
   ) {
     agent.onChange((state) => {
       this.run++;
-      this.started = null;
-      this.mcpChanged = false;
+      // A process starting again starts with what the files hold now.
+      if (state.kind === "starting" && agent.process) this.started.delete(agent.process);
       this.changed();
       if (state.kind === "ready") void this.refresh();
     });
@@ -133,7 +138,7 @@ export class Settings {
   /** After a sign-in to an MCP server: the list shows it, a restart applies it. */
   signedIn(id: string): void {
     this.log.info(`mcp: signed in to ${id}`);
-    this.mcpChanged = true;
+    this.mcpChanges++;
     void this.refreshMcp();
   }
 
@@ -145,7 +150,7 @@ export class Settings {
       this.log.info(`mcp: token stored for ${id}`);
       if (run !== this.run) return undefined;
       this.mcp = servers;
-      this.mcpChanged = true;
+      this.mcpChanges++;
       this.changed();
       return undefined;
     } catch (error) {
@@ -161,7 +166,7 @@ export class Settings {
       this.log.info(`mcp: signed out of ${id}`);
       if (run !== this.run) return undefined;
       this.mcp = servers;
-      this.mcpChanged = true;
+      this.mcpChanges++;
       this.changed();
       return undefined;
     } catch (error) {
@@ -191,11 +196,12 @@ export class Settings {
 
   private async read(): Promise<void> {
     const run = this.run;
+    const process = this.agent.process;
     try {
       const view = await this.agent.request<SettingsView>(GET);
       if (run !== this.run) return;
       this.view = view;
-      this.started ??= pick(view);
+      if (process && !this.started.has(process)) this.started.set(process, { values: pick(view), mcp: this.mcpChanges });
       this.log.info(`settings: read, ${Object.values(view.values).filter((v) => v !== null).length} set`);
       this.changed();
     } catch (error) {
@@ -227,20 +233,26 @@ export class Settings {
     }
   }
 
-  /** What a restart would apply. */
+  /** What a restart of the agent in the panel would apply. */
   private pending(): string[] {
     const view = this.view;
-    const started = this.started;
+    const process = this.agent.process;
+    const started = process && this.started.get(process);
     const keys =
       view && started
-        ? view.restart.filter((key) => JSON.stringify(view.values[key]) !== JSON.stringify(started[key]))
+        ? view.restart.filter((key) => JSON.stringify(view.values[key]) !== JSON.stringify(started.values[key]))
         : [];
     if (this.skills?.restart) keys.push("skills");
-    if (this.mcpChanged) keys.push("mcp");
+    if (started && this.mcpChanges > started.mcp) keys.push("mcp");
     return keys;
   }
 
   private changed(): void {
+    const pending = this.pending().join(", ");
+    if (pending !== this.logged) {
+      this.logged = pending;
+      this.log.info(`settings: a restart would apply ${pending || "nothing"}`);
+    }
     for (const listener of this.listeners) listener();
   }
 }

@@ -6,6 +6,10 @@
 //! prompts, the Prime team picker) to the client.
 //!
 //! - `_unharnessed/providers/list` answers `{ providers }`.
+//! - `_unharnessed/providers/reload` reads the credentials and the local
+//!   servers again, as after a login here, and answers `{ providers }`:
+//!   the client sends it after a login or logout in another agent on the
+//!   same agent dir (the pickers follow once the models are found again).
 //! - `_unharnessed/providers/set_api_key` `{ providerId, apiKey }` and
 //!   `_unharnessed/providers/logout` `{ providerId }` answer
 //!   `{ providers, outcome, message? }` (outcome `done`, `failed` or
@@ -56,6 +60,7 @@ use super::jsonrpc;
 use super::producer::FrameSink;
 
 pub(super) const LIST: &str = "_unharnessed/providers/list";
+pub(super) const RELOAD: &str = "_unharnessed/providers/reload";
 pub(super) const SET_API_KEY: &str = "_unharnessed/providers/set_api_key";
 pub(super) const LOGOUT: &str = "_unharnessed/providers/logout";
 pub(super) const LOGIN: &str = "_unharnessed/providers/login";
@@ -185,6 +190,10 @@ impl Providers {
     ) -> bool {
         let reply = match method {
             LIST => Ok(json!({ "providers": self.entries().await })),
+            RELOAD => {
+                self.auth_changes.notify_one();
+                Ok(json!({ "providers": self.entries().await }))
+            }
             SET_API_KEY => self.set_api_key(params).await,
             LOGOUT => self.logout(params).await,
             LOGIN => {

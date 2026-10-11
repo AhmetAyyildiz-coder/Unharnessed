@@ -841,6 +841,24 @@ button {
   opacity: 0.4;
 }
 
+/* A conversation ended in the background, unseen: a dot on the history's
+   button, ringed with the page so it reads apart from the icon. */
+.icon-button:has(.icon-dot) {
+  position: relative;
+}
+
+.icon-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  pointer-events: none;
+  background: var(--uh-accent);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--uh-bg);
+}
+
 .button:focus-visible,
 .icon-button:focus-visible {
   outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
@@ -2561,6 +2579,25 @@ body.vscode-high-contrast-light .seti {
   transition: opacity 160ms var(--uh-soft);
 }
 
+/* Working in the background: the spinner, in the time's place. Done there,
+   unseen: a dot before the time. */
+.history-mark {
+  transition: opacity 160ms var(--uh-soft);
+}
+
+.history-row .spinner {
+  margin: 0 3px;
+}
+
+.history-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: -4px;
+  background: var(--uh-accent);
+  border-radius: 50%;
+}
+
 .menu-row-name.is-untitled {
   color: var(--uh-muted);
 }
@@ -2598,8 +2635,8 @@ body.vscode-high-contrast-light .seti {
   opacity: 1;
 }
 
-.history-row:hover .history-when,
-.history-row:has(.history-delete.is-confirm) .history-when {
+.history-row:hover :is(.history-when, .history-mark),
+.history-row:has(.history-delete.is-confirm) :is(.history-when, .history-mark) {
   opacity: 0;
 }
 

@@ -1,10 +1,12 @@
 import * as vscode from "vscode";
-import { errorText, type Agent } from "./agent";
+import { errorText } from "./agent";
 import type { LocalProbe, LocalSave, LocalServer, LoginAnswer, LoginState, LoginUpdate, Provider } from "./protocol";
+import type { ShownAgent } from "./shown";
 
 // The agent's `_unharnessed/providers/*` extension methods
 // (crates/uh-daemon/src/acp/providers.rs).
 const LIST = "_unharnessed/providers/list";
+const RELOAD = "_unharnessed/providers/reload";
 const SET_API_KEY = "_unharnessed/providers/set_api_key";
 const LOGOUT = "_unharnessed/providers/logout";
 const LOGIN = "_unharnessed/providers/login";
@@ -27,7 +29,9 @@ type Settled = {
 
 /**
  * The agent's providers and the sign-in in progress. They live here, not in
- * the webview, so a panel that is hidden and shown again finds them.
+ * the webview, so a panel that is hidden and shown again finds them. Every
+ * agent reads the same credentials: the list goes through the one in the
+ * panel, and after a change there, the others read them again.
  */
 export class Providers {
   private list: Provider[] | null = null;
@@ -37,15 +41,16 @@ export class Providers {
   private readonly listeners = new Set<() => void>();
 
   constructor(
-    private readonly agent: Agent,
+    private readonly agent: ShownAgent,
     private readonly log: vscode.LogOutputChannel,
   ) {
     agent.onNotification(LOGIN_UPDATE, (params) => this.onUpdate(params as { providerId: string; update: LoginUpdate }));
     agent.onChange((state) => {
-      // A new process has its own list and nothing running.
-      this.list = null;
-      this.login = null;
-      this.loginRun++;
+      // A sign-in runs in its process: it ends with it.
+      if (state.kind !== "ready") {
+        this.login = null;
+        this.loginRun++;
+      }
       this.changed();
       if (state.kind === "ready") void this.refresh();
     });
@@ -141,6 +146,7 @@ export class Providers {
       this.list = result.providers;
       if (result.outcome === "failed") error = result.message ?? "Sign-in failed.";
       done = result.outcome === "done";
+      if (done) this.agent.broadcast(RELOAD);
     } catch (failure) {
       this.log.warn(`sign-in to ${providerId} failed: ${errorText(failure)}`);
       if (run !== this.loginRun) return false;
@@ -223,6 +229,7 @@ export class Providers {
       this.log.info(`${what}: ${result.outcome}${result.message ? ` (${result.message})` : ""}`);
       this.list = result.providers;
       this.changed();
+      if (result.outcome === "done") this.agent.broadcast(RELOAD);
       return result.outcome === "failed" ? (result.message ?? "Failed.") : undefined;
     } catch (error) {
       this.log.warn(`${what} failed: ${errorText(error)}`);

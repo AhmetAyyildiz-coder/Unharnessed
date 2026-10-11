@@ -9,13 +9,15 @@
 // log lines to wait for, in order, and the panel messages to send between
 // them (suite.cjs). Provider keys and tokens from the caller's environment
 // are dropped. After VS Code exits, checks that no agent process
-// (or anything else started in the profile) is left behind.
+// (or anything else started in the profile) is left behind. A scenario
+// with `keep` leaves its profile to the one whose `from` names it, which
+// opens VS Code again on it, with a fresh log.
 // UNHARNESSED_VSCODE_EXECUTABLE picks an installed VS Code; without it, VS Code
 // stable is downloaded into .vscode-test/. UNHARNESSED_BIN picks the agent
 // binary, default target/debug/unharnessed. UNHARNESSED_E2E_ONLY runs the
 // scenario of that name alone.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -48,6 +50,7 @@ const CHAT_SCRIPT = {
     "first answer",
     "second answer",
     "a single pixel",
+    "spare",
   ],
 };
 
@@ -132,6 +135,27 @@ const RESTORE_SCRIPT = {
   responses: [{ content: [{ type: "toolCall", name: "ipython", arguments: { code: "n = 42" } }] }, "Kept."],
 };
 
+// The background scenario's model, each agent its own: a cell that keeps the
+// kernel's pid, a long answer (10 s), then, back to the first, a cell that
+// tells whether its Python is the same process.
+const PID_CELL = 'pid = __import__("os").getpid()';
+const BACKGROUND_SCRIPT = {
+  tokensPerSecond: 40,
+  responses: [
+    { content: [{ type: "toolCall", name: "ipython", arguments: { code: PID_CELL } }] },
+    "word ".repeat(400),
+    { content: [{ type: "toolCall", name: "ipython", arguments: { code: 'print("same python", pid == __import__("os").getpid())' } }] },
+    "Same.",
+  ],
+};
+
+// The sleep and closing scenarios' model: a cell that makes a variable, then
+// a long answer (5 s).
+const KEEP_SCRIPT = {
+  tokensPerSecond: 40,
+  responses: [{ content: [{ type: "toolCall", name: "ipython", arguments: { code: "n = 42" } }] }, "word ".repeat(200)],
+};
+
 // The cells scenario's model: one cell of each kind, run for real, then an
 // answer. The written file's text holds code a cell would run: it is not
 // this cell's.
@@ -190,7 +214,7 @@ const scenarios = [
       "agent started (pid",
       '→ {"jsonrpc":"2.0","id":0,"method":"initialize"',
       "agent ready: unharnessed",
-      '→ {"jsonrpc":"2.0","id":1,"method":"_unharnessed/providers/list"',
+      '"method":"_unharnessed/providers/list"',
       "providers: ",
       "connected: none",
       // Nothing connected: the providers screen opens first.
@@ -324,32 +348,31 @@ const scenarios = [
       "settings: images.blockImages set to true",
       { post: { type: "send", text: "and this?", images: [PIXEL] } },
       'chat: turn 7 failed: Images are blocked: turn off "Block images" in the settings to send them.',
-      // A new conversation is a new agent process.
+      // A new conversation is another agent process; the one before goes on.
       { post: { type: "send", text: "/new", images: [] } },
-      "chat: new conversation",
-      { wait: "agent started (pid", times: 2 },
-      { wait: "session: opened", times: 2 },
+      "conversations: [2] new",
+      "[2] agent started (pid",
+      "[2] session: opened",
       // The one before is saved, titled by its first prompt; nothing was asked in the new one yet.
       { post: { type: "listChats" } },
       { wait: "history: 1 conversation: ", capture: { chat: ': ([0-9a-f-]+) "what is 6 times 7\\?"' } },
-      // It opens: the agent restarts on it and replays it, its five turns (the refused one never reached it).
+      // It comes back as it was, its agent still running; the new one, with nothing asked, closes.
       { post: { type: "openChat", id: "${chat}" } },
-      "chat: opening conversation ",
-      { wait: "agent started (pid", times: 3 },
-      "session: loaded ",
-      "chat: loaded 5 turns; ",
-      // It goes on: the faux script starts over in the new process.
+      { wait: "conversations: [1] in the panel", times: 2 },
+      "conversations: [2] closes (nothing asked in it)",
+      // It goes on in the same process.
       { post: { type: "send", text: "and 6 times 8?", images: [] } },
-      { wait: "done (end_turn); 1 thought, 2 texts, 1 tool", times: 2, timeout: 90_000 },
+      { wait: "[1] chat: turn 8 done (end_turn)", timeout: 90_000 },
       // The one in the panel is not deleted.
       { post: { type: "listChats" } },
       '"what is 6 times 7?" (current)',
       { post: { type: "deleteChat", id: "${chat}" } },
       "history: delete refused: This is the conversation in progress",
-      // After a new conversation, it is.
+      // In the background, it is: its agent stops first.
       { post: { type: "newChat" } },
-      { wait: "session: opened", times: 3 },
+      "[3] session: opened",
       { post: { type: "deleteChat", id: "${chat}" } },
+      "conversations: [1] closes (deleted)",
       " deleted",
       "history: 0 conversations",
     ],
@@ -371,13 +394,10 @@ const scenarios = [
       "chat: turn 2 sent (11 chars, 0 images)",
       "chat: goal paused, ",
       "chat: turn 2 done",
-      // Opened again, the conversation brings its paused goal back.
-      { post: { type: "send", text: "/new", images: [] } },
-      { wait: "session: opened", times: 2 },
+      // Restarted, the conversation brings its paused goal back.
+      { post: { type: "restartAgent" } },
+      "conversations: [1] restarts",
       "chat: goal gone",
-      { post: { type: "listChats" } },
-      { wait: "history: 1 conversation: ", capture: { chat: ': ([0-9a-f-]+) "/goal count to three"' } },
-      { post: { type: "openChat", id: "${chat}" } },
       "chat: loaded ",
       { wait: "chat: goal paused, ", times: 2 },
       // Play: the goal goes on, and is reached (the faux script starts over in the new process).
@@ -420,12 +440,9 @@ const scenarios = [
       "chat: back to before turn 2",
       "chat: turn 3 sent (15 chars, 0 images)",
       "chat: turn 3 done (end_turn); 1 text",
-      // Opened again, the conversation is the one it went on with, and its turns go back too.
-      { post: { type: "send", text: "/new", images: [] } },
-      { wait: "session: opened", times: 2 },
-      { post: { type: "listChats" } },
-      { wait: "history: 1 conversation: ", capture: { chat: ': ([0-9a-f-]+) "first"' } },
-      { post: { type: "openChat", id: "${chat}" } },
+      // Restarted, the conversation is the one it went on with, and its turns go back too.
+      { post: { type: "restartAgent" } },
+      "conversations: [1] restarts",
       "chat: loaded 2 turns; ",
       { post: { type: "edit", id: 5 } },
       "chat: turn 5 back in the message box to edit (15 chars, 0 images)",
@@ -464,12 +481,9 @@ const scenarios = [
       "chat: turn 3 compacting",
       "chat: turn 3 compaction did not run",
       "chat: turn 3 done (end_turn)",
-      // Opened again, the conversation brings its compaction back, done.
-      { post: { type: "send", text: "/new", images: [] } },
-      { wait: "session: opened", times: 2 },
-      { post: { type: "listChats" } },
-      { wait: "history: 1 conversation: ", capture: { chat: ': ([0-9a-f-]+) "what is 6 times 7\\?"' } },
-      { post: { type: "openChat", id: "${chat}" } },
+      // Restarted, the conversation brings its compaction back, done.
+      { post: { type: "restartAgent" } },
+      "conversations: [1] restarts",
       "chat: loaded 3 turns; 2 texts, 1 compaction, 1 notice",
       // With its summary, as it came when it ran.
       { wait: "## Goal\\nMultiply.", times: 2 },
@@ -513,7 +527,7 @@ const scenarios = [
       { wait: "chat: turn 1 done (end_turn); 1 text", timeout: 90_000 },
       // After one: the agent restarts on the conversation in the panel, which comes back.
       { post: { type: "restartAgent" } },
-      "chat: opening conversation ",
+      "conversations: [1] restarts",
       { wait: "agent started (pid", times: 3 },
       "session: loaded ",
       "chat: loaded 1 turn; 1 text",
@@ -580,7 +594,7 @@ const scenarios = [
       { wait: "chat: turn 1 done (end_turn); 1 text", timeout: 90_000 },
       // The agent keeps the links in the prompt; reopened, it reads as it was written, title too.
       { post: { type: "restartAgent" } },
-      "chat: opening conversation ",
+      "conversations: [1] restarts",
       "session: loaded ",
       "replayed without its 2 links",
       "chat: loaded 1 turn; 1 text",
@@ -679,15 +693,129 @@ const scenarios = [
       { post: { type: "send", text: "keep n", images: [] } },
       "kernel: 1 variables: n",
       { wait: "chat: turn 1 done (end_turn)", timeout: 90_000 },
-      // A new conversation's agent closes this one, saving its kernel.
-      { post: { type: "send", text: "/new", images: [] } },
-      { wait: "session: opened", times: 2 },
-      { post: { type: "listChats" } },
-      { wait: "history: 1 conversation: ", capture: { chat: ': ([0-9a-f-]+) "keep n"' } },
-      // It opens: its kernel comes back, and a line says so under the conversation.
-      { post: { type: "openChat", id: "${chat}" } },
+      // A restart stops the agent, which saves its kernel; the kernel comes
+      // back, and a line says so under the conversation.
+      { post: { type: "restartAgent" } },
+      "conversations: [1] restarts",
       "chat: loaded 1 turn; ",
       { wait: "chat: kernel restored", timeout: 90_000 },
+    ],
+  },
+  {
+    name: "background",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify(BACKGROUND_SCRIPT) },
+    steps: [
+      "[1] session: opened",
+      { post: { type: "send", text: "first", images: [] } },
+      { wait: "[1] kernel: 1 variables: pid", timeout: 120_000 },
+      // A new conversation while the first works: a second agent, and the first goes on.
+      { post: { type: "newChat" } },
+      "[2] session: opened",
+      { post: { type: "send", text: "second", images: [] } },
+      { wait: "[2] kernel: 1 variables: pid", timeout: 60_000 },
+      // The history marks the one working in the background.
+      { post: { type: "listChats" } },
+      { wait: '"first" (working)', capture: { first: '([0-9a-f-]+) "first" \\(working\\)' } },
+      // Both end; the first's end, unseen, marks it.
+      { wait: "[1] chat: turn 1 done (end_turn)", timeout: 60_000 },
+      "conversations: [1] done in the background",
+      { wait: "[2] chat: turn 1 done (end_turn)", timeout: 60_000 },
+      { post: { type: "listChats" } },
+      '"first" (unread)',
+      // Back to the first: the same Python process, nothing to restore.
+      { post: { type: "openChat", id: "${first}" } },
+      { wait: "conversations: [1] in the panel", times: 2 },
+      { post: { type: "send", text: "check", images: [] } },
+      "same python True",
+      "[1] chat: turn 2 done (end_turn); 1 tool, 1 text",
+      { post: { type: "listChats" } },
+      '"first" (current)',
+    ],
+  },
+  {
+    name: "sleep",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_E2E_SLEEP_MS: "3000", UNHARNESSED_FAUX_SCRIPT: JSON.stringify(KEEP_SCRIPT) },
+    steps: [
+      "[1] session: opened",
+      { post: { type: "send", text: "keep n", images: [] } },
+      { wait: "[1] kernel: 1 variables: n", timeout: 120_000 },
+      // In the background while it works: it ends its turn, then sleeps, its kernel saved.
+      { post: { type: "newChat" } },
+      "[2] session: opened",
+      { wait: "[1] chat: turn 1 done (end_turn)", timeout: 60_000 },
+      { wait: "conversations: [1] closes (asleep after 3 s without work)", timeout: 30_000 },
+      " ms after stdin closed",
+      // Opened again: its agent starts on its file, and its kernel comes back.
+      { post: { type: "listChats" } },
+      { wait: '"keep n" (unread)', capture: { chat: '([0-9a-f-]+) "keep n"' } },
+      { post: { type: "openChat", id: "${chat}" } },
+      "conversations: [3] opens ",
+      "[3] chat: loaded 1 turn",
+      { wait: "[3] chat: kernel restored", timeout: 90_000 },
+      // In the panel, it is seen: no mark left on the history button.
+      { post: { type: "listChats" } },
+      '"keep n" (current); history button: read',
+    ],
+  },
+  {
+    name: "closing",
+    binary,
+    // The next scenario opens VS Code again on this profile.
+    keep: true,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify(KEEP_SCRIPT) },
+    steps: [
+      "[1] session: opened",
+      { post: { type: "send", text: "keep n", images: [] } },
+      // VS Code closes as the turn goes on: the suite ends here.
+      { wait: "[1] kernel: 1 variables: n", timeout: 120_000 },
+    ],
+  },
+  {
+    name: "reopened",
+    binary,
+    from: "closing",
+    env: { UNHARNESSED_OFFLINE: "1" },
+    steps: [
+      "[1] session: opened",
+      { post: { type: "listChats" } },
+      { wait: "history: 1 conversation: ", capture: { chat: ': ([0-9a-f-]+) "keep n"' } },
+      // The agent VS Code closed on saved its kernel.
+      { post: { type: "openChat", id: "${chat}" } },
+      "[2] chat: loaded 1 turn",
+      { wait: "[2] chat: kernel restored", timeout: 90_000 },
+    ],
+  },
+  {
+    name: "restart settings",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify({ responses: ["hello back"] }) },
+    steps: [
+      "[1] session: opened",
+      { post: { type: "send", text: "hello", images: [] } },
+      "[1] chat: turn 1 done (end_turn)",
+      "settings: read, 0 set",
+      // A setting an agent reads when it starts: the one in the panel takes it with a restart.
+      { post: { type: "setSetting", key: "compaction.reserveTokens", value: 20000 } },
+      "settings: a restart would apply compaction.reserveTokens",
+      // A new conversation starts with it.
+      { post: { type: "newChat" } },
+      "[2] session: opened",
+      "settings: a restart would apply nothing",
+      // Back to the first: it still runs on the value it started with.
+      { post: { type: "listChats" } },
+      { wait: "history: 1 conversation: ", capture: { chat: '([0-9a-f-]+) "hello"' } },
+      { post: { type: "openChat", id: "${chat}" } },
+      { wait: "settings: a restart would apply compaction.reserveTokens", times: 2 },
+      // Restarted, it takes it.
+      { post: { type: "restartAgent" } },
+      "[1] chat: loaded 1 turn",
+      { wait: "settings: a restart would apply nothing", times: 2 },
     ],
   },
   {
@@ -704,16 +832,26 @@ const scenarios = [
 
 let failed = 0;
 const only = process.env.UNHARNESSED_E2E_ONLY;
-for (const scenario of scenarios.filter(({ name }) => !only || name === only)) {
+/** The profiles kept for a later scenario, by name. */
+const kept = new Map();
+const wanted = scenarios.filter(({ name }) => !only || name === only || scenarios.find((s) => s.name === only)?.from === name);
+for (const scenario of wanted) {
   console.log(`\n# ${scenario.name} (${scenario.binary})`);
+  if (scenario.from && !kept.has(scenario.from)) {
+    failed++;
+    console.error(`FAIL: ${scenario.name}: ${scenario.from} left no profile`);
+    continue;
+  }
   // Short names: VS Code puts its IPC socket in the user data dir (103-char limit on macOS).
-  const profile = mkdtempSync(join(tmpdir(), "uh-e2e-"));
+  const profile = scenario.from ? kept.get(scenario.from) : mkdtempSync(join(tmpdir(), "uh-e2e-"));
   const userDataDir = join(profile, "u");
   const logsDir = join(userDataDir, "logs");
   const workspace = join(profile, "w");
   const agentDir = join(profile, "a");
-  mkdirSync(workspace);
-  mkdirSync(agentDir);
+  // Again on a kept profile: the steps read this run's log only.
+  if (scenario.from) renameSync(logsDir, join(userDataDir, `logs-${scenario.from}`));
+  else mkdirSync(workspace);
+  mkdirSync(agentDir, { recursive: true });
   if (scenario.auth) writeFileSync(join(agentDir, "auth.json"), JSON.stringify(scenario.auth));
   if (scenario.settings) writeFileSync(join(agentDir, "settings.json"), JSON.stringify(scenario.settings));
   if (scenario.catalog) seedCatalog(agentDir);
@@ -749,7 +887,8 @@ for (const scenario of scenarios.filter(({ name }) => !only || name === only)) {
     });
     await checkNothingLeft(profile, logsDir);
     console.log(`pass: ${scenario.name}`);
-    rmSync(profile, { recursive: true, force: true });
+    if (scenario.keep) kept.set(scenario.name, profile);
+    else rmSync(profile, { recursive: true, force: true });
   } catch (error) {
     failed++;
     console.error(`FAIL: ${scenario.name}: ${error instanceof Error ? error.message : error}`);

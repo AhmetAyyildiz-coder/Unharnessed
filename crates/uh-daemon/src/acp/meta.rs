@@ -95,6 +95,20 @@ pub struct UnharnessedSessionMeta {
     pub turn_end: Option<UnharnessedTurnEndMeta>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<UnharnessedUsageMeta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saved: Option<UnharnessedSavedMeta>,
+}
+
+/// The saved conversation an admitted session writes to, as `session/list`
+/// names it: its id (what `session/load` takes) and its file (what
+/// `--resume` takes; absent without persistence). A new session's file is
+/// written at its first prompt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnharnessedSavedMeta {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// What the session has used, for the panel's context gauge: published

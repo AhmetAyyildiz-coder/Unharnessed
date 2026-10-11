@@ -75,7 +75,12 @@ fn run_acp_mode(options: &RunOptions) -> Result<i32, String> {
         .enable_all()
         .build()
         .map_err(|error| error.to_string())?;
-    rt.block_on(acp_mode_main(options))
+    let code = rt.block_on(acp_mode_main(options));
+    // After SIGTERM the stdin reader is still blocked in its read, which
+    // nothing can cancel: the runtime gives the other blocking work a
+    // moment, not that read forever.
+    rt.shutdown_timeout(std::time::Duration::from_secs(1));
+    code
 }
 
 async fn acp_mode_main(options: &RunOptions) -> Result<i32, String> {

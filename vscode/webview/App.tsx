@@ -40,7 +40,7 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [settingResult, setSettingResult] = useState<SettingResult | null>(null);
   const [chat, setChat] = useState<ChatState>(EMPTY_CHAT);
-  const [history, setHistory] = useState<HistoryState>({ chats: null });
+  const [history, setHistory] = useState<HistoryState>({ chats: null, unread: false });
   const [kernel, setKernel] = useState<KernelState>({ commands: [], variables: [] });
   const [paths, setPaths] = useState<Paths | null>(null);
   const [draft, setDraft] = useState<Draft>(() => ({ text: savedDraft(), images: [] }));
@@ -68,6 +68,15 @@ export function App() {
           setHistory(message.history);
           setKernel(message.kernel);
           setPhase(message.splash ? "splash" : "main");
+          break;
+        case "conversation":
+          // Another conversation, with its own message box.
+          setAgent(message.agent);
+          setSession(message.session);
+          setChat(message.chat);
+          setKernel(message.kernel);
+          setEditing(null);
+          setDraft(message.draft);
           break;
         case "kernel":
           setKernel(message.kernel);

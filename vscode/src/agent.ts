@@ -7,8 +7,14 @@ import type { AgentState } from "./protocol";
 
 const STDERR_TAIL = 20;
 const INITIALIZE_TIMEOUT_MS = 30_000;
-/** How long `stop` waits after closing stdin, then after SIGTERM. */
-const EXIT_GRACE_MS = 2_000;
+/**
+ * How long `stop` waits for the agent to exit once its stdin is closed:
+ * past the agent's own bounds (its turn 10 s, its kernel's save and
+ * shutdown about 25 s).
+ */
+const EXIT_WAIT_MS = 40_000;
+/** A process that dies closes the connection a moment before its exit event. */
+const EXIT_EVENT_MS = 2_000;
 
 /** Request params whose values never reach the log (API keys, pasted codes). */
 const SECRET_PARAMS: Record<string, string> = {
@@ -125,7 +131,11 @@ export class Agent {
     return this.restarting;
   }
 
-  /** Closes stdin (the agent exits on EOF), then SIGTERM, then SIGKILL. */
+  /**
+   * Closes stdin: the agent stops its turn, saves its kernel and exits.
+   * SIGKILL if it has not after `EXIT_WAIT_MS`. When VS Code closes it
+   * waits less; the agent goes on alone and saves all the same.
+   */
   async stop(): Promise<void> {
     const proc = this.proc;
     this.proc = undefined;
@@ -133,12 +143,13 @@ export class Agent {
     this.connection = undefined;
     if (!proc || proc.pid === undefined || hasExited(proc)) return;
 
+    const began = Date.now();
     proc.stdin.end();
-    if (await exitsWithin(proc, EXIT_GRACE_MS)) return;
-    this.log.warn(`agent ${proc.pid} still running ${EXIT_GRACE_MS} ms after stdin closed: SIGTERM`);
-    proc.kill("SIGTERM");
-    if (await exitsWithin(proc, EXIT_GRACE_MS)) return;
-    this.log.warn(`agent ${proc.pid} ignored SIGTERM: SIGKILL`);
+    if (await exitsWithin(proc, EXIT_WAIT_MS)) {
+      this.log.info(`agent ${proc.pid} exited ${Date.now() - began} ms after stdin closed`);
+      return;
+    }
+    this.log.warn(`agent ${proc.pid} still running ${EXIT_WAIT_MS / 1000} s after stdin closed: SIGKILL`);
     proc.kill("SIGKILL");
   }
 
@@ -158,7 +169,7 @@ export class Agent {
       async (error: unknown) => {
         // A process that dies closes the connection before its exit event:
         // let the exit handler report the exit code instead.
-        if (await exitsWithin(proc, EXIT_GRACE_MS)) return;
+        if (await exitsWithin(proc, EXIT_EVENT_MS)) return;
         this.fail(proc, `initialize failed: ${errorText(error)}`);
         void this.stop();
       },

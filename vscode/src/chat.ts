@@ -1,5 +1,5 @@
 import type * as vscode from "vscode";
-import { errorText, type Agent, type SavedSession } from "./agent";
+import { errorText, type Agent } from "./agent";
 import { homedir } from "node:os";
 import { awayDir, readCell } from "./cell";
 import { withoutLinks, type Files } from "./files";
@@ -132,6 +132,8 @@ export class Chat {
     private readonly session: Session,
     private readonly files: Files,
     private readonly log: vscode.LogOutputChannel,
+    /** `/new`: another conversation takes the panel. */
+    private readonly onNew: () => void,
   ) {
     agent.onNotification("session/update", (params) => this.onUpdate(params));
     agent.onNotification(RESTORED, (params) => this.onRestored(params));
@@ -197,6 +199,21 @@ export class Chat {
     return { dispose: () => this.listeners.delete(listener) };
   }
 
+  /** A turn runs: ours, or one the agent started. */
+  get working(): boolean {
+    return this.busy;
+  }
+
+  /** Messages wait for the session to open or the running turn to end. */
+  get waiting(): boolean {
+    return this.queue.length > 0;
+  }
+
+  /** A goal goes on: the agent continues it on its own. */
+  get goalGoing(): boolean {
+    return this.goalState?.status === "active";
+  }
+
   /**
    * `/new` starts a new conversation; anything else goes, now or after the
    * running turn. An `edit` replaces that turn's prompt: the agent goes back
@@ -204,7 +221,7 @@ export class Chat {
    */
   send(text: string, images: Attachment[], edit?: number): void {
     if (text.trim() === "/new" && images.length === 0) {
-      this.newChat();
+      this.onNew();
       return;
     }
     const message = { id: this.nextId++, text, images, edit };
@@ -288,21 +305,11 @@ export class Chat {
     this.changed();
   }
 
-  /** The agent restarts: a new process holds a new conversation. */
-  newChat(): void {
-    this.log.info("chat: new conversation");
-    this.clear(false);
-    void this.agent.restart();
-  }
-
-  /** The agent restarts on a saved conversation, which comes back here. */
-  open(saved: SavedSession): void {
-    this.log.info(`chat: opening conversation ${saved.id}`);
-    this.clear(true);
-    void this.agent.restart(saved);
-  }
-
-  private clear(loading: boolean): void {
+  /**
+   * Empty, before the agent restarts: on a new conversation, or on the saved
+   * one (`loading`), which comes back here as the agent replays it.
+   */
+  reset(loading: boolean): void {
     this.handBack();
     // Nothing the stopping process still sends lands in the next conversation.
     this.run++;

@@ -47,6 +47,11 @@ export class Kernel {
     return { dispose: () => this.listeners.delete(listener) };
   }
 
+  /** A command the agent left running in the background has not ended. */
+  get running(): boolean {
+    return this.commands.some((command) => command.status === "running");
+  }
+
   async tail(id: string): Promise<string | null> {
     const sessionId = this.session.sessionId;
     if (!sessionId) return null;

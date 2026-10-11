@@ -157,13 +157,15 @@ impl AuthStorage {
     /// 1. LOAD: the current document through the consolidated read arm
     ///    (no document lock; a cache miss pays the read arm's one short
     ///    locked read).
-    /// 2. FETCH: the OAuth integration's token call outside every lock,
-    ///    behind [`refresh_flight`]'s per-provider single-flight gate. The
-    ///    expiry is re-checked under the gate: the first flight may have
-    ///    just written a fresh credential, and a second fetch would waste
-    ///    a single-use refresh token. In-process callers therefore join
-    ///    one flight per provider — the same serialization TS's
-    ///    single-threaded runtime gives its locked refresh.
+    /// 2. FETCH: the OAuth integration's token call outside the document
+    ///    lock, behind [`refresh_flight`]'s per-provider single-flight
+    ///    gate and the backend's cross-process refresh lock, both held
+    ///    through the WRITE. The expiry is re-checked under them: the
+    ///    first flight may have just written a fresh credential, and a
+    ///    second fetch would waste a single-use refresh token. Callers in
+    ///    this process and in the other agents on the same document
+    ///    therefore join one flight per provider. Without the cross-process
+    ///    lock there is no fetch: the refresh fails as a failed fetch does.
     /// 3. WRITE: the same locked read-modify-write the TS product runs,
     ///    now holding the lock only for the re-read, the insert, and the
     ///    atomic write. A peer that refreshed while this fetch ran keeps
@@ -199,27 +201,50 @@ impl AuthStorage {
             self.reload();
             return Some(credential);
         }
-        // FETCH: outside every lock, one flight per provider.
-        let fetched = {
-            let _flight = refresh_flight(provider_id);
-            // The gate may have just released a flight that wrote a fresh
-            // credential; re-check before spending a refresh token.
-            let content = self.storage.read().unwrap_or_default();
-            if let Some(credential) = parse_storage_data(content.as_deref())
-                .ok()
-                .and_then(|data| data.credential(provider_id))
-                .filter(|credential| {
+        // FETCH: outside the document lock, one refresh per provider at a
+        // time, in this process and across the processes sharing the
+        // document, held until the new credential is written: a waiter
+        // then reads it instead of spending the used refresh token.
+        let _flight = refresh_flight(provider_id);
+        let _peers = match self.storage.hold_refresh(provider_id) {
+            Ok(held) => held,
+            Err(error) => {
+                // Unfenced, it could spend the token a peer is spending;
+                // a peer may have refreshed meanwhile.
+                tracing::warn!("not refreshing {provider_id}: {error:#}");
+                self.reload();
+                return self.data.credential(provider_id).filter(|credential| {
                     matches!(
                         credential,
                         AuthCredential::Oauth { expires, .. } if now_epoch_ms() < *expires
                     )
-                })
-            {
-                self.reload();
-                return Some(credential);
+                });
             }
-            self.oauth.refresh(provider_id, &data)
         };
+        // The gates may have just released a refresh that wrote a fresh
+        // credential; re-check before spending a refresh token, and spend
+        // the one that is stored now.
+        let current = self
+            .storage
+            .read()
+            .ok()
+            .and_then(|content| parse_storage_data(content.as_deref()).ok());
+        if let Some(credential) = current
+            .as_ref()
+            .and_then(|data| data.credential(provider_id))
+            .filter(|credential| {
+                matches!(
+                    credential,
+                    AuthCredential::Oauth { expires, .. } if now_epoch_ms() < *expires
+                )
+            })
+        {
+            self.reload();
+            return Some(credential);
+        }
+        let fetched = self
+            .oauth
+            .refresh(provider_id, current.as_ref().unwrap_or(&data));
         let Some(new_credential) = fetched else {
             // Refresh failed: keep credentials for a later retry; a peer
             // may have refreshed meanwhile, so reload before failing.

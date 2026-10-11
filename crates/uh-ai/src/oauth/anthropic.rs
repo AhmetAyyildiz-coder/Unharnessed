@@ -38,11 +38,9 @@ const SCOPES: &str = "org:create_api_key user:profile user:inference user:sessio
 pub const DEFAULT_TOKEN_TIMEOUT_MS: u64 = 30_000;
 /// The credential's expiry skew (TS `5 * 60 * 1000`).
 const EXPIRY_SKEW_MS: i64 = 5 * 60 * 1000;
-/// The refresh grant's request bound: the refresh runs under the auth
-/// store's file lock, which a peer declares stale after 10 seconds — the
-/// request must fit inside that window so a slow endpoint fails the
-/// refresh (kept for a retry) instead of holding the lock past its
-/// staleness.
+/// The refresh grant's request bound: the other agents on the same auth
+/// store wait for this refresh (its refresh lock), so a slow endpoint
+/// fails the refresh (kept for a retry) instead of holding them.
 pub const REFRESH_TIMEOUT_MS: u64 = 8_000;
 /// TS the `onAuth` instructions line.
 const AUTH_INSTRUCTIONS: &str =
@@ -120,8 +118,8 @@ pub async fn refresh_anthropic_token(
         "refresh_token": refresh_token,
     })
     .to_string();
-    // The refresh runs under the auth store's lock: the request fits
-    // inside the lock's staleness window (REFRESH_TIMEOUT_MS).
+    // The other agents wait for this refresh: bounded by
+    // REFRESH_TIMEOUT_MS.
     let token = json_token_request(
         http,
         TOKEN_URL,

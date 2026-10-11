@@ -717,9 +717,15 @@ pub(super) async fn refresh_after_auth_change(
     };
     (*config.models.lock().await).clone_from(&models);
     if let Some(current) = mode.current_model().await {
-        let available = models
-            .iter()
-            .any(|model| model.provider == current.provider && model.id == current.id);
+        // The faux script's model (verification harness only) is never
+        // discovered: a refresh landing after the session opened must not
+        // switch the harness off it.
+        let scripted =
+            current.provider == "faux" && std::env::var_os("UNHARNESSED_FAUX_SCRIPT").is_some();
+        let available = scripted
+            || models
+                .iter()
+                .any(|model| model.provider == current.provider && model.id == current.id);
         if available {
             refresh_credentials(mode, &current).await;
         } else if let Some(next) = uh_core::models::find_preferred_default_model(&models)

@@ -327,12 +327,21 @@ export type SavedChat = {
   updated: number;
   /** The conversation in the panel. */
   current: boolean;
+  mark?: ChatMark;
 };
+
+/** A conversation the panel left: a turn runs in it, or one ended there unseen. */
+export type ChatMark = "working" | "unread";
+
+/** The message box: its text and images. */
+export type Draft = { text: string; images: Attachment[] };
 
 /** The history menu's state. */
 export type HistoryState = {
   /** `null` until the agent has answered. */
   chats: SavedChat[] | null;
+  /** A conversation ended in the background, unseen since: the menu's button says so. */
+  unread: boolean;
   /** Why the list or a delete failed. */
   error?: string;
 };
@@ -461,6 +470,15 @@ export type HostMessage =
       history: HistoryState;
       kernel: KernelState;
     }
+  /** Another conversation is in the panel: all of it, and its message box. */
+  | {
+      type: "conversation";
+      agent: AgentState;
+      session: SessionState | null;
+      chat: ChatState;
+      kernel: KernelState;
+      draft: Draft;
+    }
   | { type: "chat"; chat: ChatState }
   | { type: "kernel"; kernel: KernelState }
   /** A command's last lines; `null` when the agent could not give them. */
@@ -549,12 +567,12 @@ export type WebviewMessage =
   /** The goal's pause (the running turn stops), play, and end (the running turn stops, the goal goes). */
   | { type: "goal"; action: "pause" | "resume" | "end" }
   | { type: "unqueue"; id: number }
-  /** A new conversation: the agent restarts. */
-  | { type: "newChat" }
+  /** A new conversation, its own agent; `draft` stays with the one the panel leaves. */
+  | { type: "newChat"; draft: Draft }
   /** The saved conversations of the panel's folder. */
   | { type: "listChats" }
-  /** A saved conversation: the agent restarts on it, and it comes back in the panel. */
-  | { type: "openChat"; id: string }
+  /** A saved conversation in the panel: as it is when open, else its agent starts on it. */
+  | { type: "openChat"; id: string; draft: Draft }
   | { type: "deleteChat"; id: string }
   /** A link in a message: web pages open in the browser. */
   | { type: "openLink"; url: string }

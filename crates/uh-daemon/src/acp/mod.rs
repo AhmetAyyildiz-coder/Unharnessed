@@ -22,7 +22,8 @@
 //! variables (`kernel.rs`). Every frame leaves
 //! through one ordered
 //! write queue, so responses and `session/update` notifications interleave
-//! exactly in publication order. The process exits when stdin closes.
+//! exactly in publication order. The process exits when stdin closes or
+//! SIGTERM comes, after the final kernel snapshot.
 
 mod commands;
 mod compaction_arms;
@@ -183,7 +184,8 @@ struct SessionEntry {
     config_refresh: Option<uh_agent::agent::Subscription>,
 }
 
-/// Run the ACP stdio mode until stdin closes. Returns the process exit code.
+/// Run the ACP stdio mode until stdin closes or SIGTERM comes. Returns the
+/// process exit code.
 ///
 /// # Errors
 ///
@@ -243,11 +245,16 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
     ));
     let mut stdin = BufReader::new(tokio::io::stdin());
     let mut line = String::new();
+    let terminated = terminated();
+    tokio::pin!(terminated);
     loop {
         line.clear();
-        match stdin.read_line(&mut line).await {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {}
+        tokio::select! {
+            read = stdin.read_line(&mut line) => match read {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            },
+            () = &mut terminated => break,
         }
         if line.trim().is_empty() {
             continue;
@@ -266,23 +273,46 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
             providers.clone(),
             tx.clone(),
         );
-        handler.await.ok();
+        tokio::select! {
+            _ = handler => {}
+            () = &mut terminated => break,
+        }
     }
 
-    // Exit when the client disconnects: stop a running login (it writes no
-    // credential), stop the resident work, release the subscription, fence
-    // the producer, and let the writer drain.
+    // Exit when the client disconnects or SIGTERM comes: stop a running
+    // login (it writes no credential), stop the resident work, release the
+    // subscription, fence the producer, and let the writer drain. The
+    // teardown is bounded: a turn that does not settle must not cost the
+    // kernel snapshot.
     providers.cancel_login();
     wake_watcher.abort();
     kernel_watcher.abort();
     models_watcher.abort();
-    teardown(&state, &mode).await;
+    let _ = tokio::time::timeout(TEARDOWN_TIMEOUT, teardown(&state, &mode)).await;
     // The final namespace snapshot (TS session dispose): the next process
     // that resumes this session revives it.
     mode.engine.dispose_kernel().await;
     drop(tx);
     let _ = writer.await;
     Ok(0)
+}
+
+/// How long the exit waits for the session to settle before the kernel
+/// snapshot, which has its own bounds.
+const TEARDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// SIGTERM: the client stops the agent like it closes its input, the kernel
+/// saved (a signal must not lose the namespace).
+async fn terminated() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
+            terminate.recv().await;
+            return;
+        }
+    }
+    std::future::pending::<()>().await;
 }
 
 /// Start a wake turn for each wake that comes due. A wake that cannot run
@@ -760,16 +790,25 @@ async fn session_new(
     let config_refresh =
         in_process_config::wire_config_refresh(&session, Arc::clone(&config), mode.clone()).await;
 
-    let mut result = json!({
+    let saved = {
+        let session = mode.engine.session.shared_persistence();
+        let session = session.lock().await;
+        meta::UnharnessedSavedMeta {
+            session_id: session.get_session_id().to_string(),
+            path: session
+                .get_session_file()
+                .map(|path| path.display().to_string()),
+        }
+    };
+    let result = json!({
         "sessionId": session_id,
         "configOptions": *config.published.lock().await,
-    });
-    if let Some(cwd_mismatch) = cwd_mismatch {
-        result["_meta"] = meta::unharnessed_meta(&UnharnessedSessionMeta {
-            cwd: Some(cwd_mismatch),
+        "_meta": meta::unharnessed_meta(&UnharnessedSessionMeta {
+            cwd: cwd_mismatch,
+            saved: Some(saved),
             ..Default::default()
-        });
-    }
+        }),
+    });
     Ok((
         SessionEntry {
             session,

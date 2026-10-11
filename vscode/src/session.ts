@@ -1,5 +1,5 @@
 import type * as vscode from "vscode";
-import { errorText, type Agent } from "./agent";
+import { errorText, type Agent, type SavedSession } from "./agent";
 import type { ConfigChange, ModelChoice, SessionConfig, SessionState } from "./protocol";
 
 /** An ACP session config option, as the agent sends it (the parts we read). */
@@ -36,6 +36,7 @@ type ModelMeta = {
 export class Session {
   private state: SessionState | null = null;
   private id: string | undefined;
+  private file: SavedSession | undefined;
   /** Bumped per agent process, so a late answer never lands on the next one. */
   private run = 0;
   private readonly listeners = new Set<() => void>();
@@ -66,6 +67,15 @@ export class Session {
   /** The session whose updates are the chat's: the open one, or the one being loaded. */
   get updatesFrom(): string | undefined {
     return this.id;
+  }
+
+  /**
+   * The saved conversation the session writes to, as the history lists it
+   * (`_meta.unharnessed.saved`); a new one's file is written at its first
+   * prompt. Kept when the agent stops, to start it again on it.
+   */
+  get saved(): SavedSession | undefined {
+    return this.file;
   }
 
   onChange(listener: () => void): { dispose(): void } {
@@ -102,7 +112,11 @@ export class Session {
     const saved = this.agent.resumed;
     const params = { cwd: this.cwd, mcpServers: [] };
     try {
-      let result: { sessionId?: string; configOptions?: ConfigOption[] };
+      let result: {
+        sessionId?: string;
+        configOptions?: ConfigOption[];
+        _meta?: { unharnessed?: { saved?: { sessionId: string; path?: string } } };
+      };
       if (saved) {
         // Its updates (the conversation) come before the answer.
         this.id = saved.id;
@@ -112,6 +126,8 @@ export class Session {
       }
       if (run !== this.run) return;
       this.id = saved?.id ?? result.sessionId;
+      const file = result._meta?.unharnessed?.saved;
+      this.file = file?.path ? { id: file.sessionId, path: file.path } : saved;
       const config = readConfig(result.configOptions ?? []);
       this.log.info(`session: ${saved ? `loaded ${saved.id}` : "opened"}, ${describe(config)}`);
       this.set({ kind: "open", config });

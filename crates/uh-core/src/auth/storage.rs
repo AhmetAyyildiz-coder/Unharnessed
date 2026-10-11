@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use super::types::AuthStorageData;
 
@@ -47,6 +47,21 @@ pub trait AuthStorageBackend: Send + Sync {
         &self,
         update: &mut dyn FnMut(Option<String>) -> Result<((), Option<String>)>,
     ) -> Result<()>;
+
+    /// Held while one refresh of `provider`'s OAuth credential runs, from
+    /// the re-read through the write, against the other processes on the
+    /// same document (several agents share one `auth.json`): a refresh
+    /// token is single-use, so a second agent must wait and read the new
+    /// credential instead of spending the old token. `None` when the
+    /// backend has no other process to fence (in memory).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the lock cannot be had in time: the refresh
+    /// must not go ahead, a peer may be spending the same token.
+    fn hold_refresh(&self, _provider: &str) -> Result<Option<fs::File>> {
+        Ok(None)
+    }
 }
 
 use crate::platform::lock_dir::LockDir as LockGuard;
@@ -115,6 +130,28 @@ impl FileAuthStorageBackend {
             last_error.map_or_else(|| "busy".into(), |e| e.to_string())
         ))
     }
+}
+
+/// How long a refresh waits for another process's refresh of the same
+/// provider: past every flow's token request bound (30 s at most), so only
+/// a queue of slow peers or a stuck one makes it give up.
+const REFRESH_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// The file a provider's refresh lock is held on, next to the document.
+fn refresh_lock_path(auth_path: &Path, provider: &str) -> PathBuf {
+    let name: String = provider
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let mut path = auth_path.as_os_str().to_owned();
+    path.push(format!(".refresh-{name}.lock"));
+    PathBuf::from(path)
 }
 
 /// Same-process serialization for one auth document.
@@ -281,6 +318,33 @@ impl AuthStorageBackend for FileAuthStorageBackend {
         }
         drop(guard);
         Ok(())
+    }
+
+    /// An OS file lock: a holder that dies releases it with its process.
+    fn hold_refresh(&self, provider: &str) -> Result<Option<fs::File>> {
+        self.ensure_parent_dir()?;
+        let path = refresh_lock_path(&self.auth_path, provider);
+        let mut options = fs::OpenOptions::new();
+        options.create(true).truncate(false).write(true);
+        crate::platform::perms::set_private_mode(&mut options);
+        let file = options
+            .open(&path)
+            .with_context(|| format!("opening {}", path.display()))?;
+        let deadline = std::time::Instant::now() + REFRESH_WAIT;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Some(file)),
+                Err(fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(fs::TryLockError::WouldBlock) => {
+                    anyhow::bail!("{} still held after {REFRESH_WAIT:?}", path.display())
+                }
+                Err(fs::TryLockError::Error(error)) => {
+                    return Err(error).with_context(|| format!("locking {}", path.display()))
+                }
+            }
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { HistoryState, SavedChat } from "../src/protocol";
+import type { Draft, HistoryState, SavedChat } from "../src/protocol";
 import { IconCheck, IconSearch, IconTrash } from "./icons";
 import { Popover } from "./Popover";
 import { post } from "./vscode";
@@ -14,11 +14,13 @@ const DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }
 
 /**
  * The conversations of the panel's folder, the newest first, in a menu under
- * the top bar's clock: one opens in the panel (the agent restarts on it), the
- * one in the panel has the check. Delete comes with a row's hover and asks
- * once more, in place.
+ * the top bar's clock: one opens in the panel (the message box's `draft`
+ * stays with the one it leaves), the one in the panel has the check. One
+ * working in the background turns in its time's place; one done there,
+ * unseen, has a dot before its time. Delete comes with a row's hover and
+ * asks once more, in place.
  */
-export function HistoryMenu({ history, onClose }: { history: HistoryState; onClose: () => void }) {
+export function HistoryMenu({ history, draft, onClose }: { history: HistoryState; draft: Draft; onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
   // Read again each time the menu opens.
@@ -54,12 +56,21 @@ export function HistoryMenu({ history, onClose }: { history: HistoryState; onClo
               className="menu-row"
               type="button"
               onClick={() => {
-                if (!chat.current) post({ type: "openChat", id: chat.id });
+                if (!chat.current) post({ type: "openChat", id: chat.id, draft });
                 onClose();
               }}
             >
               <span className={chat.title ? "menu-row-name" : "menu-row-name is-untitled"}>{title(chat)}</span>
-              {chat.current ? <IconCheck className="menu-check" /> : <span className="history-when">{when(chat.updated)}</span>}
+              {chat.current ? (
+                <IconCheck className="menu-check" />
+              ) : chat.mark === "working" ? (
+                <span className="spinner history-mark" aria-label="Working" />
+              ) : (
+                <>
+                  {chat.mark === "unread" && <span className="history-dot history-mark" aria-label="Done" />}
+                  <span className="history-when">{when(chat.updated)}</span>
+                </>
+              )}
             </button>
             {!chat.current &&
               (confirming === chat.id ? (

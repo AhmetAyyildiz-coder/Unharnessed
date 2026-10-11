@@ -14,6 +14,7 @@ import type {
   ChatCommand,
   ChatState,
   ConfigChange,
+  Draft,
   KernelState,
   Provider,
   QueuedMessage,
@@ -54,7 +55,7 @@ const set = (change: ConfigChange) => post({ type: "setConfig", ...change });
 type Menu = "model" | "effort" | "slash";
 
 /** What is being written: kept above the box, so it survives a visit to the settings. */
-export type Draft = { text: string; images: Attachment[] };
+export type { Draft };
 
 /** The image settings, as the agent applies them. */
 export type ImageSettings = { block: boolean; resize: boolean; imageModel: string | null };

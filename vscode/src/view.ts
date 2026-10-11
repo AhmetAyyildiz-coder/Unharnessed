@@ -1,17 +1,18 @@
 import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
-import type { Agent } from "./agent";
-import type { Chat } from "./chat";
+import type { Conversation, Conversations } from "./conversations";
 import type { Files } from "./files";
 import type { History } from "./history";
 import { connectedModels } from "./instructions";
-import type { Kernel } from "./kernel";
-import type { HostMessage, WebviewMessage } from "./protocol";
+import type { Draft, HostMessage, WebviewMessage } from "./protocol";
 import type { Providers } from "./providers";
-import type { Session } from "./session";
 import type { Settings } from "./settings";
 
-/** The panel in the right side bar: hosts the React app from dist/webview. */
+/**
+ * The panel in the right side bar: hosts the React app from dist/webview. It
+ * shows one conversation at a time; the others' changes wait until it shows
+ * them again, whole.
+ */
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   static readonly viewId = "unharnessed.chat";
 
@@ -20,25 +21,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   constructor(
     private readonly extensionUri: vscode.Uri,
-    private readonly agent: Agent,
+    private readonly conversations: Conversations,
     private readonly providers: Providers,
-    private readonly session: Session,
     private readonly settings: Settings,
-    private readonly chat: Chat,
     private readonly history: History,
     private readonly files: Files,
-    private readonly kernel: Kernel,
     private readonly log: vscode.LogOutputChannel,
   ) {
-    agent.onChange((state) => this.post({ type: "agent", agent: state }));
+    conversations.onCreate((conversation) => this.follow(conversation));
+    conversations.onShow(() => {
+      const { agent, session, chat, kernel, draft } = this.conversations.shown;
+      this.post({
+        type: "conversation",
+        agent: agent.current,
+        session: session.current,
+        chat: chat.current,
+        kernel: kernel.current,
+        draft,
+      });
+    });
     providers.onChange(() =>
       this.post({ type: "providers", providers: providers.providers, login: providers.signIn }),
     );
-    session.onChange(() => this.post({ type: "session", session: session.current }));
     settings.onChange(() => this.post({ type: "settings", settings: settings.current }));
-    chat.onPost((message) => this.post(message));
     history.onChange(() => this.post({ type: "history", history: history.current }));
-    kernel.onChange(() => this.post({ type: "kernel", kernel: kernel.current }));
+  }
+
+  /** The conversation in the panel. */
+  private get shown(): Conversation {
+    return this.conversations.shown;
+  }
+
+  /** What a conversation sends the panel, while the panel shows it. */
+  private follow(conversation: Conversation): void {
+    const { agent, session, chat, kernel } = conversation;
+    const shown = () => this.conversations.isShown(conversation);
+    agent.onChange((state) => shown() && this.post({ type: "agent", agent: state }));
+    session.onChange(() => shown() && this.post({ type: "session", session: session.current }));
+    chat.onPost((message) => {
+      if (shown()) this.post(message);
+      // Its waiting messages, back in its own message box.
+      else if (message.type === "chatDraft") conversation.draft = joined(message, conversation.draft);
+    });
+    kernel.onChange(() => shown() && this.post({ type: "kernel", kernel: kernel.current }));
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -59,14 +84,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.post({
           type: "init",
           splash: !this.splashPlayed,
-          agent: this.agent.current,
+          agent: this.shown.agent.current,
           providers: this.providers.providers,
           login: this.providers.signIn,
-          session: this.session.current,
+          session: this.shown.session.current,
           settings: this.settings.current,
-          chat: this.chat.current,
+          chat: this.shown.chat.current,
           history: this.history.current,
-          kernel: this.kernel.current,
+          kernel: this.shown.kernel.current,
         });
         this.splashPlayed = true;
         break;
@@ -78,7 +103,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       case "restartAgent":
         this.log.info("agent restart requested from the panel");
-        void this.restartAgent();
+        void this.conversations.restart();
         break;
       case "setApiKey": {
         const { providerId } = message;
@@ -139,7 +164,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       case "setConfig": {
         const { type: _, ...change } = message;
-        void this.session.setOption(change);
+        void this.shown.session.setOption(change);
         break;
       }
       case "setSetting": {
@@ -150,7 +175,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "setInstructions": {
-        const session = this.session.current;
+        const session = this.shown.session.current;
         const choices = session?.kind === "open" ? session.config.model?.choices : undefined;
         const connected = choices ? new Set(connectedModels(choices, this.providers.providers ?? []).keys()) : null;
         void this.settings
@@ -199,58 +224,61 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         void vscode.env.clipboard.writeText(message.text);
         break;
       case "send":
-        this.chat.send(message.text, message.images, message.edit);
+        this.shown.chat.send(message.text, message.images, message.edit);
         break;
       case "edit":
-        this.chat.edit(message.id);
+        this.shown.chat.edit(message.id);
         break;
       case "listFiles":
         void this.files.list().then(({ files, open }) => this.post({ type: "files", files, open }));
         break;
       case "cancel":
-        this.chat.cancel();
+        this.shown.chat.cancel();
         break;
       case "goal":
-        if (message.action === "pause") this.chat.pauseGoal();
-        else if (message.action === "resume") this.chat.resumeGoal();
-        else this.chat.endGoal();
+        if (message.action === "pause") this.shown.chat.pauseGoal();
+        else if (message.action === "resume") this.shown.chat.resumeGoal();
+        else this.shown.chat.endGoal();
         break;
       case "unqueue":
-        this.chat.unqueue(message.id);
+        this.shown.chat.unqueue(message.id);
         break;
       case "newChat":
-        this.chat.newChat();
+        this.conversations.newChat(message.draft);
         break;
       case "listChats":
         void this.history.list();
         break;
       case "openChat": {
-        // The conversation in the panel is already open.
+        // The conversation in the panel is already there.
         const saved = this.history.saved(message.id);
-        if (saved) this.chat.open(saved);
+        if (saved) this.conversations.openSaved(saved, message.draft);
         break;
       }
-      case "deleteChat":
-        void this.history.remove(message.id);
+      case "deleteChat": {
+        // Its agent, if it is open, holds the file.
+        const { id } = message;
+        void this.conversations.release(id).then(() => this.history.remove(id));
         break;
+      }
       case "openLink":
         // Web pages only: a message never opens anything else.
         if (/^https?:\/\//i.test(message.url)) void vscode.env.openExternal(vscode.Uri.parse(message.url));
         break;
       case "kernelTail": {
         const { id } = message;
-        void this.kernel.tail(id).then((tail) => this.post({ type: "kernelTail", id, tail }));
+        void this.shown.kernel.tail(id).then((tail) => this.post({ type: "kernelTail", id, tail }));
         break;
       }
       case "kernelKill":
-        void this.kernel.kill(message.id);
+        void this.shown.kernel.kill(message.id);
         break;
       case "kernelDismiss":
-        this.kernel.dismiss(message.id);
+        this.shown.kernel.dismiss(message.id);
         break;
       case "kernelPreview": {
         const { name } = message;
-        void this.kernel.preview(name).then((preview) => this.post({ type: "kernelPreview", name, preview }));
+        void this.shown.kernel.preview(name).then((preview) => this.post({ type: "kernelPreview", name, preview }));
         break;
       }
     }
@@ -261,13 +289,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     void this.providers.startLogin(`mcp:${id}`, label).then((done) => {
       if (done) this.settings.signedIn(id);
     });
-  }
-
-  /** On the conversation in the panel, which comes back; before its first message, on a new one. */
-  private async restartAgent(): Promise<void> {
-    const saved = await this.history.inPanel();
-    if (saved) this.chat.open(saved);
-    else void this.agent.restart();
   }
 
   private async open(path: string): Promise<void> {
@@ -282,6 +303,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private post(message: HostMessage): void {
     void this.view?.webview.postMessage(message);
   }
+}
+
+/** Waiting messages back in a message box: they come first, they were written before. */
+function joined({ text, images }: { text: string; images: Draft["images"] }, draft: Draft): Draft {
+  return { text: [text, draft.text].filter(Boolean).join("\n\n"), images: [...images, ...draft.images] };
 }
 
 function renderHtml(webview: vscode.Webview, dist: vscode.Uri): string {
