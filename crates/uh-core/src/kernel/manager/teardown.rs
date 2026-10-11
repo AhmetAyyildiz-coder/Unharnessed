@@ -1,8 +1,9 @@
 //! Teardown: graceful shutdown, resource cleanup, and process killing.
 
 use super::{
-    json, live_kernels, lock, oneshot, orphan_journal, Arc, Duration, Inner, KernelShutdownOptions,
-    KernelState, MemoSlot, Signal, HOST_REQUEST_SHUTDOWN_TIMEOUT_MS, KERNEL_SHUTDOWN_TIMEOUT_MS,
+    json, live_kernels, lock, oneshot, orphan_journal, Arc, Duration, Inner, KernelChange,
+    KernelShutdownOptions, KernelState, MemoSlot, Signal, HOST_REQUEST_SHUTDOWN_TIMEOUT_MS,
+    KERNEL_SHUTDOWN_TIMEOUT_MS,
 };
 
 // ---------------------------------------------------------------------------
@@ -153,7 +154,7 @@ impl Inner {
                 timer.abort();
             }
             g.pending_done_waiters.clear();
-            g.bash_activity_waiters.clear();
+            g.side_waiters.clear();
             let had_background_work = !g.background_bash_handles.is_empty();
             g.background_bash_handles.clear();
             // Stale pre-teardown background output must not surface after a restart.
@@ -166,6 +167,7 @@ impl Inner {
         // waiting on them must hear the settlement once before it is lost.
         if had_background_work {
             self.notify_background_work_settled();
+            self.notify_change(KernelChange::Bash);
         }
         self.reject_active_execution("Kernel has been shut down");
         *lock(&self.stderr_log) = None;

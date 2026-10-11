@@ -206,12 +206,12 @@ fn parse_theme_json(raw: &str) -> Result<ExportThemeJson> {
 
 /// The default theme when settings carry none (TS `getDefaultTheme`): a
 /// light terminal background (`COLORFGBG`) selects the light theme, and
-/// everything else gets the Prime dark-first default.
+/// everything else gets the dark-first `unharnessed` default.
 pub(crate) fn default_theme_name() -> String {
     if detect_light_terminal_background(std::env::var("COLORFGBG").ok().as_deref()) {
         "light".to_string()
     } else {
-        "prime".to_string()
+        "unharnessed".to_string()
     }
 }
 
@@ -362,14 +362,14 @@ pub(crate) fn resolve_export_theme(
 mod tests {
     use super::*;
 
-    /// The bundled prime theme resolves its accent and export backgrounds
+    /// The bundled unharnessed theme resolves its accent and export backgrounds
     /// exactly like the TS exporter: `--accent: #7c6faf;` through the
     /// `primary` variable, and the export section's `bg`/`surface`/`panel`
     /// references resolved to their hex values.
     #[test]
-    fn prime_theme_resolves_like_the_ts_exporter() {
-        let theme = resolve_export_theme(Some("prime"), Path::new("/nonexistent-agent-dir"))
-            .expect("resolve prime");
+    fn unharnessed_theme_resolves_like_the_ts_exporter() {
+        let theme = resolve_export_theme(Some("unharnessed"), Path::new("/nonexistent-agent-dir"))
+            .expect("resolve unharnessed");
         assert!(theme.theme_vars.contains("--accent: #7c6faf;"));
         assert!(theme.theme_vars.contains("--exportPageBg: #050506;"));
         assert_eq!(theme.body_bg, "#050506");
@@ -422,7 +422,7 @@ mod tests {
 
     /// Without an explicit theme the default is the COLORFGBG-detected one
     /// (TS `getDefaultTheme`): light terminals get `light`, everything else
-    /// `prime`.
+    /// `unharnessed`.
     #[test]
     fn default_theme_detection() {
         assert!(!detect_light_terminal_background(Some("15;0")));

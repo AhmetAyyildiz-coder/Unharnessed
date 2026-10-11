@@ -75,7 +75,8 @@ pub struct UnharnessedSessionMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quiescence: Option<UnharnessedQuiescenceMeta>,
     /// Rich kernel output reported by the ipython tool (attachments the cell
-    /// loaded into context, plus the number of diffs it displayed).
+    /// loaded into context, the number of diffs it displayed, the exception
+    /// it raised).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ipython: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

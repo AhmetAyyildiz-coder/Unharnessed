@@ -23,14 +23,14 @@ use crate::kernel::orphan_journal;
 use crate::kernel::protocol::{parse_event, Event, Request, REPL_PROTOCOL_VERSION};
 use crate::kernel::shared::{
     parse_attachment_display, parse_diff_display, ExecuteOptions, ExecuteResult, ExecuteStatus,
-    HostRequestPayload, KernelAttachment, KernelDiffDisplay, KernelError, KernelManagerOptions,
-    KernelShutdownOptions, StreamName, ATTACHMENT_DISPLAY_MIME, BASH_ACTIVITY_DISPLAY_MIME,
-    DEFAULT_MAX_OUTPUT_CHARS, DEFAULT_SNAPSHOT_DEBOUNCE_MS, DIFF_DISPLAY_MIME,
-    HOST_REQUEST_SHUTDOWN_TIMEOUT_MS, KERNEL_ABORT_GRACE_MS, KERNEL_BUSY_AFTER_INTERRUPT_MESSAGE,
-    KERNEL_BUSY_INTERRUPT_INTERVAL_MS, KERNEL_BUSY_REUSE_WAIT_MS, KERNEL_SHUTDOWN_TIMEOUT_MS,
-    KERNEL_STDERR_LOG_BUDGET_MARKER, MAX_ATTACHMENT_DATA_CHARS, MAX_BACKGROUND_OUTPUT_CHARS,
-    MAX_KERNEL_STDERR_CHARS, MAX_KERNEL_STDERR_LOG_BYTES, RESTORE_EXECUTION_TIMEOUT_MS,
-    SNAPSHOT_EXECUTION_TIMEOUT_MS,
+    HostRequestPayload, KernelAttachment, KernelChange, KernelChangeListener, KernelDiffDisplay,
+    KernelError, KernelManagerOptions, KernelShutdownOptions, StreamName, ATTACHMENT_DISPLAY_MIME,
+    BASH_ACTIVITY_DISPLAY_MIME, DEFAULT_MAX_OUTPUT_CHARS, DEFAULT_SNAPSHOT_DEBOUNCE_MS,
+    DIFF_DISPLAY_MIME, HOST_REQUEST_SHUTDOWN_TIMEOUT_MS, KERNEL_ABORT_GRACE_MS,
+    KERNEL_BUSY_AFTER_INTERRUPT_MESSAGE, KERNEL_BUSY_INTERRUPT_INTERVAL_MS,
+    KERNEL_BUSY_REUSE_WAIT_MS, KERNEL_SHUTDOWN_TIMEOUT_MS, KERNEL_STDERR_LOG_BUDGET_MARKER,
+    MAX_ATTACHMENT_DATA_CHARS, MAX_BACKGROUND_OUTPUT_CHARS, MAX_KERNEL_STDERR_CHARS,
+    MAX_KERNEL_STDERR_LOG_BYTES, RESTORE_EXECUTION_TIMEOUT_MS, SNAPSHOT_EXECUTION_TIMEOUT_MS,
 };
 use crate::kernel::state_snapshot::{
     RestoreResult, SnapshotResult, SnapshotSkip, DEFAULT_SNAPSHOT_MAX_BYTES,
@@ -341,7 +341,8 @@ struct Guarded {
     handled_host_request_ids: (HashSet<String>, VecDeque<String>),
     /// Resolvers for done events outside the active execution (the shutdown reply).
     pending_done_waiters: HashMap<String, oneshot::Sender<()>>,
-    bash_activity_waiters: HashMap<String, oneshot::Sender<Value>>,
+    /// Resolvers for the out-of-band requests (bash activity, variables).
+    side_waiters: HashMap<String, oneshot::Sender<Value>>,
     host_inflight: Vec<tokio::task::JoinHandle<()>>,
     active_execution: Option<Arc<ActiveExecution>>,
     /// Source of the most recently started cell, retained after it finishes so
@@ -392,6 +393,8 @@ pub(crate) struct Inner {
     stderr_closed_flag: AtomicBool,
     /// File receiving pre-ready kernel stderr, with its remaining write budget.
     stderr_log: Mutex<Option<Arc<Mutex<StderrLog>>>>,
+    /// The host's live view of the kernel (`set_change_listener`).
+    change_listener: Mutex<Option<KernelChangeListener>>,
 }
 
 struct StderrLog {
@@ -400,6 +403,17 @@ struct StderrLog {
 }
 
 impl Inner {
+    /// Tell the host's live view what changed. A panicking listener lands
+    /// in the diagnostics tail, never on the kernel's event path.
+    pub(crate) fn notify_change(&self, change: KernelChange) {
+        let Some(listener) = lock(&self.change_listener).clone() else {
+            return;
+        };
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| listener(change))).is_err() {
+            self.append_diagnostic("kernel change listener failed");
+        }
+    }
+
     /// Fire the embedding's background-work settlement notice (TS
     /// `ReplKernelManager`'s `onBackgroundWorkSettled`): the settlement is
     /// already recorded on the activity map, so a host-callback panic
@@ -483,7 +497,7 @@ impl ReplKernelManager {
                 background_bash_handles: HashMap::new(),
                 handled_host_request_ids: (HashSet::new(), VecDeque::new()),
                 pending_done_waiters: HashMap::new(),
-                bash_activity_waiters: HashMap::new(),
+                side_waiters: HashMap::new(),
                 host_inflight: Vec::new(),
                 active_execution: None,
                 last_cell_code: None,
@@ -500,8 +514,15 @@ impl ReplKernelManager {
             stderr_closed: Notify::new(),
             stderr_closed_flag: AtomicBool::new(false),
             stderr_log: Mutex::new(None),
+            change_listener: Mutex::new(None),
         });
         Self { inner }
+    }
+
+    /// Hear what changes in the kernel (`None` stops): its `bash()` handles
+    /// and its cells.
+    pub fn set_change_listener(&self, listener: Option<KernelChangeListener>) {
+        *lock(&self.inner.change_listener) = listener;
     }
 
     #[must_use]
@@ -623,7 +644,10 @@ impl ReplKernelManager {
     /// enqueued execution fails (kernel error, timeout, or aborted request).
     pub async fn execute(&self, code: &str, opts: ExecuteOptions) -> anyhow::Result<ExecuteResult> {
         self.wait_for_protocol_repair(opts.signal.as_ref()).await?;
-        let result = self.enqueue_execute(code, opts, None).await?;
+        let result = self.enqueue_execute(code, opts, None).await;
+        // A failed cell may have bound names before it failed.
+        self.inner.notify_change(KernelChange::Cell);
+        let result = result?;
         if result.result.status == ExecuteStatus::Ok {
             self.schedule_snapshot();
         }
@@ -681,24 +705,83 @@ impl ReplKernelManager {
         if action == "tail" && !(1..=200).contains(&lines) {
             return Err(anyhow!("lines must be an integer between 1 and 200"));
         }
+        self.side_request(
+            json!({"type": "bash_activity", "action": action,
+                   "activityId": activity_id, "lines": lines}),
+            "bash activity",
+            Duration::from_secs(3),
+        )
+        .await
+    }
+
+    /// The variables the cells made, as the host's panel lists them: name,
+    /// type, and a size or a short value. Read off the cell queue; does not
+    /// boot an idle kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the kernel is not running or the request fails.
+    pub async fn variables(&self) -> anyhow::Result<Value> {
+        if !self.is_running() {
+            return Err(anyhow!("Kernel is not running"));
+        }
+        let mut fields = self
+            .side_request(
+                json!({"type": "variables"}),
+                "variables",
+                Duration::from_secs(3),
+            )
+            .await?;
+        Ok(fields
+            .get_mut("variables")
+            .map_or_else(|| json!([]), Value::take))
+    }
+
+    /// A bounded preview of one variable's value (`preview`, `style`,
+    /// `truncated`). The kernel formats it only between cells, under its own
+    /// deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the kernel is not running, the name is not a
+    /// listed variable, a cell is running (`busy`), or formatting fails or
+    /// runs past its deadline.
+    pub async fn variable_preview(&self, name: &str) -> anyhow::Result<Value> {
+        if !self.is_running() {
+            return Err(anyhow!("Kernel is not running"));
+        }
+        if name.is_empty() || name.len() > 256 {
+            return Err(anyhow!("Unknown variable"));
+        }
+        self.side_request(
+            json!({"type": "variable_preview", "name": name}),
+            "variable preview",
+            Duration::from_secs(5),
+        )
+        .await
+    }
+
+    /// One out-of-band request: it bypasses the cell queue, and its done
+    /// event settles a waiter of its own.
+    async fn side_request(
+        &self,
+        mut frame: Value,
+        what: &str,
+        timeout: Duration,
+    ) -> anyhow::Result<Value> {
         let request_id = uuid::Uuid::new_v4().to_string();
+        frame["id"] = json!(request_id);
         let (tx, rx) = oneshot::channel();
         lock(&self.inner.guarded)
-            .bash_activity_waiters
+            .side_waiters
             .insert(request_id.clone(), tx);
-        let frame = json!({"type": "bash_activity", "id": request_id, "action": action,
-                           "activityId": activity_id, "lines": lines});
         if let Err(error) = self.inner.write_line(&frame).await {
-            lock(&self.inner.guarded)
-                .bash_activity_waiters
-                .remove(&request_id);
+            lock(&self.inner.guarded).side_waiters.remove(&request_id);
             return Err(error);
         }
-        let Ok(Ok(fields)) = tokio::time::timeout(Duration::from_secs(3), rx).await else {
-            lock(&self.inner.guarded)
-                .bash_activity_waiters
-                .remove(&request_id);
-            return Err(anyhow!("Kernel bash activity request did not settle"));
+        let Ok(Ok(fields)) = tokio::time::timeout(timeout, rx).await else {
+            lock(&self.inner.guarded).side_waiters.remove(&request_id);
+            return Err(anyhow!("Kernel {what} request did not settle"));
         };
         if fields.get("status").and_then(Value::as_str) != Some("ok") {
             return Err(anyhow!(
@@ -706,7 +789,7 @@ impl ReplKernelManager {
                 fields
                     .get("reason")
                     .and_then(Value::as_str)
-                    .unwrap_or("Kernel bash activity failed")
+                    .map_or_else(|| format!("Kernel {what} failed"), str::to_string)
             ));
         }
         Ok(fields)

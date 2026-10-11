@@ -247,6 +247,12 @@ class BashHandle:
         self._creating_cell_finished = completion_context[0] if completion_context else None
         self._creating_cell_task = completion_context[1] if completion_context else None
         self._awaited_by_creating_cell = False
+        # Awaited before any other API use: a one-shot the awaiting cell owns.
+        self._owned = False
+        # Seen as a background command once: it stays one on the activity list.
+        self._background = False
+        # Stopped by kill(), from the cell or the host's panel.
+        self._killed = False
         self._buffer = _BoundedBuffer()
         self._done = threading.Event()
         self._eof = threading.Event()
@@ -405,6 +411,7 @@ class BashHandle:
         self._released = True
         if self._reaped:
             return
+        self._killed = True
         if not _IS_POSIX:
             with self._kill_lock:
                 if self._reaped:  # re-check: _watch may have reaped while we waited
@@ -930,6 +937,8 @@ class BashHandle:
             current_task = None
         creating_cell_waited = _creating_cell_waits_for(self._creating_cell_task, current_task)
         owned = not self._released
+        # Before _released: the activity list reads both from another thread.
+        self._owned = self._owned or owned
         wait = self._wait_owned() if owned else self._wait()
         self._released = True
         completed = False
@@ -945,6 +954,15 @@ class BashHandle:
                 self._awaited_by_creating_cell = True
             if completed:
                 self._note_result_consumed(current_task)
+
+    def _is_background(self) -> bool:
+        """A command the agent left running: its handle API was used before
+        any await, or its creating cell ended without awaiting it. A one-shot
+        `await bash(cmd)` never is one."""
+        if not self._background and not self._owned:
+            cell_finished = self._creating_cell_finished
+            self._background = self._released or cell_finished is None or cell_finished.is_set()
+        return self._background
 
     def __repr__(self) -> str:
         state = f"exit_code={self._result.exit_code}" if self._result else "running"
@@ -1019,14 +1037,14 @@ def _status_script(command: str, completion_a: str, completion_b: str) -> str:
         "{\n"
         f"{command}\n"
         f"}} {_OUTPUT_FD}>&- {_STATUS_FD}>&-\n"
-        "__prime_status=$?\n"
+        "__uh_status=$?\n"
         "\\set +x\n"
         f"{emit} '\\036unharnessed-complete:%s%s\\037' "
-        f"'{completion_a}' '{completion_b}' >&{_OUTPUT_FD} || exit \"$__prime_status\"\n"
-        f"{emit} '%s\\n' \"$__prime_status\" >&{_STATUS_FD}\n"
+        f"'{completion_a}' '{completion_b}' >&{_OUTPUT_FD} || exit \"$__uh_status\"\n"
+        f"{emit} '%s\\n' \"$__uh_status\" >&{_STATUS_FD}\n"
         f"exec {_OUTPUT_FD}>&- {_STATUS_FD}>&-\n"
         "wait\n"
-        'exit "$__prime_status"\n'
+        'exit "$__uh_status"\n'
     )
 
 
@@ -1247,6 +1265,8 @@ def activity_request(action: str, activity_id: str | None = None, lines: int = 5
                 "durationMs": int((handle._result.duration if handle._result else time.monotonic() - handle._started) * 1000),
                 "status": "finished" if handle._reaped else "running",
                 "exitCode": handle._result.exit_code if handle._result else None,
+                "background": handle._is_background(),
+                "killed": handle._killed,
             }
             for key, handle in handles
         ]

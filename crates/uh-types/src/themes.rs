@@ -1,19 +1,17 @@
-//! Bundled theme definitions (pure data), shared by the surfaces that need
-//! the theme *files* rather than a rendered theme: the TUI's theme loader
-//! (pa-tui, which renders terminal colors from these files) and the session
-//! HTML exporter (uh-core, which resolves them into CSS variables). The
-//! JSON content is the product theme file, verbatim; a theme's `export`
-//! section carries the export page's background overrides.
+//! Bundled theme definitions (pure data), read by the session HTML exporter
+//! (uh-core, which resolves them into CSS variables). The JSON content is
+//! the product theme file, verbatim; a theme's `export` section carries the
+//! export page's background overrides.
 //!
 //! Only the built-in themes are data here; discovery of custom theme files
 //! (`<agent-dir>/themes/<name>.json`) and every behavior built on top of
 //! these files belong to the consuming crates.
 
 /// The bundled theme names, in builtin resolution order.
-pub const BUILTIN_THEME_NAMES: [&str; 3] = ["prime", "dark", "light"];
+pub const BUILTIN_THEME_NAMES: [&str; 3] = ["unharnessed", "dark", "light"];
 
-/// The `prime` theme file (Unharnessed's default, dark-first).
-pub const PRIME_THEME_JSON: &str = include_str!("../themes/prime.json");
+/// The `unharnessed` theme file (the default, dark-first).
+pub const UNHARNESSED_THEME_JSON: &str = include_str!("../themes/unharnessed.json");
 /// The `dark` theme file.
 pub const DARK_THEME_JSON: &str = include_str!("../themes/dark.json");
 /// The `light` theme file.
@@ -23,7 +21,7 @@ pub const LIGHT_THEME_JSON: &str = include_str!("../themes/light.json");
 #[must_use]
 pub fn builtin_theme_json(name: &str) -> Option<&'static str> {
     match name {
-        "prime" => Some(PRIME_THEME_JSON),
+        "unharnessed" => Some(UNHARNESSED_THEME_JSON),
         "dark" => Some(DARK_THEME_JSON),
         "light" => Some(LIGHT_THEME_JSON),
         _ => None,

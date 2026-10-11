@@ -4,6 +4,7 @@ import type {
   ChatState,
   HistoryState,
   HostMessage,
+  KernelState,
   LoginState,
   Provider,
   Screen,
@@ -40,6 +41,7 @@ export function App() {
   const [settingResult, setSettingResult] = useState<SettingResult | null>(null);
   const [chat, setChat] = useState<ChatState>(EMPTY_CHAT);
   const [history, setHistory] = useState<HistoryState>({ chats: null });
+  const [kernel, setKernel] = useState<KernelState>({ commands: [], variables: [] });
   const [paths, setPaths] = useState<Paths | null>(null);
   const [draft, setDraft] = useState<Draft>(() => ({ text: savedDraft(), images: [] }));
   /** A sent prompt being changed in the message box, and the draft it pushed out, back once the edit ends. */
@@ -64,7 +66,11 @@ export function App() {
           setSettings(message.settings);
           setChat(message.chat);
           setHistory(message.history);
+          setKernel(message.kernel);
           setPhase(message.splash ? "splash" : "main");
+          break;
+        case "kernel":
+          setKernel(message.kernel);
           break;
         case "chat":
           setChat(message.chat);
@@ -186,6 +192,7 @@ export function App() {
             session={session}
             providers={providers ?? []}
             chat={chat}
+            kernel={kernel}
             images={imageSettings(settings)}
             draft={draft}
             onDraft={setDraft}

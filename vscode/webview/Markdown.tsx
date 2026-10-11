@@ -117,30 +117,37 @@ function split(node: HtmlNode): void {
 
 /** A fenced block, under a band with its language (when the model gave one) and a copy button. */
 function CodeBlock({ children }: { children: ReactNode }) {
-  const [copied, setCopied] = useState(false);
   const code = codeOf(children);
   const language = /language-(\S+)/.exec(code.className)?.[1];
   return (
     <div className="md-code">
       <div className="md-code-head">
         <span className="md-code-language">{language}</span>
-        <button
-          className="icon-button md-code-copy"
-          type="button"
-          aria-label="Copy"
-          data-tip={copied ? "Copied" : "Copy"}
-          data-tip-side="left"
-          onClick={() => {
-            post({ type: "copy", text: code.text });
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1400);
-          }}
-        >
-          {copied ? <IconCheck /> : <IconCopy />}
-        </button>
+        <CopyButton className="md-code-copy" text={code.text} />
       </div>
       <pre>{children}</pre>
     </div>
+  );
+}
+
+/** Copies `text`, then says so a moment. */
+export function CopyButton({ className, text }: { className: string; text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      className={`icon-button ${className}`}
+      type="button"
+      aria-label="Copy"
+      data-tip={copied ? "Copied" : "Copy"}
+      data-tip-side="left"
+      onClick={() => {
+        post({ type: "copy", text });
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1400);
+      }}
+    >
+      {copied ? <IconCheck /> : <IconCopy />}
+    </button>
   );
 }
 

@@ -82,6 +82,21 @@ pub type StreamCallback = Arc<dyn Fn(&str, StreamName) + Send + Sync>;
 /// continuations can resume (TS `KernelManagerOptions.onBackgroundWorkSettled`).
 pub type BackgroundWorkSettledCallback = Arc<dyn Fn() + Send + Sync>;
 
+/// What changed in a running kernel, for a host that shows it live: a
+/// `bash()` handle started or settled, a cell ran (its variables may
+/// have changed, and a handle it left running became a background one), or
+/// a new kernel revived the session's saved namespace (or tried to).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KernelChange {
+    Bash,
+    Cell,
+    Restored,
+}
+
+/// Hears each [`KernelChange`]; called on the kernel's event path, so it
+/// must return at once.
+pub type KernelChangeListener = Arc<dyn Fn(KernelChange) + Send + Sync>;
+
 /// One file edit, captured from a [`DIFF_DISPLAY_MIME`] display payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KernelDiffDisplay {

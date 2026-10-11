@@ -4,6 +4,7 @@ import { Agent } from "./agent";
 import { Chat } from "./chat";
 import { Files } from "./files";
 import { History } from "./history";
+import { Kernel } from "./kernel";
 import { Providers } from "./providers";
 import { Session } from "./session";
 import { Settings } from "./settings";
@@ -26,6 +27,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const files = new Files(cwd, log);
   const chat = new Chat(agent, session, files, log);
   const history = new History(agent, cwd, log);
+  const kernel = new Kernel(agent, session, log);
   const view = new ChatViewProvider(
     context.extensionUri,
     agent,
@@ -35,6 +37,7 @@ export function activate(context: vscode.ExtensionContext): void {
     chat,
     history,
     files,
+    kernel,
     log,
   );
 

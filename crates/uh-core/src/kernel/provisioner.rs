@@ -138,6 +138,8 @@ struct ProvisionerState {
     /// start succeeds, so joining callers get the real cause and duration.
     last_startup_failure: Option<StartupFailure>,
     last_restore: Option<RestoreResult>,
+    /// The last revive, until the host takes it to show.
+    unreported_restore: Option<RestoreResult>,
     disposed: bool,
     /// Snapshot policy of the dispose that aborted a startup, honored by
     /// the failed startup's own teardown.
@@ -167,6 +169,10 @@ struct ProvisionerInner {
     options: IpythonKernelProvisionerOptions,
     state: Mutex<ProvisionerState>,
     dispose_signal: AbortSignal,
+    /// The host's listener. Each kernel this provisioner starts forwards to
+    /// it, so a listener set while a kernel is still starting (a prewarm)
+    /// hears that kernel too.
+    change_listener: Arc<Mutex<Option<crate::kernel::shared::KernelChangeListener>>>,
 }
 
 impl IpythonKernelProvisioner {
@@ -182,11 +188,13 @@ impl IpythonKernelProvisioner {
                     last_startup_message: None,
                     last_startup_failure: None,
                     last_restore: None,
+                    unreported_restore: None,
                     disposed: false,
                     dispose_snapshot: true,
                     pending_stop: None,
                 }),
                 dispose_signal: AbortSignal::new(),
+                change_listener: Arc::new(Mutex::new(None)),
             }),
         }
     }
@@ -204,10 +212,29 @@ impl IpythonKernelProvisioner {
         self.lock_state().manager.clone()
     }
 
+    /// Hear what changes in this session's kernels: the running one, one
+    /// still starting, and each one started later (`None` stops).
+    pub fn set_change_listener(
+        &self,
+        listener: Option<crate::kernel::shared::KernelChangeListener>,
+    ) {
+        *self
+            .inner
+            .change_listener
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = listener;
+    }
+
     /// Result of reviving a prior session's namespace on the last kernel start.
     #[must_use]
     pub fn last_restore(&self) -> Option<RestoreResult> {
         self.lock_state().last_restore.clone()
+    }
+
+    /// The last revive, once: each one is the host's to show a single time.
+    #[must_use]
+    pub fn take_unreported_restore(&self) -> Option<RestoreResult> {
+        self.lock_state().unreported_restore.take()
     }
 
     /// Whether a kernel has finished starting and is currently running.
@@ -655,6 +682,16 @@ async fn start_kernel(
         bootstrap_code: Some(bootstrap_code.clone()),
         stderr_log_path,
     });
+    let listener = Arc::clone(&inner.change_listener);
+    manager.set_change_listener(Some(Arc::new(move |change| {
+        let listener = listener
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(listener) = listener {
+            listener(change);
+        }
+    })));
 
     emit_startup_progress(inner, on_progress, "Starting Python kernel...");
     // Only the process spawn + ready handshake contends for OS resources under
@@ -830,11 +867,22 @@ async fn start_kernel(
         if let Some(on_restore) = &inner.options.on_restore {
             on_restore(&restore);
         }
-        inner
-            .state
+        {
+            let mut state = inner
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.unreported_restore = Some(restore.clone());
+            state.last_restore = Some(restore);
+        }
+        let listener = inner
+            .change_listener
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .last_restore = Some(restore);
+            .clone();
+        if let Some(listener) = listener {
+            listener(crate::kernel::shared::KernelChange::Restored);
+        }
     }
     Ok(manager)
 }

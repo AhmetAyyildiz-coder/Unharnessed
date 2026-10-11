@@ -16,7 +16,7 @@ Wire and domain types + serde only:
   its pure parse/suggestion helpers.
 - `skill_blocks`: the `<skill ...>` block parse shared by expansion and
   admission.
-- `themes`: the bundled theme files (`prime`/`dark`/`light`) as pure data,
+- `themes`: the bundled theme files (`unharnessed`/`dark`/`light`) as pure data,
   read by the session HTML exporter.
 - `usage`, `memory_release`: small shared data helpers.
 - `platform`: process identity and home-dir helpers (`platform::dirs::home_dir`:

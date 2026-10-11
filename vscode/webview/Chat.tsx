@@ -1,4 +1,5 @@
 import {
+  Fragment,
   memo,
   useEffect,
   useLayoutEffect,
@@ -8,10 +9,24 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import type { ChatEntry, ChatPatch, ChatState, Thumb, TurnItem } from "../src/protocol";
-import { IconArrowDown, IconCell, IconCheck, IconChevron, IconCompact, IconCross, IconFlag, IconRestart } from "./icons";
+import type { Cell, ChatEntry, ChatPatch, ChatState, Thumb, TurnItem } from "../src/protocol";
+import { FileIcon } from "./FileIcon";
+import {
+  IconArrowDown,
+  IconChevron,
+  IconCompact,
+  IconEye,
+  IconFilePlus,
+  IconFlag,
+  IconPencil,
+  IconPython,
+  IconRestart,
+  IconSearch,
+  IconTerminal,
+  IconVariables,
+} from "./icons";
 import { ThinkingOrb } from "thinking-orbs";
-import { Markdown } from "./Markdown";
+import { CopyButton, Markdown } from "./Markdown";
 import { MentionText } from "./mentions";
 import { count } from "./Usage";
 import { post } from "./vscode";
@@ -33,6 +48,8 @@ const QUIET_MS = 900;
 const ORB_OUT_MS = 320;
 /** How long a compaction takes to land: its letters light up, its lines grow (styles.css, .compaction). */
 const LANDING_MS = 1800;
+/** How soon after the kernel came back its line still lands as it shows: not when the panel opens again later. */
+const KERNEL_LANDS_MS = 1500;
 
 const WAKES: Record<NonNullable<Turn["wake"]>, string> = {
   bash: "a background command ended",
@@ -116,6 +133,8 @@ export function Transcript({
       if (follow.current && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
     });
     for (const entry of view.children) sizes.current.observe(entry);
+    // Its own room at the end changing (the kernel's pills coming over it) too.
+    sizes.current.observe(view);
   });
   useEffect(() => () => sizes.current?.disconnect(), []);
 
@@ -141,6 +160,8 @@ export function Transcript({
         {chat.entries.map((entry, at) =>
           entry.kind === "restart" ? (
             <Restart key={entry.id} dimmed={dim(at) !== undefined} />
+          ) : entry.kind === "kernel" ? (
+            <KernelLine key={entry.id} restored={entry.restored} at={entry.at} dimmed={dim(at) !== undefined} />
           ) : (
             <TurnView
               key={entry.id}
@@ -165,6 +186,29 @@ function Restart({ dimmed }: { dimmed: boolean }) {
     <div className={dimmed ? "restart-line is-dimmed" : "restart-line"}>
       <IconRestart />
       The agent restarted: it no longer remembers the messages above.
+    </div>
+  );
+}
+
+/**
+ * Where the kernel came back with the conversation's variables, or could
+ * not. Landing here, a light comes on (styles.css, .kernel-line): the
+ * braces draw themselves, their dot lights up, then the words.
+ */
+function KernelLine({ restored, at, dimmed }: { restored: boolean; at: number; dimmed: boolean }) {
+  const [landing] = useState(() => Date.now() - at < KERNEL_LANDS_MS);
+  const words = restored ? "Python kernel restored" : "The Python kernel could not be restored";
+  const classes = ["restart-line kernel-line", !restored && "is-failed", landing && "is-landing", dimmed && "is-dimmed"];
+  return (
+    <div className={classes.filter(Boolean).join(" ")}>
+      <IconVariables className="kernel-line-logo" />
+      <span className="kernel-words">
+        {[...words].map((letter, i) => (
+          <span key={i} className="letter" style={{ "--i": i } as CSSProperties}>
+            {letter}
+          </span>
+        ))}
+      </span>
     </div>
   );
 }
@@ -200,9 +244,18 @@ const TurnView = memo(function TurnView({
         />
       )}
       {!turn.prompt && turn.wake && <p className="turn-wake">The agent went on by itself: {WAKES[turn.wake]}.</p>}
-      {turn.items.map((item, at) => (
-        <Item key={at} item={item} running={running} streaming={running && at === turn.items.length - 1} />
-      ))}
+      {pieces(turn.items).map((piece) =>
+        piece.kind === "item" ? (
+          <Item
+            key={piece.at}
+            item={turn.items[piece.at]}
+            running={running}
+            streaming={running && piece.at === turn.items.length - 1}
+          />
+        ) : (
+          <CallRun key={`run ${piece.start}`} items={turn.items} start={piece.start} end={piece.end} running={running} />
+        ),
+      )}
       {working && (
         <p className="working-line">
           <Orb on state="breathing" />
@@ -274,7 +327,7 @@ const Item = memo(function Item({ item, running, streaming }: { item: TurnItem; 
     case "thought":
       return <Thought thought={item} live={running && item.ms === undefined} />;
     case "tool":
-      return <ToolCall tool={item} />;
+      return <ToolCall tool={item} live={running && item.status === "running"} />;
     case "compaction":
       return <CompactionMark compaction={item} />;
     case "notice":
@@ -357,7 +410,10 @@ function Thought({ thought, live }: { thought: Extract<TurnItem, { kind: "though
         aria-expanded={expanded}
         onClick={opens ? toggle : undefined}
       >
-        <Orb on={thinking} state="composing" />
+        <span className="thought-slot">
+          <Orb on={thinking} state="composing" />
+          {opens && <IconChevron className="thought-chevron" />}
+        </span>
         {thinking ? (
           <span className="thought-label">
             <span className="thought-verb is-live">Thinking</span>
@@ -369,7 +425,6 @@ function Thought({ thought, live }: { thought: Extract<TurnItem, { kind: "though
             {thought.ms !== undefined && ` for ${took(thought.ms)}`}
           </span>
         )}
-        {opens && <IconChevron className="thought-chevron" />}
       </button>
       {hasText && (
         <div className={expanded ? "thought-fold" : "thought-fold is-folded"}>
@@ -532,38 +587,251 @@ function CompactionMark({ compaction }: { compaction: Compaction }) {
   );
 }
 
-/** A cell the agent runs: its first line, then on demand the code and what it printed. */
-function ToolCall({ tool }: { tool: Tool }) {
+/** A turn's items, each run of cells in a row gathered: anything else between two cells, a thought too, ends a run. */
+type Piece = { kind: "item"; at: number } | { kind: "run"; start: number; end: number };
+
+function pieces(items: TurnItem[]): Piece[] {
+  const out: Piece[] = [];
+  items.forEach((item, at) => {
+    const last = out.at(-1);
+    if (last?.kind === "run" && item.kind === "tool") last.end = at + 1;
+    else if (item.kind === "tool") out.push({ kind: "run", start: at, end: at + 1 });
+    else out.push({ kind: "item", at });
+  });
+  return out;
+}
+
+/**
+ * Cells in a row, `items[start..end]`. While they run, each shows on its
+ * own; once the agent thinks or writes again (or the turn ends), two or
+ * more fold into one line, "Ran 5 Python cells", in one move: the line
+ * grows in as they fold away under it and slide to its indent. A cell
+ * alone stays as it is. A conversation coming back shows them folded
+ * already.
+ */
+function CallRun({ items, start, end, running }: { items: TurnItem[]; start: number; end: number; running: boolean }) {
   const [open, setOpen] = useState(false);
-  const firstLine = tool.input.split("\n").find((line) => line.trim()) ?? "";
-  const extras = [
-    tool.images ? `${tool.images} image${tool.images > 1 ? "s" : ""} loaded` : "",
-    tool.diffs ? `${tool.diffs} diff${tool.diffs > 1 ? "s" : ""}` : "",
-  ].filter(Boolean);
+  const run = items.slice(start, end);
+  const tools = run.filter((item): item is Tool => item.kind === "tool");
+  const grouped = tools.length > 1 && (end < items.length || !running);
+  const edits = tools.flatMap((tool) => (tool.status !== "failed" && tool.cell?.diff ? [tool.cell.diff] : []));
+  const classes = ["call-group", grouped ? open && "is-open" : "is-open is-flat"].filter(Boolean).join(" ");
   return (
-    <div className={`tool is-${tool.status}${open ? " is-open" : ""}`}>
-      <button className="fold tool-head" type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <span className="tool-status">
-          {tool.status === "running" ? (
-            <span className="spinner" />
-          ) : tool.status === "failed" ? (
-            <IconCross />
-          ) : (
-            <IconCheck />
-          )}
-        </span>
-        <IconCell className="tool-icon" />
-        <span className="tool-title">{tool.title === "Python cell" ? "Python" : tool.title}</span>
-        <span className="fold-preview is-mono">{firstLine}</span>
-        <IconChevron className="fold-chevron" />
-      </button>
-      {open && (
-        <div className="tool-body">
-          <pre className="tool-code">{tool.input}</pre>
-          {tool.output && <pre className="tool-output">{tool.output}</pre>}
-          {extras.length > 0 && <p className="tool-extras">{extras.join(" · ")}</p>}
+    <div className={classes}>
+      <div className="call-head-wrap" inert={!grouped}>
+        <div>
+          <button className="call-head" type="button" data-no-press aria-expanded={open} onClick={() => setOpen(!open)}>
+            <span className="call-lead">
+              <IconPython className="call-icon" />
+              <span className="call-verb">Ran</span>
+            </span>
+            <span className="call-target">
+              {tools.length} Python cell{tools.length === 1 ? "" : "s"}
+            </span>
+            {edits.length > 0 && (
+              <span className="call-meta">
+                <Changed
+                  added={edits.reduce((sum, diff) => sum + diff.added, 0)}
+                  removed={edits.reduce((sum, diff) => sum + diff.removed, 0)}
+                />
+              </span>
+            )}
+            <IconChevron className="call-chevron" />
+          </button>
         </div>
-      )}
+      </div>
+      <div className="call-fold" inert={grouped && !open}>
+        <div>
+          <div className="call-list">
+            {run.map((item, at) => (
+              <Item
+                key={start + at}
+                item={item}
+                running={running}
+                streaming={running && start + at === items.length - 1}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
+}
+
+/** What each kind of cell shows: its icon, then its verb while it runs, once it ran, when it failed. */
+const KINDS: Record<Cell["kind"], { Icon: typeof IconPython; live: string; done: string; failed: string }> = {
+  edit: { Icon: IconPencil, live: "Editing", done: "Edited", failed: "Edit failed" },
+  write: { Icon: IconFilePlus, live: "Writing", done: "Wrote", failed: "Write failed" },
+  read: { Icon: IconEye, live: "Reading", done: "Read", failed: "Read failed" },
+  search: { Icon: IconSearch, live: "Searching", done: "Searched", failed: "Search failed" },
+  shell: { Icon: IconTerminal, live: "Running", done: "Ran", failed: "Failed" },
+  python: { Icon: IconPython, live: "Running", done: "Ran", failed: "Failed" },
+};
+
+/**
+ * A cell the agent runs, as one line on the page: what it does, the files
+ * it touches or the command it runs (else its telling line of code), and
+ * once it ran, the lines an edit changed or the exception it raised. A
+ * click opens its code and what came out of it.
+ */
+function ToolCall({ tool, live }: { tool: Tool; live: boolean }) {
+  const [open, setOpen] = useState(false);
+  // Its insides are drawn on the first open, then kept for the fold to close over.
+  const [drawn, setDrawn] = useState(false);
+  const failed = tool.status === "failed";
+  const state = live ? "live" : failed ? "failed" : "done";
+  const { Icon, ...verbs } = KINDS[tool.cell?.kind ?? "python"];
+  const files = tool.cell?.files ?? [];
+  const diff = failed ? undefined : tool.cell?.diff;
+  const meta: ReactNode[] = [];
+  if (!live) {
+    if (diff) meta.push(<Changed added={diff.added} removed={diff.removed} />);
+    if (failed && tool.error) meta.push(tool.error);
+    if (tool.images) meta.push(`${tool.images} image${tool.images > 1 ? "s" : ""} loaded`);
+  }
+  return (
+    <div className={`call is-${state}${open ? " is-open" : ""}`}>
+      <button
+        className="call-head"
+        type="button"
+        data-no-press
+        aria-expanded={open}
+        onClick={() => {
+          setDrawn(true);
+          setOpen(!open);
+        }}
+      >
+        <span className="call-lead">
+          <Icon className="call-icon" />
+          <span className="call-verb">{verbs[state]}</span>
+        </span>
+        {!tool.cell ? (
+          <span className="call-target">{tool.title}</span>
+        ) : files.length > 0 ? (
+          <span className="call-target is-file" title={files.join("\n")}>
+            {tool.cell.kind === "read" && <FileIcon path={files[0]} />}
+            {files.map((path, at) => (
+              <Fragment key={path}>
+                {tool.cell?.away?.[path] && <span className="call-dir">{tool.cell.away[path]}</span>}
+                <span className="call-file">
+                  {base(path)}
+                  {at < files.length - 1 && ", "}
+                </span>
+              </Fragment>
+            ))}
+          </span>
+        ) : (
+          <span className="call-target is-mono">{tool.cell.command ?? gist(tool.input)}</span>
+        )}
+        {meta.length > 0 && (
+          <span className="call-meta">
+            {meta.map((part, at) => (
+              <Fragment key={at}>
+                {at > 0 && <span className="sep">·</span>}
+                {part}
+              </Fragment>
+            ))}
+          </span>
+        )}
+        <IconChevron className="call-chevron" />
+      </button>
+      <div className="call-fold" inert={!open}>
+        <div>{drawn && <CallSheet tool={tool} files={files} diff={diff} failed={failed} />}</div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What a cell opens on, one sheet without labels: its Python, then a tone
+ * deeper what came out of it, an edit's changes under the file's icon and
+ * name, and what it printed.
+ */
+function CallSheet({ tool, files, diff, failed }: { tool: Tool; files: string[]; diff: Cell["diff"]; failed: boolean }) {
+  const output = tool.output?.replace(/\n+$/, "");
+  return (
+    <div className="call-open">
+      <div className="call-sheet">
+        <CopyButton className="call-copy" text={tool.input} />
+        <pre className="call-code">{highlight(tool.input)}</pre>
+        {diff && (
+          <div className="is-sunk">
+            <div className="call-diff-head">
+              {files.map((path) => (
+                <Fragment key={path}>
+                  <FileIcon path={path} />
+                  <span title={path}>{base(path)}</span>
+                </Fragment>
+              ))}
+              <span className="call-meta">
+                <Changed added={diff.added} removed={diff.removed} />
+              </span>
+            </div>
+            <div className="call-lines">
+              {diff.lines.map(([sign, text], at) => (
+                <div key={at} className={sign === "+" ? "call-line is-add" : sign === "-" ? "call-line is-del" : "call-line"}>
+                  <span className="gutter">{sign === "+" ? "+" : sign === "-" ? "−" : ""}</span>
+                  {sign === "…" ? "…" : text || " "}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {output && (
+          <div className={failed ? "call-lines is-sunk is-error" : "call-lines is-sunk is-output"}>
+            {output.split("\n").map((line, at) => (
+              <div key={at} className="call-line">
+                {line || " "}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The lines an edit adds and removes: `+2 −1`. */
+function Changed({ added, removed }: { added: number; removed: number }) {
+  return (
+    <>
+      <span className="add">+{added}</span> <span className="del">−{removed}</span>
+    </>
+  );
+}
+
+/** `a.ts` of `src/a.ts`. */
+function base(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** A cell's telling line: its first that is not an import or a comment. */
+function gist(code: string): string {
+  const lines = code
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.find((line) => !/^(?:#|import\s|from\s+\S+\s+import\s)/.test(line)) ?? lines[0] ?? "";
+}
+
+/** Python's strings, comments and keywords. */
+const PY =
+  /([rRbBfFuU]{0,2}(?:'''[\s\S]*?(?:'''|$)|"""[\s\S]*?(?:"""|$)|'(?:\\.|[^'\\\n])*'?|"(?:\\.|[^"\\\n])*"?))|(#[^\n]*)|\b(False|None|True|and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)\b/g;
+
+/** A cell's code, quietly coloured: its keywords in the cyan, its strings a step back, its comments faint. */
+function highlight(code: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const match of code.matchAll(PY)) {
+    const kind = match[1] !== undefined ? "py-s" : match[2] !== undefined ? "py-c" : "py-k";
+    out.push(
+      code.slice(last, match.index),
+      <span key={match.index} className={kind}>
+        {match[0]}
+      </span>,
+    );
+    last = match.index + match[0].length;
+  }
+  out.push(code.slice(last));
+  return out;
 }

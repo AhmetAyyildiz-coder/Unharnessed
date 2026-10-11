@@ -793,6 +793,46 @@ impl SessionEngine {
             .ok_or_else(|| anyhow::anyhow!("Kernel is not running"))?;
         manager.bash_activity(action, activity_id, lines).await
     }
+
+    /// Hear what changes in the session's kernel (its `bash()` handles,
+    /// its cells), across kernel restarts.
+    pub fn watch_kernel(&self, listener: crate::kernel::shared::KernelChangeListener) {
+        self.provisioner.set_change_listener(Some(listener));
+    }
+
+    /// The kernel's last revive of the session's saved namespace, once.
+    pub fn take_kernel_restore(&self) -> Option<crate::kernel::state_snapshot::RestoreResult> {
+        self.provisioner.take_unreported_restore()
+    }
+
+    /// The variables the session's cells made (name, type, size or short
+    /// value), read off the cell queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session has no running kernel, or the
+    /// request fails.
+    pub async fn kernel_variables(&self) -> anyhow::Result<serde_json::Value> {
+        let manager = self
+            .provisioner
+            .manager()
+            .ok_or_else(|| anyhow::anyhow!("Kernel is not running"))?;
+        manager.variables().await
+    }
+
+    /// A bounded preview of one of the session's variables.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session has no running kernel, a cell is
+    /// running, the name is not a variable, or the preview fails.
+    pub async fn kernel_variable_preview(&self, name: &str) -> anyhow::Result<serde_json::Value> {
+        let manager = self
+            .provisioner
+            .manager()
+            .ok_or_else(|| anyhow::anyhow!("Kernel is not running"))?;
+        manager.variable_preview(name).await
+    }
 }
 
 // The unit battery lives in the child module (engine::tests); its use-super

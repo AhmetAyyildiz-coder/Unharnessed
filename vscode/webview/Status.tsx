@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { AgentState, ChatState, HistoryState, Provider, SessionState } from "../src/protocol";
+import type { AgentState, ChatState, HistoryState, KernelState, Provider, SessionState } from "../src/protocol";
 import { Transcript } from "./Chat";
 import { Composer, type Draft, type ImageSettings } from "./Composer";
 import { HistoryMenu } from "./History";
@@ -23,6 +23,7 @@ export function Status({
   session,
   providers,
   chat,
+  kernel,
   images,
   draft,
   onDraft,
@@ -36,6 +37,7 @@ export function Status({
   session: SessionState | null;
   providers: Provider[];
   chat: ChatState;
+  kernel: KernelState;
   images: ImageSettings;
   draft: Draft;
   onDraft: (update: (draft: Draft) => Draft) => void;
@@ -124,6 +126,7 @@ export function Status({
           session={session}
           providers={providers}
           chat={chat}
+          kernel={kernel}
           images={images}
           draft={draft}
           onDraft={onDraft}

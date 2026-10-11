@@ -341,7 +341,7 @@ async fn partial_restore_keeps_the_fuller_on_disk_payload_through_the_dispose_fl
     // A v2 payload with one loadable record and one whose blob cannot unpickle:
     // the restore reports a partial namespace, and the on-disk payload (which
     // still carries both) must stay the fresher copy at dispose.
-    let magic = b"PRIME-AGENT-KERNEL-SNAPSHOT-V2\n";
+    let magic = b"UNHARNESSED-KERNEL-SNAPSHOT-V1\n";
     let good_blob: &[u8] = &[0x80, 0x04, b'K', 0x07, b'.']; // protocol-4 pickle of 7
     let bad_blob: &[u8] = &[
         0x80, 0x00, b'n', b'o', b't', b'-', b'a', b'-', b'p', b'i', b'c', b'k', b'l', b'e',

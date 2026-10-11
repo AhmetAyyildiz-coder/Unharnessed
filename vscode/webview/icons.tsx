@@ -161,6 +161,38 @@ export function IconPlug(props: IconProps) {
   );
 }
 
+export function IconChevronUp(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M7.5 14l4.5-4.5 4.5 4.5" />
+    </Icon>
+  );
+}
+
+/** A window with a prompt: the chevron, then the cursor. For the background commands. */
+export function IconTerminal(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3.5" y="5.5" width="17" height="13" rx="3" />
+      <path d="M7.5 10l2.5 2.5-2.5 2.5M12.5 15h4" />
+    </Icon>
+  );
+}
+
+/**
+ * Python's two snakes, head to tail: one S down the middle, a wing out of
+ * each head, an eye in each. For the REPL's variables and the cells the agent runs.
+ */
+export function IconPython(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8.5 8.5V6a2.5 2.5 0 0 1 2.5-2.5h2A2.5 2.5 0 0 1 15.5 6v4a2 2 0 0 1-2 2h-3a2 2 0 0 0-2 2v4a2.5 2.5 0 0 0 2.5 2.5h2a2.5 2.5 0 0 0 2.5-2.5v-2.5" />
+      <path d="M12 8.5H6A2.5 2.5 0 0 0 3.5 11v2A2.5 2.5 0 0 0 6 15.5h2.5M12 15.5h6a2.5 2.5 0 0 0 2.5-2.5v-2A2.5 2.5 0 0 0 18 8.5h-2.5" />
+      <path d="M11 6.2h.01M13 17.8h.01" strokeWidth={2} />
+    </Icon>
+  );
+}
+
 export function IconChevronDown(props: IconProps) {
   return (
     <Icon {...props}>
@@ -184,6 +216,41 @@ export function IconPencil(props: IconProps) {
     <Icon {...props}>
       <path d="M5.5 18.5l.9-3.6L15.6 5.7a1.7 1.7 0 0 1 2.4 2.4L8.8 17.3z" />
       <path d="M14 7.3l2.4 2.4" />
+    </Icon>
+  );
+}
+
+/** An eye, open: read what is there. */
+export function IconEye(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3.5 12c2-3.7 4.9-5.5 8.5-5.5s6.5 1.8 8.5 5.5c-2 3.7-4.9 5.5-8.5 5.5S5.5 15.7 3.5 12z" />
+      <circle cx="12" cy="12" r="2.5" />
+    </Icon>
+  );
+}
+
+/**
+ * Braces around a dot: the kernel's variables. Its braces (`.draw`, each
+ * one path long) and its dot (`.spark`) apart, for a light to draw the one
+ * and light the other (styles.css, .kernel-line).
+ */
+export function IconVariables(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path className="draw" pathLength={1} d="M8.5 4.5H8a2 2 0 0 0-2 2v3.5l-1.5 1.5 1.5 1.5v3.5a2 2 0 0 0 2 2h.5" />
+      <path className="draw" pathLength={1} d="M15.5 4.5h.5a2 2 0 0 1 2 2v3.5l1.5 1.5-1.5 1.5v3.5a2 2 0 0 1-2 2h-.5" />
+      <path className="spark" d="M12 12h.01" strokeWidth={2.5} />
+    </Icon>
+  );
+}
+
+/** A page, its corner folded, a plus on it: write a file. */
+export function IconFilePlus(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M13.5 3.5H8A2.5 2.5 0 0 0 5.5 6v12A2.5 2.5 0 0 0 8 20.5h8a2.5 2.5 0 0 0 2.5-2.5V8.5z" />
+      <path d="M13.5 3.5v5h5M12 11.5v5M9.5 14h5" />
     </Icon>
   );
 }
@@ -243,15 +310,6 @@ export function IconNewChat(props: IconProps) {
     <Icon {...props}>
       <path d="M6 5.5h12a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5h-7.5L7 19.5v-3H6A1.5 1.5 0 0 1 4.5 15V7A1.5 1.5 0 0 1 6 5.5z" />
       <path d="M12 8.5v5M9.5 11h5" />
-    </Icon>
-  );
-}
-
-/** A prompt: a chevron and a line, for a cell the agent runs. */
-export function IconCell(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M6 8l4 4-4 4M12.5 16.5H18" />
     </Icon>
   );
 }

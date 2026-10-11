@@ -18,7 +18,8 @@ export type Link = { type: "resource_link"; uri: string; name: string };
  */
 export class Files {
   constructor(
-    private readonly cwd: string,
+    /** The agent's folder. */
+    readonly cwd: string,
     private readonly log: vscode.LogOutputChannel,
   ) {}
 

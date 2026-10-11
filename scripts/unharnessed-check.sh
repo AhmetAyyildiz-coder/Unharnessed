@@ -1,5 +1,5 @@
 #!/bin/sh
-# Unharnessed merge gate, isolated from the installed Prime Agent.
+# Unharnessed merge gate, isolated from your environment.
 #
 # usage: scripts/unharnessed-check.sh [gate-dir]
 #
@@ -11,15 +11,14 @@
 # codes are checked against their logs (scripts/unharnessed-check-failures.py):
 # a suite that fails without naming a test fails the gate.
 #
-# Isolation (UNHARNESSED_PLAN.md, "Incident"): the tests run under a
-# throwaway HOME in <gate-dir>, the agent's variables inherited from the
-# caller (UNHARNESSED_*, PRIME_AGENT_*, PI_*, UH_*, PA_*, XDG_*) are unset,
-# the kernel venv is built there from this checkout's runtime, the package dir points at the repo, any installed
-# prime-agent leaves the PATH, and processes the tests leave behind are
-# killed. The real ~/.prime (the installed Prime Agent) and ~/.unharnessed
-# are never written: the gate fails if either kernel venv changed, and lists
-# anything under them modified during the run (an installed daemon may
-# write there on its own).
+# Isolation: the tests run under a throwaway HOME in <gate-dir>, the
+# agent's variables inherited from the caller (UNHARNESSED_*, UH_*, XDG_*)
+# are unset, the kernel venv is built there from this checkout's runtime,
+# the package dir points at the repo, any installed unharnessed leaves the
+# PATH, and processes the tests leave behind are killed. The real ~/.prime
+# and ~/.unharnessed are never written: the gate fails if either kernel
+# venv changed, and lists anything under them modified during the run (an
+# installed daemon may write there on its own).
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
 GATE=${1:-${TMPDIR:-/tmp}/unharnessed-gate}
@@ -38,7 +37,7 @@ FAILED=0
 # An inherited agent dir, session dir, kernel python or XDG dir would steer
 # the tests to real data or another kernel: the gate sets its own below.
 for name in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' \
-    | grep -E '^(UNHARNESSED|PRIME_AGENT|PI|UH|PA|XDG)_'); do
+    | grep -E '^(UNHARNESSED|UH|XDG)_'); do
     echo "note: inherited $name unset" | tee -a "$LOG"
     unset "$name"
 done
@@ -76,7 +75,7 @@ export DO_NOT_TRACK=1 CARGO_TERM_COLOR=never
 CLEAN_PATH=
 old_ifs=$IFS; IFS=:
 for dir in $PATH; do
-    if [ -x "$dir/prime-agent" ] || [ -x "$dir/unharnessed" ]; then
+    if [ -x "$dir/unharnessed" ]; then
         echo "note: $dir left out of PATH (it holds an installed agent binary)" >> "$LOG"
         continue
     fi
@@ -110,7 +109,7 @@ cat "$GATE/python.log" >> "$LOG"
 # for the environment match and command lines only for the paths.)
 leftovers=$( { ps -AEww -o pid=,command= | grep -e "UNHARNESSED_GATE_RUN=$RUN_ID"
     ps -Aww -o pid=,command= | grep -e "$ROOT/target/" -e "$GATE/" -e '_unharnessed_gate'; } \
-    | grep -v -e '\.local/share/prime-agent' -e ' grep ' | awk '{ print $1 }' | sort -u)
+    | grep -v -e ' grep ' | awk '{ print $1 }' | sort -u)
 for pid in $leftovers; do
     { [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ]; } && continue
     echo "killed leftover: $(ps -ww -o pid=,command= -p "$pid")" | tee -a "$LOG"

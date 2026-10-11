@@ -108,6 +108,73 @@ const COMPACTION_SCRIPT = {
   responses: ["It is **42**.", "It is **48**.", "## Goal\nMultiply.\n\n## Done\n- 6 times 7 is 42."],
 };
 
+// The kernel panel scenario's model: a cell that leaves a server running in
+// the background and makes some variables, then an answer per wake.
+const KERNEL_CELL = [
+  "n = 42",
+  'cfg = {"model": "claude", "retries": 3}',
+  'server = bash("exec python3 -u -m http.server 0 --bind 127.0.0.1")',
+  "server.pid",
+  'fg = await bash("echo foreground-only")',
+].join("\n");
+const KERNEL_SCRIPT = {
+  responses: [
+    { content: [{ type: "toolCall", name: "ipython", arguments: { code: KERNEL_CELL } }] },
+    "The server runs.",
+    "It stopped.",
+    "Noted.",
+  ],
+};
+
+// The kernel restored scenario's model: a cell that makes a variable, then
+// an answer.
+const RESTORE_SCRIPT = {
+  responses: [{ content: [{ type: "toolCall", name: "ipython", arguments: { code: "n = 42" } }] }, "Kept."],
+};
+
+// The cells scenario's model: one cell of each kind, run for real, then an
+// answer. The written file's text holds code a cell would run: it is not
+// this cell's.
+const CELLS = [
+  'path = "src/app.ts"\ns = open(path).read()\nassert "a = 1" in s\ns = s.replace("a = 1", "a = 2")\nopen(path, "w").write(s)',
+  "code = r'''import { x } from \"y\";\nbash(\"npm publish\")  # not run\nconst s = open(\"z\").read();\n'''\nwith open(\"src/new.ts\", \"w\") as f:\n    f.write(code)",
+  'from pathlib import Path\nprint(Path("src/app.ts").read_text())',
+  "r = await bash(\"grep -rn 'a = 2' src\")\nprint(r.output)",
+  'r = await bash("echo built")\nprint(r.output)',
+  "print(6 * 7)",
+];
+const CELLS_SCRIPT = {
+  responses: [...CELLS.map((code) => ({ content: [{ type: "toolCall", name: "ipython", arguments: { code } }] })), "Done."],
+};
+
+// The cell results scenario's model: an edit whose text is not there,
+// then one that replaces two texts (one of them dedented, one with escapes),
+// then a read out of the agent's folder.
+const EDITS = [
+  'path = "src/app.ts"\ns = open(path).read()\nold = "export const b = 9;"\nassert old in s\nopen(path, "w").write(s.replace(old, "export const b = 2;"))',
+  [
+    "from textwrap import dedent",
+    'path = "src/app.ts"',
+    "s = open(path).read()",
+    'old = dedent("""\\',
+    "    export const b = 1;",
+    "    export const c = 2;",
+    '""")',
+    'new = dedent("""\\',
+    "    export const b = 2;",
+    "    export const c = 2;",
+    '""")',
+    "assert old in s",
+    "s = s.replace(old, new)",
+    "s = s.replace('from \"./a\";\\n', 'from \"./a\";\\nimport { d } from \"./d\";\\n')",
+    'open(path, "w").write(s)',
+  ].join("\n"),
+  'print(open("/etc/hosts").read()[:40])',
+];
+const EDITS_SCRIPT = {
+  responses: [...EDITS.map((code) => ({ content: [{ type: "toolCall", name: "ipython", arguments: { code } }] })), "Done."],
+};
+
 // A 1x1 PNG, as the panel attaches it.
 const PIXEL_DATA =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -453,6 +520,44 @@ const scenarios = [
     ],
   },
   {
+    name: "cells",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify(CELLS_SCRIPT) },
+    workspace: { "src/app.ts": "export const a = 1;\n" },
+    steps: [
+      "session: opened",
+      { post: { type: "send", text: "set a to 2", images: [] } },
+      // What each cell does, from its code: the panel's icon and words.
+      { wait: "chat: turn 1 cell: edit src/app.ts", timeout: 90_000 },
+      "chat: turn 1 cell: write src/new.ts",
+      "chat: turn 1 cell: read src/app.ts",
+      "chat: turn 1 cell: search `grep -rn 'a = 2' src`",
+      "chat: turn 1 cell: shell `echo built`",
+      "chat: turn 1 cell: python",
+      { wait: "chat: turn 1 done (end_turn); 6 tools, 1 text", timeout: 90_000 },
+    ],
+  },
+  {
+    name: "cell results",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify(EDITS_SCRIPT) },
+    workspace: { "src/app.ts": 'import { a } from "./a";\nexport const b = 1;\nexport const c = 2;\n' },
+    steps: [
+      "session: opened",
+      { post: { type: "send", text: "set b to 2", images: [] } },
+      // The lines an edit changes, from the texts its code replaces; the exception a failed one raised.
+      { wait: "chat: turn 1 cell: edit src/app.ts +1 -1", timeout: 90_000 },
+      { wait: "chat: turn 1 cell failed: AssertionError", timeout: 90_000 },
+      "chat: turn 1 cell: edit src/app.ts +2 -1",
+      { wait: "chat: turn 1 cell done", timeout: 90_000 },
+      // A file out of the agent's folder shows the folder it lies in.
+      "chat: turn 1 cell: read /etc/hosts (in /etc/)",
+      { wait: "chat: turn 1 done (end_turn); 3 tools, 1 text", timeout: 90_000 },
+    ],
+  },
+  {
     name: "mentions",
     binary,
     auth: { openai: { type: "api_key", key: "sk-e2e" } },
@@ -537,6 +642,52 @@ const scenarios = [
       "removal of local server ollama: done (ollama removed)",
       // Nothing usable again: the providers screen is the way in.
       { wait: "panel: providers", times: 2 },
+    ],
+  },
+  {
+    name: "kernel panel",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify(KERNEL_SCRIPT) },
+    steps: [
+      "session: opened",
+      { post: { type: "send", text: "start a server", images: [] } },
+      // The awaited one-shot is a variable's value, never a command of the list.
+      "kernel: 4 variables: n, cfg, server, fg",
+      { wait: "running: exec python3", capture: { server: "kernel: command ([0-9a-f]+) running: " } },
+      "chat: turn 1 done (end_turn)",
+      { wait: "listens on :", timeout: 30_000 },
+      { post: { type: "kernelPreview", name: "cfg" } },
+      "kernel: preview of cfg (code, 33 chars)",
+      { post: { type: "kernelPreview", name: "asyncio" } },
+      "kernel: no preview of asyncio: Unknown variable",
+      // Stopped from the panel: it ends, and the agent hears of it.
+      { post: { type: "kernelKill", id: "${server}" } },
+      "stopped",
+      "ended (stopped)",
+      "chat: turn 2 started by the agent (a background command ended)",
+      "chat: turn 2 done; 1 text",
+    ],
+  },
+  {
+    name: "kernel restored",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify(RESTORE_SCRIPT) },
+    steps: [
+      "session: opened",
+      { post: { type: "send", text: "keep n", images: [] } },
+      "kernel: 1 variables: n",
+      { wait: "chat: turn 1 done (end_turn)", timeout: 90_000 },
+      // A new conversation's agent closes this one, saving its kernel.
+      { post: { type: "send", text: "/new", images: [] } },
+      { wait: "session: opened", times: 2 },
+      { post: { type: "listChats" } },
+      { wait: "history: 1 conversation: ", capture: { chat: ': ([0-9a-f-]+) "keep n"' } },
+      // It opens: its kernel comes back, and a line says so under the conversation.
+      { post: { type: "openChat", id: "${chat}" } },
+      "chat: loaded 1 turn; ",
+      { wait: "chat: kernel restored", timeout: 90_000 },
     ],
   },
   {

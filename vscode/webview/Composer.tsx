@@ -14,6 +14,7 @@ import type {
   ChatCommand,
   ChatState,
   ConfigChange,
+  KernelState,
   Provider,
   QueuedMessage,
   SessionConfig,
@@ -39,6 +40,7 @@ import {
 } from "./icons";
 import { ProviderLogo } from "./logos";
 import { findPaths, knows, MentionText, nameOf, PathsContext, type Paths } from "./mentions";
+import { KernelTray } from "./Kernel";
 import { isLocal, ModelList, providerName } from "./models";
 import { PickMenu } from "./PickMenu";
 import { Popover } from "./Popover";
@@ -90,7 +92,8 @@ const KINDS: Record<ChatCommand["kind"], string> = {
 /**
  * The message box at the bottom of home: what is being written and the
  * images it carries, the messages waiting for the running turn, and the
- * session's pickers (the model, its reasoning effort, its fast mode).
+ * session's pickers (the model, its reasoning effort, its fast mode). Over
+ * it, the agent's background commands and REPL variables (Kernel.tsx).
  * Enter sends; while a turn runs the message waits, and stop ends the turn.
  * While there is a goal, its line tops the box, and its timer with pause and
  * play stands in for stop.
@@ -102,6 +105,7 @@ export function Composer({
   session,
   providers,
   chat,
+  kernel,
   images,
   draft,
   onDraft,
@@ -111,6 +115,7 @@ export function Composer({
   session: SessionState | null;
   providers: Provider[];
   chat: ChatState;
+  kernel: KernelState;
   images: ImageSettings;
   draft: Draft;
   onDraft: (update: (draft: Draft) => Draft) => void;
@@ -297,7 +302,9 @@ export function Composer({
     draft.images.length > 0 && !images.imageModel && !!current?.input.length && !current.input.includes("image");
 
   return (
-    <>
+    // The dock: the box, the waiting messages over it, the kernel's pills over them (laid over the conversation's end).
+    <div className="dock">
+      <KernelTray kernel={kernel} />
       {chat.queue.length > 0 && <Queue queue={chat.queue} />}
       <div
         ref={shell}
@@ -466,7 +473,7 @@ export function Composer({
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 

@@ -313,7 +313,9 @@ fn ipython_rich_output(result: &Value) -> Option<Value> {
         .get("diffs")
         .and_then(Value::as_array)
         .map(std::vec::Vec::len);
-    if attachments.is_empty() && diff_count.is_none() {
+    // The exception a failed cell raised, for the panel to name it.
+    let error_ename = details.get("errorEname").and_then(Value::as_str);
+    if attachments.is_empty() && diff_count.is_none() && error_ename.is_none() {
         return None;
     }
     let mut rich = serde_json::Map::new();
@@ -322,6 +324,9 @@ fn ipython_rich_output(result: &Value) -> Option<Value> {
     }
     if let Some(diff_count) = diff_count {
         rich.insert("diffCount".to_string(), json!(diff_count));
+    }
+    if let Some(error_ename) = error_ename {
+        rich.insert("errorEname".to_string(), json!(error_ename));
     }
     Some(Value::Object(rich))
 }

@@ -2,3 +2,5 @@
 - Vérifie avec des tests E2E sur le vrai binaire, et garde une trace rejouable (commande + sortie).
 - Ne modifie jamais un test existant pour le faire passer : corrige le code.
 - Si tu dois tester un morceau isolé, liste d'abord comment il peut échouer, puis code.
+- Pas d'E2E pour un changement purement visuel (CSS, texte) : l'utilisateur vérifie avec F5.
+- Un test unitaire reste bienvenu pour de la logique pure à nombreux cas (parser, formatage), si ses cas viennent de cette liste d'échecs et non du code.

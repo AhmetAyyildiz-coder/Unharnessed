@@ -63,7 +63,7 @@ pub trait ProviderHttp: Send + Sync {
 }
 
 /// The production transport: one reqwest client per request, bounded
-/// by the request timeout (the port's prime transport shape).
+/// by the request timeout.
 pub struct ReqwestProviderHttp;
 
 impl Default for ReqwestProviderHttp {

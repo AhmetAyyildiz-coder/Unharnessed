@@ -40,6 +40,8 @@ body {
   --uh-code: color-mix(in srgb, var(--uh-text) 2.25%, var(--uh-bg));
   /* Its band on top, a step greyer: it stands out from the page. */
   --uh-code-head: color-mix(in srgb, var(--uh-text) 7%, var(--uh-bg));
+  /* What sinks beneath it, a tone deeper than the page: what a cell printed. */
+  --uh-sunk: color-mix(in srgb, #000 22%, var(--uh-bg));
   --uh-ink-rgb: 236 236 238;
   --uh-text: #ececee;
   --uh-muted: rgb(var(--uh-ink-rgb) / 0.56);
@@ -70,6 +72,7 @@ body.vscode-high-contrast-light {
   --uh-bg: #f3f3f4;
   --uh-raised: #ffffff;
   --uh-raised-2: #ffffff;
+  --uh-sunk: color-mix(in srgb, var(--uh-text) 5%, var(--uh-bg));
   --uh-ink-rgb: 20 20 22;
   --uh-text: #141416;
   --uh-highlight: rgb(255 255 255 / 0);
@@ -1786,6 +1789,476 @@ body.vscode-high-contrast-light .composer-shell {
 }
 
 /* The messages waiting for the running turn, stacked over the box. */
+/* Over the box: a pill for the commands the agent left running in the
+   background, one for its REPL's variables (Kernel.tsx). A pill opens its
+   list above it; a row opens a command's last lines or a value's start. */
+
+.kernel-collapse {
+  display: grid;
+  flex: none;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 420ms var(--uh-soft),
+    opacity 300ms ease;
+}
+
+.kernel-collapse.is-shown {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.kernel-collapse > div {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Laid over the conversation's end, at the top of the dock (.dock): the
+   conversation runs on under it. As much room over the pills as between
+   them and the message box. */
+.dock > .kernel-collapse {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  z-index: 2;
+}
+
+.kernel-tray {
+  /* The light that runs through the letters, at its brightest. */
+  --uh-flash: #ffffff;
+  padding: 8px 12px;
+}
+
+/* Under the pills' band (their 27 px and 8 px each side), and 16 px over
+   it, the conversation fades into the page: solid by the pills' top, so
+   they stand on the page's colour. Out of the tray, which clips. */
+.dock::before {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  z-index: 1;
+  height: calc(16px + 27px + 16px);
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(transparent, var(--uh-bg) 24px);
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.dock:has(> .kernel-collapse.is-shown)::before {
+  opacity: 1;
+}
+
+body.vscode-light .kernel-tray,
+body.vscode-high-contrast-light .kernel-tray {
+  --uh-flash: var(--uh-text);
+}
+
+.kernel-stack {
+  display: flex;
+  flex-direction: column;
+  max-height: 300px;
+  margin-bottom: 6px;
+  padding: 4px;
+  overflow-y: auto;
+  background: var(--uh-raised);
+  border-radius: 18px;
+  box-shadow:
+    0 0 0 1px var(--uh-line),
+    inset 0 1px 0 var(--uh-highlight);
+}
+
+/* What the open list holds, said once at its top. */
+.kernel-title {
+  padding: 7px 11px 5px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--uh-text);
+}
+
+.kernel-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.kernel-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 27px;
+  padding: 0 9px 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--uh-muted);
+  cursor: pointer;
+  background: var(--uh-tint);
+  border: 0;
+  border-radius: 999px;
+  animation: uh-pill-pop 360ms var(--uh-spring);
+  transition:
+    color 220ms var(--uh-soft),
+    background-color 220ms var(--uh-soft),
+    scale 360ms var(--uh-spring);
+}
+
+.kernel-pill:hover,
+.kernel-pill.is-open {
+  color: var(--uh-text);
+  background: var(--uh-tint-strong);
+}
+
+.kernel-pill:active {
+  scale: 0.95;
+}
+
+/* The logo: cyan while there is something to see, a faint light around it. */
+.kernel-logo {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--uh-accent);
+  transition:
+    color 260ms var(--uh-soft),
+    filter 260ms var(--uh-soft);
+}
+
+.kernel-pill:not(.st-running) .kernel-logo {
+  color: var(--uh-muted);
+}
+
+.kernel-pill.st-running .kernel-logo {
+  filter: drop-shadow(0 0 1px rgb(var(--uh-accent-rgb) / 0.36)) drop-shadow(0 0 4px rgb(var(--uh-accent-rgb) / 0.135));
+}
+
+.kernel-pill.st-running:hover .kernel-logo {
+  filter: drop-shadow(0 0 1px rgb(var(--uh-accent-rgb) / 0.54)) drop-shadow(0 0 5px rgb(var(--uh-accent-rgb) / 0.27));
+}
+
+.kernel-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.kernel-done {
+  width: 14px;
+  height: 14px;
+  color: var(--uh-accent);
+  animation: uh-pill-pop 360ms var(--uh-spring);
+}
+
+.kernel-chev {
+  width: 13px;
+  height: 13px;
+  transition: rotate 280ms var(--uh-spring);
+}
+
+.kernel-pill.is-open .kernel-chev {
+  rotate: 180deg;
+}
+
+/* A row of a list: a command or a variable. */
+.kernel-row-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: uh-row-in 420ms var(--uh-soft);
+  transition:
+    grid-template-rows 420ms var(--uh-soft),
+    opacity 300ms ease;
+}
+
+.kernel-row-wrap.is-leaving {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.kernel-row-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.kernel-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 32px;
+  padding: 0 4px 0 11px;
+  cursor: pointer;
+  border-radius: 999px;
+  transition: background-color 200ms var(--uh-soft);
+}
+
+.kernel-row:hover,
+.kernel-row-inner.is-open .kernel-row {
+  background: var(--uh-tint);
+}
+
+/* How a command ended: nothing while it runs; then, ended well, a check
+   opens its room before the command and springs in. */
+.kernel-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 0;
+  height: 14px;
+  margin-right: -9px;
+  transition:
+    width 320ms var(--uh-soft),
+    margin 320ms var(--uh-soft);
+}
+
+.st-ok .kernel-mark {
+  width: 14px;
+  margin-right: 0;
+}
+
+.kernel-mark > svg {
+  grid-area: 1 / 1;
+  width: 14px;
+  height: 14px;
+  opacity: 0;
+  scale: 0.4;
+  transition:
+    opacity 200ms var(--uh-soft),
+    scale 520ms var(--uh-spring);
+}
+
+.kernel-mark-ok {
+  color: var(--uh-accent);
+}
+
+.st-ok .kernel-mark-ok {
+  opacity: 1;
+  scale: 1;
+}
+
+.kernel-cmd,
+.kernel-vname {
+  overflow: hidden;
+  font: 11.5px var(--uh-mono);
+  color: var(--uh-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 200ms var(--uh-soft);
+}
+
+.kernel-cmd {
+  flex: 1;
+  min-width: 0;
+}
+
+.kernel-row:hover :is(.kernel-cmd, .kernel-vname),
+.kernel-row-inner.is-open :is(.kernel-cmd, .kernel-vname) {
+  color: var(--uh-text);
+}
+
+.st-killed .kernel-cmd {
+  color: var(--uh-faint);
+}
+
+.kernel-port {
+  flex: none;
+  padding: 2px 7px;
+  font: 500 11px var(--uh-mono);
+  color: var(--uh-accent);
+  text-decoration: none;
+  background: rgb(var(--uh-accent-rgb) / 0.13);
+  border-radius: 999px;
+  transition: background-color 200ms var(--uh-soft);
+}
+
+.kernel-port:hover {
+  background: rgb(var(--uh-accent-rgb) / 0.24);
+}
+
+.kernel-time {
+  flex: none;
+  min-width: 26px;
+  font-size: 11.5px;
+  color: var(--uh-faint);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.kernel-x {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--uh-faint);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  transition:
+    color 180ms var(--uh-soft),
+    background-color 180ms var(--uh-soft),
+    scale 360ms var(--uh-spring);
+}
+
+.kernel-x:hover:not(:disabled) {
+  color: var(--uh-text);
+  background: var(--uh-tint-strong);
+}
+
+.kernel-x:active:not(:disabled) {
+  scale: 0.85;
+}
+
+.kernel-x:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.kernel-x svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* A variable: its name, its type, then its size or, for a short value, the
+   value itself. */
+.kernel-row.is-var {
+  padding-right: 12px;
+}
+
+.kernel-vname {
+  flex: none;
+  max-width: 45%;
+}
+
+.kernel-vtype {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--uh-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kernel-vmeta {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  font: 11px var(--uh-mono);
+  color: var(--uh-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.kernel-tail-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 360ms var(--uh-soft);
+}
+
+.kernel-row-inner.is-open .kernel-tail-wrap {
+  grid-template-rows: 1fr;
+}
+
+.kernel-tail-wrap > div {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.kernel-tail {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-height: 136px;
+  margin: 4px 4px 6px;
+  padding: 9px 11px;
+  overflow: hidden;
+  font: 11px/1.55 var(--uh-mono);
+  color: var(--uh-muted);
+  background: var(--uh-bg);
+  border-radius: 10px;
+}
+
+.kernel-tail > div {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kernel-tail > .is-new {
+  animation: uh-fade-in 260ms var(--uh-soft);
+}
+
+/* A value reads from its top; tables keep their columns. */
+.kernel-preview {
+  justify-content: flex-start;
+  overflow: auto;
+}
+
+.kernel-preview.is-code > div {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.kernel-preview.is-quiet {
+  color: var(--uh-faint);
+}
+
+/* The light that runs through the letters: grey, white, then cyan, flat
+   colours. A command that ends well keeps the cyan; a count or a variable
+   that changes goes back to grey. */
+.kernel-ch {
+  animation: uh-letter-light 900ms var(--uh-soft) both;
+  animation-delay: calc(var(--i) * 22ms);
+}
+
+.kernel-ch.is-back {
+  animation-name: uh-letter-light-back;
+  animation-duration: 1400ms;
+}
+
+@keyframes uh-letter-light {
+  0% {
+    color: var(--uh-muted);
+  }
+  30% {
+    color: var(--uh-flash);
+  }
+  65%,
+  100% {
+    color: var(--uh-accent);
+  }
+}
+
+@keyframes uh-letter-light-back {
+  0% {
+    color: var(--uh-muted);
+  }
+  30% {
+    color: var(--uh-flash);
+  }
+  60% {
+    color: var(--uh-accent);
+  }
+  100% {
+    color: var(--uh-muted);
+  }
+}
+
+@keyframes uh-pill-pop {
+  from {
+    opacity: 0;
+    scale: 0.85;
+  }
+}
+
+@keyframes uh-row-in {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
 .queue {
   display: flex;
   flex: none;
@@ -2177,20 +2650,49 @@ body.vscode-high-contrast-light .seti {
   overflow-x: hidden;
   overflow-y: auto;
   overflow-anchor: none;
+  transition: padding-bottom 420ms var(--uh-soft);
 }
 
-/* Back to the latest message, when scrolled away from it. */
-.to-end {
+/* The kernel's pills over its end (.dock > .kernel-collapse): at the end,
+   it still stops over their band, as far from it as from the box. */
+.screen:has(> .dock > .kernel-collapse.is-shown) .transcript {
+  padding-bottom: calc(22px + 27px + 16px);
+}
+
+/* The dock: the box and what stands over it, the conversation ending at
+   its top. */
+.dock {
+  position: relative;
+  flex: none;
+}
+
+/* Back to the latest message, when scrolled away from it: 8 px over the
+   message box, as the kernel's pills are, over the conversation, taking no
+   room of its own (`.icon-button`: over the tooltips' `position: relative`,
+   which had it push the conversation up by its height). No shadow: it
+   spread a dark band over what is below. */
+.icon-button.to-end {
   position: absolute;
-  bottom: 12px;
+  bottom: 8px;
   left: 50%;
   translate: -50% 0;
   color: var(--uh-text);
   background: var(--uh-raised-2);
-  box-shadow:
-    0 0 0 1px var(--uh-line),
-    0 12px 26px -10px var(--uh-shadow);
+  box-shadow: 0 0 0 1px var(--uh-line);
   animation: uh-pop 360ms var(--uh-spring);
+}
+
+/* With the kernel's pills over the box, it sits astride the top of their
+   band (27 px and 8 px each side), over its fade: half above, half in. */
+.screen:has(> .dock > .kernel-collapse.is-shown) .to-end {
+  bottom: calc(27px + 16px - 15px);
+  z-index: 3;
+}
+
+/* A pill's list open over them: it would cover it; it waits. */
+.screen:has(> .dock > .kernel-collapse.is-shown .kernel-collapse.is-shown) .to-end {
+  pointer-events: none;
+  opacity: 0;
 }
 
 .to-end:hover:not(:disabled) {
@@ -2204,6 +2706,12 @@ body.vscode-high-contrast-light .seti {
   gap: 11px;
   min-width: 0;
   animation: uh-rise 420ms var(--uh-soft);
+}
+
+/* Thoughts and cells one after another read as one list: as close as
+   cells in a row (4 px, .call-group.is-flat). */
+.turn > :is(.thought, .call-group) + :is(.thought, .call-group) {
+  margin-top: -7px;
 }
 
 .user-message {
@@ -2359,7 +2867,8 @@ body.vscode-high-contrast-light .seti {
   white-space: pre-wrap;
 }
 
-/* The line where the agent restarted: what is above it is forgotten. */
+/* The line where the agent restarted: what is above it is forgotten. The
+   same line says when its kernel came back. */
 .restart-line {
   display: flex;
   align-self: center;
@@ -2377,6 +2886,98 @@ body.vscode-high-contrast-light .seti {
   flex: none;
   width: 14px;
   height: 14px;
+}
+
+/* Where the kernel came back (Chat.tsx, KernelLine): braces around a dot,
+   its variables. Landing, a light comes on: the braces draw themselves,
+   the dot lights up cyan, then a light runs through the words, grey,
+   white, cyan, back to grey. Flat colours. Failed, no light: the braces
+   in red. */
+.kernel-line {
+  padding-left: 10px;
+  /* The white a light passes through (as on the message box). */
+  --uh-flash: #ffffff;
+}
+
+body.vscode-light .kernel-line,
+body.vscode-high-contrast-light .kernel-line {
+  --uh-flash: var(--uh-text);
+}
+
+/* A solid ink: a translucent stroke lightens where strokes cross. */
+.kernel-line .kernel-line-logo {
+  width: 16px;
+  height: 16px;
+  overflow: visible;
+  color: color-mix(in srgb, var(--uh-text) 56%, var(--uh-bg));
+}
+
+.kernel-line.is-failed .kernel-line-logo {
+  color: var(--uh-danger);
+}
+
+.kernel-line-logo .spark {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.kernel-words {
+  white-space: pre;
+}
+
+.kernel-line.is-landing {
+  animation: uh-rise 420ms var(--uh-soft) both;
+}
+
+/* Drawn as the wordmark's U is (uh-draw). */
+.kernel-line.is-landing:not(.is-failed) .kernel-line-logo .draw {
+  stroke-dasharray: 1;
+  animation: uh-draw 760ms var(--uh-soft) both;
+}
+
+.kernel-line.is-landing:not(.is-failed) .kernel-line-logo .draw + .draw {
+  animation-delay: 120ms;
+}
+
+.kernel-line.is-landing:not(.is-failed) .kernel-line-logo .spark {
+  animation: uh-spark 620ms var(--uh-spring) 640ms both;
+}
+
+@keyframes uh-spark {
+  0% {
+    opacity: 0;
+    scale: 0;
+    color: var(--uh-accent);
+  }
+  40% {
+    opacity: 1;
+    scale: 1.6;
+    color: var(--uh-accent);
+  }
+  70% {
+    scale: 1;
+    color: var(--uh-accent);
+  }
+}
+
+.kernel-line.is-landing:not(.is-failed) .letter {
+  animation: uh-letter-wake 1100ms var(--uh-soft) both;
+  animation-delay: calc(820ms + var(--i) * 26ms);
+}
+
+@keyframes uh-letter-wake {
+  0% {
+    color: var(--uh-faint);
+  }
+  25% {
+    color: var(--uh-flash);
+  }
+  55% {
+    color: var(--uh-accent);
+  }
+  100% {
+    color: var(--uh-muted);
+  }
 }
 
 /* A command's answer, a goal's change. */
@@ -2592,62 +3193,6 @@ body.vscode-high-contrast-light .seti {
   margin-bottom: 4px;
 }
 
-/* Folds: the reasoning and the cells, shut until asked. */
-.fold {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  min-width: 0;
-  padding: 0;
-  font-size: 12.5px;
-  color: var(--uh-muted);
-  text-align: left;
-  cursor: pointer;
-  background: transparent;
-  border: 0;
-  transition: color 180ms var(--uh-soft);
-}
-
-.fold:hover {
-  color: var(--uh-text);
-}
-
-.fold:focus-visible {
-  outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
-  outline-offset: 2px;
-  border-radius: 8px;
-}
-
-.fold-chevron {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  transition: rotate 280ms var(--uh-spring);
-}
-
-.is-open > .fold .fold-chevron {
-  rotate: 90deg;
-}
-
-.fold-title {
-  flex: none;
-  font-weight: 500;
-}
-
-.fold-preview {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--uh-faint);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.fold-preview.is-mono {
-  font: 11.5px var(--uh-mono);
-}
-
 /* The model's reasoning (after aicss's thinking block): open while it
    streams, its newest words at the bottom of a window under a fade, then
    folded into "Thought for 6s". Quieter than the answer: no surface,
@@ -2664,7 +3209,9 @@ body.vscode-high-contrast-light .seti {
   align-self: flex-start;
   align-items: center;
   gap: 5px;
-  min-height: 20px;
+  /* A cell's line (.call-head: 13 px at 1.6, 1 px above and below), so the
+     two keep one rhythm. */
+  min-height: calc(13px * 1.6 + 2px);
   padding: 0;
   font-size: 12.5px;
   color: var(--uh-faint);
@@ -2725,23 +3272,44 @@ body.vscode-high-contrast-light .seti {
   scale: 0.6;
 }
 
+/* The column the cells' icons stand in (.call-icon: 18 px, then 7 px), so
+   the word lines up with their verbs: the orb lights in it while the model
+   thinks and goes out there, the chevron comes in once it is over; the
+   word stays put. */
+.thought-slot {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  margin-right: 2px;
+}
+
+.thought-slot > * {
+  grid-area: 1 / 1;
+}
+
+.thought-slot .orb.is-leaving {
+  margin-right: 0;
+}
+
 .thought-verb {
   color: var(--uh-muted);
   transition: color 180ms var(--uh-soft);
 }
 
+/* Pointing at the word, down once open, as a cell's chevron turns. */
 .thought-chevron {
   flex: none;
   width: 13px;
   height: 13px;
-  rotate: 90deg;
+  animation: uh-fade-in 320ms var(--uh-soft);
   transition:
     rotate 280ms var(--uh-soft),
     color 180ms var(--uh-soft);
 }
 
 .thought-head[aria-expanded="true"] .thought-chevron {
-  rotate: -90deg;
+  rotate: 90deg;
 }
 
 .thought-head:not(.is-still):hover .thought-verb,
@@ -2803,95 +3371,436 @@ body.vscode-high-contrast-light .seti {
   font-weight: 600;
 }
 
-/* A cell the agent ran: a soft card, its head saying what ran and how. */
-.tool {
+/* A cell the agent ran: a line on the page, no card, at the answer's size.
+   It says what the cell did; a click opens what it shows. */
+.call {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-  background: var(--uh-raised);
-  border-radius: 14px;
-  box-shadow:
-    0 0 0 1px var(--uh-line),
-    inset 0 1px 0 var(--uh-highlight);
+  font-size: 13px;
+  line-height: 1.6;
+  animation: uh-fade-in 320ms var(--uh-soft) both;
 }
 
-.tool-head {
-  gap: 8px;
-  min-height: 34px;
-  padding: 0 11px;
+/* Cells in a row read as one list. */
+.call + .call {
+  margin-top: -7px;
 }
 
-.tool-status {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 16px;
-  height: 16px;
+/* The line, as wide as its words, the chevron right after them. On hover
+   only its ink brightens: no surface. */
+.call-head {
+  display: flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 1px 0;
+  font: inherit;
+  color: var(--uh-muted);
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
 }
 
-.tool-status svg {
-  width: 14px;
-  height: 14px;
+.call-head .call-verb,
+.call-head .call-target,
+.call-head .call-meta {
+  transition: color 180ms var(--uh-soft);
 }
 
-.tool.is-failed .tool-status {
-  color: var(--uh-danger);
+.call-head:hover .call-icon {
+  color: color-mix(in srgb, var(--uh-text) 56%, var(--uh-bg));
 }
 
-.tool-icon {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  opacity: 0.8;
-}
-
-.tool-title {
-  flex: none;
-  font-weight: 500;
+.call-head:hover .call-verb,
+.call-head:hover .call-target {
   color: var(--uh-text);
 }
 
-.tool-head .fold-chevron {
-  margin-left: auto;
+.call-head:hover .call-meta {
+  color: var(--uh-muted);
 }
 
-.tool-body {
+/* Solid inks, the greys mixed into the page: a translucent stroke lightens
+   where the logo's strokes cross. */
+.call-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: color-mix(in srgb, var(--uh-text) 34%, var(--uh-bg));
+  transition: color 220ms var(--uh-soft);
+}
+
+/* The weight of the words around it, as "Thought" has. */
+.call-verb {
+  flex: none;
+  color: var(--uh-muted);
+}
+
+/* The icon and the verb: one piece, which one light crosses while the cell runs. */
+.call-lead {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+}
+
+/* The verb and what it acts on read as one phrase: a word space between them, not the line's gap. */
+.call-lead + .call-target {
+  margin-left: -2px;
+}
+
+.call-target {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: rgb(var(--uh-ink-rgb) / 0.82);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A command or a line of code: the answer's inline code, without the pill. */
+.call-target.is-mono {
+  font: 0.9em var(--uh-mono);
+}
+
+/* A file: a read's file type icon, small; the folder it lies in when out of
+   the agent's (fainter, and cut first when the line is short); its name. */
+.call-target.is-file {
+  display: flex;
+  align-items: center;
+}
+
+.call-target .seti {
+  flex: none;
+  margin-right: 4px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.call-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--uh-faint);
+  text-overflow: ellipsis;
+}
+
+.call-file {
+  flex: none;
+}
+
+.call-meta {
+  flex: none;
+  color: var(--uh-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.call-meta .sep {
+  margin: 0 5px;
+}
+
+.call-meta .add {
+  color: rgb(var(--uh-accent-rgb) / 0.85);
+}
+
+.call-meta .del {
+  color: rgb(var(--uh-danger-rgb) / 0.85);
+}
+
+.call-chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-left: -2px;
+  color: var(--uh-faint);
+  opacity: 0;
+  transition:
+    opacity 180ms var(--uh-soft),
+    rotate 280ms var(--uh-spring);
+}
+
+.call-head:hover .call-chevron,
+.call.is-open .call-chevron {
+  opacity: 1;
+}
+
+.call.is-open .call-chevron {
+  rotate: 90deg;
+}
+
+/* Running: the icon and the verb shine as "Working" does, one band of light
+   sweeping across both (a mask over the pair, not one per part). */
+@keyframes call-shine {
+  0%,
+  8% {
+    mask-position: 100% 0;
+  }
+  85%,
+  100% {
+    mask-position: 0% 0;
+  }
+}
+
+.call.is-live > .call-head .call-lead {
+  mask-image: linear-gradient(90deg, rgb(0 0 0 / 0.56) 38%, #000 50%, rgb(0 0 0 / 0.56) 62%);
+  mask-size: 300% 100%;
+  animation: call-shine 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.call.is-live > .call-head .call-icon,
+.call.is-live > .call-head .call-verb {
+  color: var(--uh-text);
+}
+
+/* Failed: the icon and the verb say it. */
+.call.is-failed .call-icon,
+.call.is-failed .call-verb,
+.call.is-failed .call-head:hover .call-verb {
+  color: var(--uh-danger);
+}
+
+/* Cells in a row fold into one line: how many ran, the lines their edits
+   changed (Chat.tsx, CallRun). While they run they lie flat, as the
+   turn's other things do; once the agent thinks or writes again the line
+   grows in as they fold away under it and slide to its indent, in one
+   move. */
+.call-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  --form: 520ms var(--uh-soft);
+}
+
+.call-head-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--form),
+    opacity 380ms ease 120ms;
+}
+
+/* Folded, a row's padding would still hold it open by its height: the
+   padded parts (the line's, the list's) sit in a bare box that folds to
+   nothing (.call-fold > div too). */
+.call-head-wrap > div {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.call-group.is-flat > .call-head-wrap {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.call-group.is-open > .call-head-wrap .call-chevron {
+  opacity: 1;
+  rotate: 90deg;
+}
+
+.call-group > .call-fold {
+  transition:
+    grid-template-rows var(--form),
+    opacity 340ms ease;
+}
+
+.call-group.is-open > .call-fold {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+/* Its cells, under its words, keeping their own icons. */
+.call-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 0 1px 25px;
+  transition:
+    padding var(--form),
+    gap var(--form);
+}
+
+.call-list > .call + .call {
+  margin-top: 0;
+  transition: margin-top var(--form);
+}
+
+/* Flat, the turn's spacing (.turn), cells in a row closer. */
+.call-group.is-flat .call-list {
+  gap: 11px;
+  padding: 0;
+}
+
+.call-group.is-flat .call-list > .call + .call {
+  margin-top: -7px;
+}
+
+/* What a click opens: folds by its rows, so what follows slides with it. */
+.call-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 320ms var(--uh-soft),
+    opacity 220ms ease;
+}
+
+.call.is-open .call-fold {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.call-fold > div {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* What a cell opens on: its code, what it changed, what it printed. No labels. */
+.call-open {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 0 7px 7px;
-  animation: uh-fade-in 260ms var(--uh-soft);
+  margin-top: 6px;
 }
 
-.tool-code,
-.tool-output {
-  max-height: 320px;
+/* One sheet, the answer's code-block veil, no band; what came out of the
+   code sinks a tone deeper beneath it. */
+.call-sheet {
+  position: relative;
+  overflow: hidden;
+  background: var(--uh-code);
+  border-radius: 12px;
+}
+
+.call-sheet .is-sunk {
+  background: var(--uh-sunk);
+}
+
+/* Copy shows when the pointer is on the sheet. */
+.call-copy.icon-button {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 26px;
+  height: 26px;
+  opacity: 0;
+  transition:
+    opacity 180ms var(--uh-soft),
+    color 220ms var(--uh-soft),
+    background-color 220ms var(--uh-soft);
+}
+
+.call-copy svg {
+  width: 14px;
+  height: 14px;
+}
+
+.call-sheet:hover .call-copy,
+.call-copy:focus-visible {
+  opacity: 1;
+}
+
+.call-code {
+  max-height: 260px;
   margin: 0;
-  padding: 9px 11px;
+  padding: 10px 13px;
   overflow: auto;
-  font: 11.5px/1.55 var(--uh-mono);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  border-radius: 10px;
-}
-
-.tool-code {
+  font: 11.5px/1.6 var(--uh-mono);
   color: var(--uh-text);
-  background: var(--uh-tint);
+  white-space: pre;
+  tab-size: 4;
 }
 
-.tool-output {
+/* Python, quietly: the keywords in the cyan, strings a step back, comments faint. */
+.py-k {
+  color: rgb(var(--uh-accent-rgb) / 0.9);
+}
+
+.py-s {
+  color: rgb(var(--uh-ink-rgb) / 0.6);
+}
+
+.py-c {
+  font-style: italic;
+  color: var(--uh-faint);
+}
+
+.call-lines {
+  max-height: 240px;
+  margin: 0;
+  padding: 9px 0;
+  overflow: auto;
+  font: 11.5px/1.6 var(--uh-mono);
+  color: var(--uh-text);
+}
+
+.call-lines.is-output {
   color: var(--uh-muted);
-  background: var(--uh-bg);
 }
 
-.tool.is-failed .tool-output {
+.call-lines.is-error {
   color: var(--uh-danger);
 }
 
-.tool-extras {
-  margin: 0;
-  padding: 0 4px;
-  font-size: 11.5px;
+.call-line {
+  min-width: max-content;
+  padding: 0 13px;
+  white-space: pre;
+}
+
+.call-line .gutter {
+  display: inline-block;
+  width: 14px;
   color: var(--uh-faint);
+  user-select: none;
+}
+
+.call-line.is-add {
+  background: rgb(var(--uh-accent-rgb) / 0.08);
+}
+
+.call-line.is-add .gutter {
+  color: var(--uh-accent);
+}
+
+.call-line.is-del {
+  color: var(--uh-muted);
+  background: rgb(var(--uh-danger-rgb) / 0.07);
+}
+
+.call-line.is-del .gutter {
+  color: var(--uh-danger);
+}
+
+/* The changed file: its own icon and name, its +/−, as a line at the top of the diff. */
+.call-diff-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 13px 0;
+  font-size: 12px;
+  color: var(--uh-muted);
+}
+
+.call-diff-head .seti {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.call-diff-head .call-meta {
+  margin-left: 2px;
+  font-size: 11.5px;
+}
+
+.call-diff-head + .call-lines {
+  padding-top: 6px;
 }
 
 /* The answer as it streams (Markdown.tsx, wave.ts): one front moves
@@ -3044,6 +3953,10 @@ body.vscode-high-contrast-light .seti {
 .md td {
   padding: 5px 11px;
   text-align: left;
+  /* A word stays whole. Breakable anywhere (.md), a column's narrowest is
+     one letter, so the table squeezed the short ones (the first, often)
+     to mid-word breaks; now it scrolls sideways instead. */
+  overflow-wrap: break-word;
 }
 
 .md th {

@@ -401,7 +401,7 @@ fn ts_toolresult_entry_round_trips() {
         Some(serde_json::json!({
             "durationMs": 10,
             "status": "ok",
-            "stdout": "/root/prime-agent-rs\n['.git', 'MISSION.md', 'README.md', 'WATCHDOG.md']\nTrue\n",
+            "stdout": "/root/project\n['.git', 'MISSION.md', 'README.md', 'WATCHDOG.md']\nTrue\n",
             "stderr": "",
             "kernelRestarted": false
         }))

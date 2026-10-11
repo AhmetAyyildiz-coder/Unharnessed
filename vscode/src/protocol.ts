@@ -233,6 +233,29 @@ export type ChatCommand = {
   kind: "command" | "prompt" | "skill" | "panel";
 };
 
+/**
+ * What a Python cell does, guessed from its code (cell.ts): it edits a
+ * file, writes one, runs a command, looks for files, reads them, or none
+ * of these.
+ */
+export type Cell = {
+  kind: "edit" | "write" | "shell" | "search" | "read" | "python";
+  /** The files it edits, writes or reads, as its code names them. */
+  files: string[];
+  /** Those of `files` out of the agent's folder, and the folder each lies in, as shown (cell.ts, awayDir). */
+  away?: Record<string, string>;
+  /** The command it runs: the first line of the first one. */
+  command?: string;
+  /**
+   * An edit's changes, from the texts its code replaces (no line of the file
+   * around them), and how many lines it adds and removes.
+   */
+  diff?: { lines: DiffLine[]; added: number; removed: number };
+};
+
+/** A line of a diff: kept, removed or added; `…` stands for lines left out. */
+export type DiffLine = [" " | "-" | "+" | "…", string];
+
 /** What a turn shows, in the order the agent did it. */
 export type TurnItem =
   /**
@@ -250,9 +273,12 @@ export type TurnItem =
       /** The cell's code, or the tool's input as JSON. */
       input: string;
       output?: string;
-      /** Images the cell loaded into the context, diffs it showed. */
+      /** What a Python cell does; absent on another tool. */
+      cell?: Cell;
+      /** Images the cell loaded into the context. */
       images?: number;
-      diffs?: number;
+      /** The exception a failed cell raised: `AssertionError`. */
+      error?: string;
     }
   /**
    * The conversation compacted into a summary: on its own (`auto`), or by
@@ -281,9 +307,16 @@ export type TurnHead = {
   rewindTo?: string;
 };
 
-/** A turn, or the line where the agent restarted: it remembers nothing above it. */
-export type EntryHead = TurnHead | { kind: "restart"; id: number };
-export type ChatEntry = (TurnHead & { items: TurnItem[] }) | { kind: "restart"; id: number };
+/**
+ * The line where the agent restarted: it remembers nothing above it; or
+ * where its kernel came back with the conversation's variables, or could
+ * not, `at` (`Date.now()`) when it did.
+ */
+export type ChatLine = { kind: "restart"; id: number } | { kind: "kernel"; id: number; restored: boolean; at: number };
+
+/** A turn, or a line between turns. */
+export type EntryHead = TurnHead | ChatLine;
+export type ChatEntry = (TurnHead & { items: TurnItem[] }) | ChatLine;
 
 /** One saved conversation of the panel's folder, as the agent's `session/list` gives it. */
 export type SavedChat = {
@@ -344,6 +377,52 @@ export type Goal = {
   updatedAt?: number;
 };
 
+/**
+ * A command the agent left running in the kernel (`h = bash(cmd)`), or that
+ * ended since, as the agent's `_unharnessed/kernel/changed` gives it. A
+ * one-shot `await bash(cmd)` is never one.
+ */
+export type KernelCommand = {
+  id: string;
+  command: string;
+  /** ISO 8601. */
+  startedAt: string;
+  status: "running" | "finished";
+  exitCode: number | null;
+  /** Stopped by `kill()`: from the panel, or by the agent. */
+  killed: boolean;
+  /** The TCP ports it listens on, while it runs. */
+  ports: number[];
+  /** How long it ran, once finished. */
+  durationMs?: number;
+};
+
+/**
+ * One variable the agent made in its REPL: its name and type, then the
+ * value itself when short, a function's signature, or a size. `rev` changes
+ * when the name is bound to another object.
+ */
+export type KernelVariable = {
+  name: string;
+  type: string;
+  rev: string;
+  value?: string;
+  signature?: string;
+  len?: number;
+  unit?: "items" | "keys" | "chars" | "bytes";
+  shape?: number[];
+  dtype?: string;
+};
+
+/** The kernel on the panel: the commands still on its list, the variables. */
+export type KernelState = { commands: KernelCommand[]; variables: KernelVariable[] };
+
+/** A value's start, as the kernel formats it: `text` wraps, `code` keeps its columns. */
+export type VariablePreview =
+  | { text: string; style: "code" | "text"; truncated: boolean }
+  /** `busy`: a cell runs, the value is not read meanwhile. */
+  | { error: string };
+
 export type ChatState = {
   entries: ChatEntry[];
   /** A turn runs: one the panel sent, or one the agent started. */
@@ -380,8 +459,13 @@ export type HostMessage =
       settings: SettingsState;
       chat: ChatState;
       history: HistoryState;
+      kernel: KernelState;
     }
   | { type: "chat"; chat: ChatState }
+  | { type: "kernel"; kernel: KernelState }
+  /** A command's last lines; `null` when the agent could not give them. */
+  | { type: "kernelTail"; id: string; tail: string | null }
+  | { type: "kernelPreview"; name: string; preview: VariablePreview }
   | { type: "history"; history: HistoryState }
   | { type: "chatPatch"; patch: ChatPatch }
   /** The waiting messages, back in the message box after a stop. */
@@ -473,6 +557,13 @@ export type WebviewMessage =
   | { type: "openChat"; id: string }
   | { type: "deleteChat"; id: string }
   /** A link in a message: web pages open in the browser. */
-  | { type: "openLink"; url: string };
+  | { type: "openLink"; url: string }
+  /** A background command's last lines, as `kernelTail`. */
+  | { type: "kernelTail"; id: string }
+  | { type: "kernelKill"; id: string }
+  /** A finished command leaves the list. */
+  | { type: "kernelDismiss"; id: string }
+  /** A variable's value, as `kernelPreview`. */
+  | { type: "kernelPreview"; name: string };
 
 export type Screen = "splash" | "status" | "providers" | "login" | "settings";

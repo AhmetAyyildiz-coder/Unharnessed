@@ -396,12 +396,12 @@ mod tests {
         storage
             .with_lock(SettingsScope::Global, &mut |current| {
                 assert_eq!(current, None);
-                Some(r#"{ "theme": "prime" }"#.to_string())
+                Some(r#"{ "theme": "unharnessed" }"#.to_string())
             })
             .unwrap();
         storage
             .with_lock(SettingsScope::Global, &mut |current| {
-                assert!(current.unwrap().contains("prime"));
+                assert!(current.unwrap().contains("unharnessed"));
                 None
             })
             .unwrap();
@@ -491,19 +491,19 @@ mod tests {
         storage
             .with_lock(SettingsScope::Global, &mut |current| {
                 assert_eq!(current, None);
-                Some(r#"{ "theme": "prime" }"#.to_string())
+                Some(r#"{ "theme": "unharnessed" }"#.to_string())
             })
             .unwrap();
         assert_eq!(
             storage.read(SettingsScope::Global).unwrap().as_deref(),
-            Some(r#"{ "theme": "prime" }"#)
+            Some(r#"{ "theme": "unharnessed" }"#)
         );
         // A second manager over the same paths reads the same content
         // (per-instance state is untouched; the document is shared).
         let other = FileSettingsStorage::new(dir.path().join("cwd"), dir.path().join("agent"));
         assert_eq!(
             other.read(SettingsScope::Global).unwrap().as_deref(),
-            Some(r#"{ "theme": "prime" }"#)
+            Some(r#"{ "theme": "unharnessed" }"#)
         );
         // An external in-place rewrite changes the mtime: the identity no
         // longer matches and the read re-reads fresh.
@@ -542,12 +542,12 @@ mod tests {
         storage
             .with_lock(SettingsScope::Global, &mut |current| {
                 let _ = current;
-                Some(r#"{ "theme": "prime" }"#.to_string())
+                Some(r#"{ "theme": "unharnessed" }"#.to_string())
             })
             .unwrap();
         assert_eq!(
             storage.read(SettingsScope::Global).unwrap().as_deref(),
-            Some(r#"{ "theme": "prime" }"#)
+            Some(r#"{ "theme": "unharnessed" }"#)
         );
         assert_eq!(storage.read(SettingsScope::Project).unwrap(), None);
     }
@@ -566,10 +566,10 @@ mod tests {
         let storage = FileSettingsStorage::new(cwd.path(), relative.clone());
         let written = storage.with_lock(SettingsScope::Global, &mut |current| {
             assert_eq!(current, None);
-            Some(r#"{ "theme": "prime" }"#.to_string())
+            Some(r#"{ "theme": "unharnessed" }"#.to_string())
         });
         let read = storage.with_lock(SettingsScope::Global, &mut |current| {
-            assert!(current.unwrap().contains("prime"));
+            assert!(current.unwrap().contains("unharnessed"));
             None
         });
         std::env::set_current_dir(previous).unwrap();

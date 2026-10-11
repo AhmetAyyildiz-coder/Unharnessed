@@ -1,9 +1,7 @@
 # AGENTS.md
 
-Development rules for Unharnessed, a stripped-down fork of Prime Agent (Rust). The upstream
-rules below still apply unless a section says otherwise; `UNHARNESSED_PLAN.md` records what
-was removed and why. Every contributor (human or agent) must read this before working on
-this repo.
+Development rules for Unharnessed (Rust). Every contributor (human or agent) must read this
+before working on this repo.
 
 ## Style and structure
 
@@ -91,15 +89,15 @@ The product is Unharnessed. User-visible surfaces (docs, READMEs, CLI help text,
 messages, code comments that quote user-facing strings) say Unharnessed, and the wire
 identifiers follow: the `unharnessed` binary, the `UNHARNESSED_*` environment variables,
 the `unharnessed` ACP `_meta` namespace. Prime names stay only where they name Prime's
-own services or the upstream origin:
+own services:
 
 - the Prime Inference provider (`prime-inference`, `api.primeintellect.ai`,
   `app.primeintellect.ai`) and `~/.prime/config.json`, the `prime` CLI's file that its
   login reads;
 - the model and MCP catalogs in `PrimeIntellect-ai/prime-agent-catalog`;
-- the origin note in README.md and LICENSE (MIT).
+- the copyright notice in LICENSE (the MIT license requires it).
 
-Settings keys and provider IDs stay unchanged, so files migrated from an upstream install
+Settings keys and provider IDs stay unchanged, so existing settings and auth files
 keep working.
 
 ## Surface contract

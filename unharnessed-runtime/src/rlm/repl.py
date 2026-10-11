@@ -38,7 +38,7 @@ DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES = 16 * 1024 * 1024
 
 # Plain ASCII, never a pickle start: _restore_state sniffs it to tell v2 framed
 # payloads from legacy (single dill-pickled dict) ones.
-_SNAPSHOT_MAGIC = b"PRIME-AGENT-KERNEL-SNAPSHOT-V2\n"
+_SNAPSHOT_MAGIC = b"UNHARNESSED-KERNEL-SNAPSHOT-V1\n"
 
 # Stream writes must fit one protocol frame: the host buffers whole lines
 # before its per-execution truncation, and raw fd writes already arrive as
@@ -66,6 +66,8 @@ _protocol_fd: int = -1
 _write_lock = threading.Lock()
 _loop: asyncio.AbstractEventLoop | None = None
 _serve_task: asyncio.Task[Any] | None = None
+# The cells' namespace, for the host's out-of-band variable requests.
+_user_ns: dict[str, Any] | None = None
 
 
 class _CellExecution:
@@ -1456,6 +1458,32 @@ def _handle_bash_activity(req: dict[str, Any]) -> None:
         _send({"event": "done", "id": rid, "status": "error", "reason": str(exc)})
 
 
+def _handle_variables(req: dict[str, Any]) -> None:
+    """Out-of-band, on a thread of its own: the panel's list of variables
+    (`variables`) or one value's preview (`variable_preview`). A list reads
+    only names, types and sizes; a value is formatted only between cells,
+    and a slow `__repr__` must not hold up the request reader."""
+    from .variables import describe, lookup, preview
+
+    rid = req["id"]
+    try:
+        if _user_ns is None:
+            raise RuntimeError("The kernel is not serving")
+        if req["type"] == "variables":
+            response: dict[str, Any] = {"variables": describe(_user_ns, _ALWAYS_SKIP)}
+        else:
+            with _interrupt_lock:
+                busy = bool(_inflight)
+            if busy:
+                raise RuntimeError("busy")
+            response = preview(lookup(_user_ns, _ALWAYS_SKIP, req["name"]))
+    except Exception as exc:  # noqa: BLE001 - every failure is this request's answer
+        reason = exc.args[0] if exc.args and isinstance(exc.args[0], str) else type(exc).__name__
+        _send({"event": "done", "id": rid, "status": "error", "reason": reason[:300]})
+        return
+    _send({"event": "done", "id": rid, "status": "ok", **response})
+
+
 def _cap_bash_activity_frame(frame: dict[str, Any]) -> None:
     """Keep the serialized response under the 16 KiB wire cap.
 
@@ -1497,6 +1525,8 @@ _REQUIRED_FIELDS = {
     # string-required field; the handler validates the list itself.
     "mcp_status": ("id",),
     "bash_activity": ("id", "action"),
+    "variables": ("id",),
+    "variable_preview": ("id", "name"),
     "shutdown": (),
 }
 
@@ -1549,6 +1579,13 @@ def _handle_request_line(raw: bytes, queue: asyncio.Queue[dict[str, Any]]) -> No
         # Like host_reply, this bypasses the cell FIFO. Handles remain owned
         # by the runtime, not by an arbitrary PID supplied by the client.
         _handle_bash_activity(req)
+        return
+    if rtype in ("variables", "variable_preview"):
+        if len(req["id"]) > 256 or len(req.get("name") or "") > 256:
+            _protocol_error("variable request ids and names must stay under 256 characters")
+            return
+        # Like bash_activity, this bypasses the cell FIFO.
+        threading.Thread(target=_handle_variables, args=(req,), daemon=True).start()
         return
     if rtype in ("execute", "snapshot", "restore"):
         with _interrupt_lock:
@@ -1683,7 +1720,7 @@ def _setup_fds() -> int:
 
 
 def main() -> None:
-    global _loop, _serve_task
+    global _loop, _serve_task, _user_ns
     stdin_fd = _setup_fds()
     _start_owner_watchdog()
 
@@ -1694,6 +1731,7 @@ def main() -> None:
     user_module = types.ModuleType("__main__")
     user_module.__dict__["__builtins__"] = __builtins__
     sys.modules["__main__"] = user_module
+    _user_ns = user_module.__dict__
 
     _loop = asyncio.new_event_loop()
     asyncio.set_event_loop(_loop)

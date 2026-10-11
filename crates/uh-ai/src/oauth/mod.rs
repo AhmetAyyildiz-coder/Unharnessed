@@ -81,7 +81,7 @@ pub trait CodexHttp: Send + Sync {
 }
 
 /// The production transport: one reqwest client per request, bounded by
-/// the request timeout (the port's prime transport shape).
+/// the request timeout.
 pub struct ReqwestCodexHttp;
 
 impl Default for ReqwestCodexHttp {

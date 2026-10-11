@@ -1,8 +1,11 @@
 import type * as vscode from "vscode";
 import { errorText, type Agent, type SavedSession } from "./agent";
+import { homedir } from "node:os";
+import { awayDir, readCell } from "./cell";
 import { withoutLinks, type Files } from "./files";
 import type {
   Attachment,
+  Cell,
   ChatCommand,
   ChatEntry,
   ChatPatch,
@@ -22,6 +25,8 @@ import type { Session } from "./session";
 const FLUSH_MS = 40;
 /** A tool's output past this is cut for the panel; the agent has it all. */
 const OUTPUT_LIMIT = 20_000;
+/** The agent's kernel came back (crates/uh-daemon/src/acp/kernel.rs). */
+const RESTORED = "_unharnessed/kernel/restored";
 
 /** The panel's own commands, beside the agent's. */
 const PANEL_COMMANDS: ChatCommand[] = [{ name: "new", description: "Start a new conversation", kind: "panel" }];
@@ -52,7 +57,7 @@ type Meta = {
   turnEnd?: { state: "done" | "cancelled" | "failed"; error?: string };
   compaction?: { tokensBefore?: number; summary?: string };
   goal?: { status: string; objective?: string; createdAt?: number; updatedAt?: number };
-  ipython?: { attachments?: unknown[]; diffCount?: number };
+  ipython?: { attachments?: unknown[]; errorEname?: string };
   usage?: Usage;
 };
 
@@ -114,6 +119,8 @@ export class Chat {
   private run = 0;
   /** A saved conversation comes back: the panel gets it once it is whole. */
   private loading = false;
+  /** The kernel came back while the conversation did: its line goes after it. */
+  private restored: boolean | undefined;
   private dirtyHeads = new Set<number>();
   private dirtyItems = new Map<number, Set<number>>();
   private commandsChanged = false;
@@ -127,6 +134,7 @@ export class Chat {
     private readonly log: vscode.LogOutputChannel,
   ) {
     agent.onNotification("session/update", (params) => this.onUpdate(params));
+    agent.onNotification(RESTORED, (params) => this.onRestored(params));
     agent.onChange((state) => {
       this.run++;
       this.turns.clear();
@@ -307,6 +315,7 @@ export class Chat {
     this.goal = undefined;
     this.showGoal(null);
     this.loading = loading;
+    this.restored = undefined;
     this.post({ type: "chat", chat: this.current });
   }
 
@@ -316,8 +325,30 @@ export class Chat {
     if (this.session.current?.kind === "open") {
       const turns = this.entries.filter((entry) => entry.kind === "turn") as Turn[];
       this.log.info(`chat: loaded ${count(turns.length, "turn")}; ${summary(turns.flatMap((turn) => turn.items))}`);
+      if (this.restored !== undefined) this.kernelLine(this.restored);
     }
+    this.restored = undefined;
     this.post({ type: "chat", chat: this.current });
+  }
+
+  /** The kernel came back with the conversation's variables, or could not. */
+  private onRestored(params: unknown): void {
+    const { sessionId, restored } = params as { sessionId: string; restored: boolean };
+    if (sessionId !== this.session.updatesFrom) return;
+    if (this.loading) {
+      this.restored = restored;
+      return;
+    }
+    const line = this.kernelLine(restored);
+    this.dirtyHeads.add(line.id);
+    this.changed();
+  }
+
+  private kernelLine(restored: boolean): ChatEntry {
+    const line: ChatEntry = { kind: "kernel", id: this.nextId++, restored, at: Date.now() };
+    this.entries.push(line);
+    this.log.info(`chat: kernel ${restored ? "restored" : "not restored"}`);
+    return line;
   }
 
   private get busy(): boolean {
@@ -476,15 +507,25 @@ export class Chat {
         this.stream(turn, kind, `${kind}:${update.messageId}`, text);
         break;
       }
-      case "tool_call":
-        this.push(turn, {
+      case "tool_call": {
+        const tool: Tool = {
           kind: "tool",
           id: update.toolCallId ?? "",
           title: update.title ?? "Tool",
           status: "running",
           input: toolInput(update.rawInput),
-        });
+        };
+        if (tool.title === "Python cell") {
+          tool.cell = readCell(tool.input);
+          for (const path of tool.cell.files) {
+            const dir = awayDir(path, this.files.cwd, homedir());
+            if (dir !== undefined) tool.cell.away = { ...tool.cell.away, [path]: dir };
+          }
+          if (!this.loading) this.log.info(`chat: turn ${turn.id} cell: ${cellText(tool.cell)}`);
+        }
+        this.push(turn, tool);
         break;
+      }
       case "tool_call_update":
         this.toolDone(turn, update, meta);
         break;
@@ -612,7 +653,12 @@ export class Chat {
       tool.output = cut > 0 ? `${text.slice(0, OUTPUT_LIMIT)}\n… ${cut} more characters` : text;
     }
     if (meta.ipython?.attachments?.length) tool.images = meta.ipython.attachments.length;
-    if (meta.ipython?.diffCount) tool.diffs = meta.ipython.diffCount;
+    // A cell that raised ran to its end for the agent (its traceback is its result); here it failed.
+    if (meta.ipython?.errorEname) {
+      tool.error = meta.ipython.errorEname;
+      tool.status = "failed";
+    }
+    if (tool.cell && !this.loading) this.log.info(`chat: turn ${turn.id} cell ${tool.status}${tool.error ? `: ${tool.error}` : ""}`);
     this.dirtyItem(turn, at);
     this.changed();
   }
@@ -742,7 +788,7 @@ export class Chat {
     const heads = [...this.dirtyHeads].flatMap((id): EntryHead[] => {
       const entry = byId.get(id);
       if (!entry) return [];
-      if (entry.kind === "restart") return [entry];
+      if (entry.kind !== "turn") return [entry];
       const { items: _, ...head } = entry;
       return [head];
     });
@@ -798,6 +844,13 @@ function isCompact(turn: Turn): boolean {
 function toolInput(raw: unknown): string {
   if (raw && typeof raw === "object" && "code" in raw && typeof raw.code === "string") return raw.code;
   return raw === undefined ? "" : JSON.stringify(raw, null, 2);
+}
+
+/** For the log: `edit src/a.ts +2 -1`, `read /etc/hosts (in /etc/)`, `shell \`npm test\``. */
+function cellText({ kind, files, away, command, diff }: Cell): string {
+  const changed = diff ? `+${diff.added} -${diff.removed}` : "";
+  const named = files.map((path) => (away?.[path] ? `${path} (in ${away[path]})` : path));
+  return [kind, ...named, command === undefined ? "" : `\`${command}\``, changed].filter(Boolean).join(" ");
 }
 
 /** `1 image`, `2 images`. */

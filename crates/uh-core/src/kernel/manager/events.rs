@@ -3,9 +3,9 @@
 
 use super::{
     append_truncated, lock, parse_attachment_display, parse_diff_display, Arc, Event, ExecBuffers,
-    ExecuteStatus, Guarded, Inner, KernelError, StreamName, Value, ATTACHMENT_DISPLAY_MIME,
-    BASH_ACTIVITY_DISPLAY_MIME, DIFF_DISPLAY_MIME, MAX_ATTACHMENT_DATA_CHARS,
-    MAX_BACKGROUND_OUTPUT_CHARS,
+    ExecuteStatus, Guarded, Inner, KernelChange, KernelError, StreamName, Value,
+    ATTACHMENT_DISPLAY_MIME, BASH_ACTIVITY_DISPLAY_MIME, DIFF_DISPLAY_MIME,
+    MAX_ATTACHMENT_DATA_CHARS, MAX_BACKGROUND_OUTPUT_CHARS,
 };
 use std::fmt::Write as _;
 
@@ -50,6 +50,7 @@ impl Inner {
                         if settled {
                             self.notify_background_work_settled();
                         }
+                        self.notify_change(KernelChange::Bash);
                     }
                     return;
                 }
@@ -98,7 +99,7 @@ impl Inner {
                 }
             }
             Event::Done { id, fields } => {
-                if let Some(waiter) = lock(&self.guarded).bash_activity_waiters.remove(&id) {
+                if let Some(waiter) = lock(&self.guarded).side_waiters.remove(&id) {
                     let _ = waiter.send(fields);
                     return;
                 }

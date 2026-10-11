@@ -48,14 +48,6 @@ const GROUPS: Group[] = [
         help: "Before the context is full.",
       },
       {
-        kind: "number",
-        key: "compaction.keepRecentTokens",
-        label: "Kept as is",
-        help: "Recent tokens, never summarized.",
-        unit: "tokens",
-        max: 2_000_000,
-      },
-      {
         kind: "model",
         key: "auxiliaryModel",
         label: "Summary model",

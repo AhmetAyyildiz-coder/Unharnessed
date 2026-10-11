@@ -5,6 +5,7 @@ import type { Chat } from "./chat";
 import type { Files } from "./files";
 import type { History } from "./history";
 import { connectedModels } from "./instructions";
+import type { Kernel } from "./kernel";
 import type { HostMessage, WebviewMessage } from "./protocol";
 import type { Providers } from "./providers";
 import type { Session } from "./session";
@@ -26,6 +27,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly chat: Chat,
     private readonly history: History,
     private readonly files: Files,
+    private readonly kernel: Kernel,
     private readonly log: vscode.LogOutputChannel,
   ) {
     agent.onChange((state) => this.post({ type: "agent", agent: state }));
@@ -36,6 +38,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     settings.onChange(() => this.post({ type: "settings", settings: settings.current }));
     chat.onPost((message) => this.post(message));
     history.onChange(() => this.post({ type: "history", history: history.current }));
+    kernel.onChange(() => this.post({ type: "kernel", kernel: kernel.current }));
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -63,6 +66,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           settings: this.settings.current,
           chat: this.chat.current,
           history: this.history.current,
+          kernel: this.kernel.current,
         });
         this.splashPlayed = true;
         break;
@@ -233,6 +237,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // Web pages only: a message never opens anything else.
         if (/^https?:\/\//i.test(message.url)) void vscode.env.openExternal(vscode.Uri.parse(message.url));
         break;
+      case "kernelTail": {
+        const { id } = message;
+        void this.kernel.tail(id).then((tail) => this.post({ type: "kernelTail", id, tail }));
+        break;
+      }
+      case "kernelKill":
+        void this.kernel.kill(message.id);
+        break;
+      case "kernelDismiss":
+        this.kernel.dismiss(message.id);
+        break;
+      case "kernelPreview": {
+        const { name } = message;
+        void this.kernel.preview(name).then((preview) => this.post({ type: "kernelPreview", name, preview }));
+        break;
+      }
     }
   }
 

@@ -17,7 +17,9 @@
 //! the saved conversations, `session/load` replays the one this process
 //! resumed, and `_unharnessed/sessions/delete` deletes one (`history.rs`);
 //! `_unharnessed/session/rewind` takes the conversation back to before a
-//! prompt, to send it again changed (`rewind.rs`). Every frame leaves
+//! prompt, to send it again changed (`rewind.rs`). The
+//! `_unharnessed/kernel/*` ones show the kernel's background commands and
+//! variables (`kernel.rs`). Every frame leaves
 //! through one ordered
 //! write queue, so responses and `session/update` notifications interleave
 //! exactly in publication order. The process exits when stdin closes.
@@ -30,6 +32,7 @@ mod goal_continuation;
 mod history;
 mod in_process_config;
 mod jsonrpc;
+mod kernel;
 mod mcp;
 mod mcp_servers;
 mod meta;
@@ -230,6 +233,7 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
     // its own when a detached `bash()` finishes, a goal backoff passes or
     // a quota park resets while no prompt runs.
     let wake_watcher = tokio::spawn(watch_wakes(state.clone(), mode.clone(), tx.clone()));
+    let kernel_watcher = tokio::spawn(kernel::watch(state.clone(), mode.clone(), tx.clone()));
     let providers =
         providers::Providers::new(options.provider_auth.clone(), options.agent_dir.clone());
     let models_watcher = tokio::spawn(watch_models(
@@ -270,6 +274,7 @@ pub async fn run_acp_mode(options: AcpOptions) -> Result<i32> {
     // the producer, and let the writer drain.
     providers.cancel_login();
     wake_watcher.abort();
+    kernel_watcher.abort();
     models_watcher.abort();
     teardown(&state, &mode).await;
     // The final namespace snapshot (TS session dispose): the next process
@@ -418,6 +423,7 @@ async fn handle_request(
         )
         .await
         || history::handle_request(&id, &method, &params, &mode.engine, agent_dir, &tx).await
+        || kernel::handle_request(&id, &method, &params, &state, &mode, &tx).await
     {
         return;
     }
@@ -646,6 +652,8 @@ async fn handle_session_load(
         }
         producer.finish_prompt(turn_id).await;
     }
+    // A kernel that revived the saved variables before the session opened.
+    kernel::report_restore(&mode.engine, &loaded.id, &tx).await;
     let _ = tx.send(jsonrpc::response(&id, &result));
     let commands = AcpSessionUpdate::AvailableCommandsUpdate {
         available_commands: commands::available_commands(&mode.engine),
