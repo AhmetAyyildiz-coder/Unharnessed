@@ -49,6 +49,10 @@ pub(crate) enum WorkerCommand {
     Send {
         body: String,
         events: mpsc::Sender<WorkerEvent>,
+        /// This request's abort signal. Each turn has its own, cancelled
+        /// when its stream drops: a reused connection must not keep the
+        /// first request's, or every later request on it aborts at once.
+        signal: Option<CancellationToken>,
     },
     Close,
 }
@@ -237,7 +241,7 @@ async fn spawn_connection_worker(
 
     let connection_id = next_connection_id();
     let (command_tx, command_rx) = mpsc::channel::<WorkerCommand>(4);
-    tokio::spawn(connection_worker(stream, command_rx, signal));
+    tokio::spawn(connection_worker(stream, command_rx));
     Ok((command_tx, connection_id))
 }
 
@@ -247,11 +251,7 @@ async fn spawn_connection_worker(
 /// Port of `parseWebSocket`: per-request event forwarding with completion
 /// tracking, error extraction, and close-code reporting. The worker parks
 /// between requests so a session can reuse one connection.
-async fn connection_worker(
-    stream: WsStream,
-    mut commands: mpsc::Receiver<WorkerCommand>,
-    signal: Option<CancellationToken>,
-) {
+async fn connection_worker(stream: WsStream, mut commands: mpsc::Receiver<WorkerCommand>) {
     let (mut sink, mut stream) = stream.split();
     loop {
         let Some(command) = commands.recv().await else {
@@ -262,7 +262,11 @@ async fn connection_worker(
                 let _ = sink.close().await;
                 return;
             }
-            WorkerCommand::Send { body, events } => {
+            WorkerCommand::Send {
+                body,
+                events,
+                signal,
+            } => {
                 if sink.send(Message::Text(body.into())).await.is_err() {
                     // A dead socket surfaces through its close event (the TS
                     // runtime's send on a closed socket is a silent no-op; the
@@ -423,6 +427,7 @@ impl AcquiredConnection {
             .send(WorkerCommand::Send {
                 body: request.to_string(),
                 events: event_tx,
+                signal,
             })
             .await
             .map_err(|_| {

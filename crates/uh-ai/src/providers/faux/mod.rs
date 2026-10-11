@@ -441,7 +441,9 @@ fn with_usage_estimate(
         output: output_tokens,
         cache_read,
         cache_write,
-        total_tokens: input + output_tokens + cache_read + cache_write,
+        // `cache_write` is the uncached tail, already counted in `input`:
+        // the total is the context size the compaction threshold reads.
+        total_tokens: input + output_tokens + cache_read,
         cost: UsageCost::default(),
     };
     // Priced at the model's rates like a real provider's usage (a free

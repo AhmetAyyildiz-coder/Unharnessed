@@ -339,7 +339,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             as crate::kernel::provisioner::UnavailableSkillsCallback)
     };
     let provisioner = super::runtime_wiring::kernel_provisioner(
-        session_id,
+        session_id.clone(),
         handlers,
         python_skills,
         cwd.clone(),
@@ -527,6 +527,10 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         // the session's configured modes (default "one-at-a-time").
         steering_mode: config.steering_mode,
         follow_up_mode: config.follow_up_mode,
+        // TS `sdk.ts` `sessionId`: the providers key their prompt cache on
+        // it (OpenAI/Codex `prompt_cache_key`, the Codex `session_id`
+        // header and its per-session WebSocket reuse).
+        session_id: Some(session_id),
         ..Default::default()
     });
 
