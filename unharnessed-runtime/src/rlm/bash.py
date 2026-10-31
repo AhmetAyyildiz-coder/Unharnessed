@@ -253,6 +253,8 @@ class BashHandle:
         self._background = False
         # Stopped by kill(), from the cell or the host's panel.
         self._killed = False
+        # Stopped by the agent's own code before it ended: no completion notice.
+        self._killed_by_agent = False
         self._buffer = _BoundedBuffer()
         self._done = threading.Event()
         self._eof = threading.Event()
@@ -406,6 +408,12 @@ class BashHandle:
         return self._result if self._done.is_set() else None
 
     def kill(self, sig: int = signal.SIGTERM, grace: float = 5.0) -> None:
+        # A command that already ended keeps its notice: only leftovers die here.
+        if not self._done.is_set():
+            self._killed_by_agent = True
+        self._stop(sig, grace)
+
+    def _stop(self, sig: int = signal.SIGTERM, grace: float = 5.0) -> None:
         # Guard on group death, not _done: kill() must still reach a lingering
         # background group after the foreground result was already delivered.
         self._released = True
@@ -722,7 +730,12 @@ class BashHandle:
             # The cell may do other work before awaiting this handle. Do not classify
             # it as detached until that whole cell has crossed its completion barrier.
             await cell_finished.wait()
-            if self._awaited_by_creating_cell or self._result_consumed or not repl.is_active():
+            if (
+                self._awaited_by_creating_cell
+                or self._result_consumed
+                or self._killed_by_agent
+                or not repl.is_active()
+            ):
                 return
             command = self.command
             if len(command) > _COMPLETION_NOTICE_COMMAND_CAP:
@@ -1300,6 +1313,7 @@ def activity_request(action: str, activity_id: str | None = None, lines: int = 5
     if action == "kill":
         if handle._reaped:
             return {"activityId": activity_id, "killed": False}
-        handle.kill()
+        # The user's stop, not the agent's: the completion notice still goes out.
+        handle._stop()
         return {"activityId": activity_id, "killed": True}
     raise ValueError("Unknown kernel bash action")

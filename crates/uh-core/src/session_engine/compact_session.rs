@@ -8,7 +8,8 @@ use super::compaction_exec;
 use super::compaction_exec::{
     build_summarization_request, build_turn_prefix_request, compaction_entry_for,
     complete_summary_call, details_for, file_ops_block, split_summary, summed_usage,
-    CompactionDetails, CompactionResult, SummaryDeltaSink, SummarySlice, NO_PRIOR_HISTORY,
+    CompactionDetails, CompactionResult, SummaryCallError, SummaryDeltaSink, SummarySlice,
+    NO_PRIOR_HISTORY,
 };
 use super::compaction_utils;
 use crate::session::manager::SessionManager;
@@ -353,7 +354,26 @@ pub async fn execute_compaction(
     };
     let (history_slice, turn_prefix_slice) = tokio::join!(history_call, turn_prefix_call);
     let history_slice = history_slice?;
-    let turn_prefix_slice = turn_prefix_slice?;
+    // A provider can refuse the turn prefix alone, read without the
+    // history that frames it (a safety classifier on a bare fragment).
+    // The history summary already covers everything before the turn, so
+    // the cut moves back to the turn start and the whole turn stays.
+    let refused_prefix = turn_prefix_slice.as_ref().err().is_some_and(|error| {
+        error
+            .downcast_ref::<SummaryCallError>()
+            .is_some_and(SummaryCallError::is_content_refusal)
+    }) && !history.is_empty();
+    let (turn_prefix_slice, first_kept_entry, details) = if refused_prefix {
+        super::compaction_trace::trace(
+            "compact.turn_prefix_refused",
+            &serde_json::json!({ "firstKeptEntryIndex": history_end }),
+        );
+        let first_kept_entry = entries[history_end].id().unwrap_or_default().to_string();
+        let details = details_for(&history, &entries, prev_compaction_index);
+        (None, first_kept_entry, details)
+    } else {
+        (turn_prefix_slice?, first_kept_entry, details)
+    };
     super::compaction_trace::trace(
         "compact.summarizer_resolved",
         &serde_json::json!({

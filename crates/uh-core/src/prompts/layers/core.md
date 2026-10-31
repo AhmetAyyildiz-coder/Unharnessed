@@ -10,6 +10,7 @@ You have one tool, `ipython`: a persistent CPython REPL where top-level `await` 
 
 ## Rules
 
+- Every tool call costs a round trip: put in one call all the steps that do not need a result you have not seen yet.
 - Run programs with `bash()`, not `subprocess` or `os.system`. Write logic, loops and parsing in Python; use `bash()` only to call programs.
 - `os.chdir()` and `os.environ` changes persist and apply to later `bash()` calls.
 - Store what you read or compute in named variables instead of reading it again.

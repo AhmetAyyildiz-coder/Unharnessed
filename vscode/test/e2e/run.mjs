@@ -165,6 +165,7 @@ const CELLS = [
   'from pathlib import Path\nprint(Path("src/app.ts").read_text())',
   "r = await bash(\"grep -rn 'a = 2' src\")\nprint(r.output)",
   'r = await bash("echo built")\nprint(r.output)',
+  'r = await bash("echo shot")\nawait attach_image("shot.png")',
   "print(6 * 7)",
 ];
 const CELLS_SCRIPT = {
@@ -538,7 +539,14 @@ const scenarios = [
     binary,
     auth: { openai: { type: "api_key", key: "sk-e2e" } },
     env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify(CELLS_SCRIPT) },
-    workspace: { "src/app.ts": "export const a = 1;\n" },
+    workspace: {
+      "src/app.ts": "export const a = 1;\n",
+      // One pixel.
+      "shot.png": Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    },
     steps: [
       "session: opened",
       { post: { type: "send", text: "set a to 2", images: [] } },
@@ -548,8 +556,9 @@ const scenarios = [
       "chat: turn 1 cell: read src/app.ts",
       "chat: turn 1 cell: search `grep -rn 'a = 2' src`",
       "chat: turn 1 cell: shell `echo built`",
+      "chat: turn 1 cell: view shot.png",
       "chat: turn 1 cell: python",
-      { wait: "chat: turn 1 done (end_turn); 6 tools, 1 text", timeout: 90_000 },
+      { wait: "chat: turn 1 done (end_turn); 7 tools, 1 text", timeout: 90_000 },
     ],
   },
   {

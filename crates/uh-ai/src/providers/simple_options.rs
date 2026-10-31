@@ -5,20 +5,23 @@ use crate::types::{
     Model, ModelThinkingLevel, SimpleStreamOptions, StreamOptions, ThinkingBudgets,
 };
 
-/// The per-request output cap when the caller sets no `max_tokens` (TS
-/// `buildBaseOptions`: `Math.min(model.maxTokens, 32000)`).
-pub const REQUEST_MAX_TOKENS_CAP: u64 = 32_000;
+/// The output room the compaction trigger keeps free under the context
+/// window (TS `buildBaseOptions` capped every request here). Requests ask for
+/// the model's whole max output and are clamped to the room the context
+/// leaves, so compaction only keeps this much.
+pub const COMPACTION_OUTPUT_RESERVE: u64 = 32_000;
 
 /// The smallest output budget a request may keep after clamping (TS
 /// `adjustMaxTokensForThinking`: `minOutputTokens`).
 pub const MIN_OUTPUT_TOKENS: u64 = 1_024;
 
-/// The default per-request output budget for a model (TS `buildBaseOptions`):
-/// the model's max output capped at [`REQUEST_MAX_TOKENS_CAP`], or `None` when
-/// the model declares no max output (providers that default server-side).
+/// The default per-request output budget for a model: its declared max
+/// output, or `None` when the model declares none (providers that default
+/// server-side). Reasoning counts against it, so a lower cap cuts long
+/// thinking short.
 #[must_use]
 pub fn default_request_max_tokens(model: &Model) -> Option<u64> {
-    (model.max_tokens > 0).then(|| model.max_tokens.min(REQUEST_MAX_TOKENS_CAP))
+    (model.max_tokens > 0).then_some(model.max_tokens)
 }
 
 pub fn build_base_options(
@@ -115,18 +118,16 @@ pub fn adjust_max_tokens_for_thinking(
     Ok((max_tokens, thinking_budget))
 }
 
-/// The `max_tokens` the provider will actually send for a request against
-/// `model` with this reasoning level: budget-folding providers (Anthropic
-/// and Bedrock models without adaptive thinking) add the level's thinking
-/// budget on top of the base per-request budget, capped at the model's
-/// declared max output ([`adjust_max_tokens_for_thinking`]); every other
-/// provider (and reasoning off) sends the base budget itself. Compaction
-/// thresholds must reserve this effective budget, or a request can claim
-/// `input + max_tokens > contextWindow` while the trigger still says
-/// "not due".
+/// The output room the compaction trigger reserves for a request against
+/// `model` with this reasoning level: the model's max output capped at
+/// [`COMPACTION_OUTPUT_RESERVE`], plus the thinking budget budget-folding
+/// providers (Anthropic and Bedrock models without adaptive thinking) add on
+/// top of it, capped at the model's declared max output
+/// ([`adjust_max_tokens_for_thinking`]). A request may ask for more while the
+/// context leaves room; the streaming facade clamps it to that room.
 #[must_use]
-pub fn effective_request_max_tokens(model: &Model, reasoning: ModelThinkingLevel) -> u64 {
-    let base = default_request_max_tokens(model).unwrap_or(0);
+pub fn compaction_output_reserve(model: &Model, reasoning: ModelThinkingLevel) -> u64 {
+    let base = model.max_tokens.min(COMPACTION_OUTPUT_RESERVE);
     if matches!(reasoning, ModelThinkingLevel::Off) || base == 0 {
         return base;
     }
@@ -173,15 +174,15 @@ mod tests {
         // tokens onto the 32_000 base budget (adjustMaxTokensForThinking).
         let anthropic = model("anthropic", "claude-sonnet-4-5", 65_536);
         assert_eq!(
-            effective_request_max_tokens(&anthropic, ModelThinkingLevel::Off),
+            compaction_output_reserve(&anthropic, ModelThinkingLevel::Off),
             32_000
         );
         assert_eq!(
-            effective_request_max_tokens(&anthropic, ModelThinkingLevel::Medium),
+            compaction_output_reserve(&anthropic, ModelThinkingLevel::Medium),
             32_000 + 8_192
         );
         assert_eq!(
-            effective_request_max_tokens(&anthropic, ModelThinkingLevel::High),
+            compaction_output_reserve(&anthropic, ModelThinkingLevel::High),
             32_000 + 16_384
         );
     }
@@ -191,7 +192,7 @@ mod tests {
         // The model's own ceiling binds before the base + thinking sum.
         let small = model("anthropic", "claude-sonnet-4-5", 36_000);
         assert_eq!(
-            effective_request_max_tokens(&small, ModelThinkingLevel::High),
+            compaction_output_reserve(&small, ModelThinkingLevel::High),
             36_000
         );
     }
@@ -201,14 +202,14 @@ mod tests {
         // Adaptive-thinking Anthropic models use effort, not budgets.
         let adaptive = model("anthropic", "claude-opus-4-6", 65_536);
         assert_eq!(
-            effective_request_max_tokens(&adaptive, ModelThinkingLevel::High),
+            compaction_output_reserve(&adaptive, ModelThinkingLevel::High),
             32_000
         );
         // OpenAI-style reasoning consumes the budget from within, never on
         // top of it.
         let openai = model("openai-completions", "gpt-x", 65_536);
         assert_eq!(
-            effective_request_max_tokens(&openai, ModelThinkingLevel::High),
+            compaction_output_reserve(&openai, ModelThinkingLevel::High),
             32_000
         );
     }
@@ -217,7 +218,7 @@ mod tests {
     fn a_model_without_a_declared_max_output_has_no_budget_to_fold() {
         let bare = model("anthropic", "claude-sonnet-4-5", 0);
         assert_eq!(
-            effective_request_max_tokens(&bare, ModelThinkingLevel::High),
+            compaction_output_reserve(&bare, ModelThinkingLevel::High),
             0
         );
     }

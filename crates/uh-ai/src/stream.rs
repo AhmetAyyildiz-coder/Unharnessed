@@ -19,11 +19,67 @@ fn resolve_provider(api: &str) -> Result<Arc<dyn crate::registry::Provider>, Pro
 // Combined-ceiling output clamp
 // ---------------------------------------------------------------------------
 
-/// Estimate a request's input tokens before it is sent: chars/4 over the
-/// text the provider will serialize, images at 1,200 tokens each. The same
-/// conservative policy the session engine's compaction estimator applies
-/// (`uh-core` cannot be a dependency here, so the heuristic is restated).
+/// Estimate a request's input tokens before it is sent, as the session
+/// engine's compaction estimator does (`uh-core` cannot be a dependency
+/// here, so the policy is restated): the last answered request's usage is
+/// the provider's own count of everything up to its answer, so only the
+/// messages after it are estimated. Chars/4 over the whole request stands
+/// in without a usable anchor, and wins when it is larger.
 fn estimated_input_tokens(context: &Context) -> u64 {
+    let whole = whole_request_tokens(context);
+    let messages = &context.messages;
+    let Some(index) = messages
+        .iter()
+        .rposition(|message| usage_tokens(message).is_some())
+    else {
+        return whole;
+    };
+    // A compaction summary sits before the kept messages but is newer than
+    // them: a kept answer's usage still counts the history it replaced.
+    let anchor = message_timestamp(&messages[index]);
+    if messages[..index]
+        .iter()
+        .any(|message| message_timestamp(message) > anchor)
+    {
+        return whole;
+    }
+    let trailing: u64 = messages[index + 1..].iter().map(message_chars).sum();
+    let anchored = usage_tokens(&messages[index]).unwrap_or(0) + trailing.div_ceil(4);
+    anchored.max(whole)
+}
+
+/// An answered request's context size by the provider's count; `None` for
+/// failed or aborted turns and turns without usage.
+fn usage_tokens(message: &crate::types::Message) -> Option<u64> {
+    let crate::types::Message::Assistant(assistant) = message else {
+        return None;
+    };
+    if matches!(
+        assistant.stop_reason,
+        crate::types::StopReason::Aborted | crate::types::StopReason::Error
+    ) {
+        return None;
+    }
+    let usage = &assistant.usage;
+    let tokens = if usage.total_tokens > 0 {
+        usage.total_tokens
+    } else {
+        usage.input + usage.output + usage.cache_read + usage.cache_write
+    };
+    (tokens > 0).then_some(tokens)
+}
+
+fn message_timestamp(message: &crate::types::Message) -> u64 {
+    match message {
+        crate::types::Message::User(user) => user.timestamp,
+        crate::types::Message::Assistant(assistant) => assistant.timestamp,
+        crate::types::Message::ToolResult(result) => result.timestamp,
+    }
+}
+
+/// Chars/4 over the text the provider will serialize, images at 1,200
+/// tokens each.
+fn whole_request_tokens(context: &Context) -> u64 {
     const TOOL_ENVELOPE_CHARS: u64 = 48;
     let mut chars = context
         .system_prompt
@@ -42,32 +98,34 @@ fn estimated_input_tokens(context: &Context) -> u64 {
         );
     }
     for message in &context.messages {
-        chars = chars.saturating_add(match message {
-            crate::types::Message::User(user) => match &user.content {
-                crate::types::UserMessageContent::Text(text) => text.chars().count() as u64,
-                crate::types::UserMessageContent::Blocks(blocks) => {
-                    user_content_block_chars(blocks)
-                }
-            },
-            crate::types::Message::Assistant(assistant) => assistant
-                .content
-                .iter()
-                .map(|block| match block {
-                    crate::types::AssistantContent::Text(text) => text.text.chars().count() as u64,
-                    crate::types::AssistantContent::Thinking(thinking) => {
-                        thinking.thinking.chars().count() as u64
-                    }
-                    crate::types::AssistantContent::ToolCall(call) => {
-                        call.name.chars().count() as u64
-                            + serde_json::to_string(&call.arguments)
-                                .map_or(0, |json| json.chars().count() as u64)
-                    }
-                })
-                .sum(),
-            crate::types::Message::ToolResult(result) => user_content_block_chars(&result.content),
-        });
+        chars = chars.saturating_add(message_chars(message));
     }
     chars.div_ceil(4)
+}
+
+fn message_chars(message: &crate::types::Message) -> u64 {
+    match message {
+        crate::types::Message::User(user) => match &user.content {
+            crate::types::UserMessageContent::Text(text) => text.chars().count() as u64,
+            crate::types::UserMessageContent::Blocks(blocks) => user_content_block_chars(blocks),
+        },
+        crate::types::Message::Assistant(assistant) => assistant
+            .content
+            .iter()
+            .map(|block| match block {
+                crate::types::AssistantContent::Text(text) => text.text.chars().count() as u64,
+                crate::types::AssistantContent::Thinking(thinking) => {
+                    thinking.thinking.chars().count() as u64
+                }
+                crate::types::AssistantContent::ToolCall(call) => {
+                    call.name.chars().count() as u64
+                        + serde_json::to_string(&call.arguments)
+                            .map_or(0, |json| json.chars().count() as u64)
+                }
+            })
+            .sum(),
+        crate::types::Message::ToolResult(result) => user_content_block_chars(&result.content),
+    }
 }
 
 /// Text chars plus 4,800 per image (1,200 tokens) — the session engine's
@@ -91,38 +149,40 @@ fn user_content_block_chars(blocks: &[crate::types::UserOrToolContent]) -> u64 {
 /// contextWindow` rejects an unsatisfiable request outright (the live
 /// 400: 1,017,457 input + 32,000 requested output on a 1,048,576 window),
 /// so the facade shrinks the output budget to whatever room the estimated
-/// input leaves. The estimate covers the full serialized request — system
-/// prompt, tool schemas, message text, raw blocks, images — so it tracks
-/// the provider's own input count instead of leaving uncounted bytes to
-/// overflow it.
+/// input leaves ([`output_room`]).
 ///
-/// The TS facade never clamps (`packages/ai/src/providers/simple-options.ts`
-/// caps only at `min(model.maxTokens, 32000)`); this is a deliberate
-/// Rust-side guard. Budget-folding thinking providers (Anthropic, Bedrock)
-/// add their thinking budget after this clamp and cap it at
-/// `model.max_tokens`; the compaction threshold's headroom and the overflow
-/// recovery arm remain the guards for that corner.
+/// The TS facade never clamps; this is a deliberate Rust-side guard, and the
+/// one that bounds a request: the default budget is the model's whole max
+/// output. Budget-folding thinking providers (Anthropic, Bedrock) add their
+/// thinking budget after this clamp, capped at the same room.
 fn clamp_output_budget(model: &Model, context: &Context, options: Option<&mut StreamOptions>) {
     let Some(options) = options else {
         return;
     };
-    if model.context_window == 0 {
-        return; // combined ceiling unknown — leave the request alone
-    }
     let requested = options
         .max_tokens
         .or_else(|| default_request_max_tokens(model));
     let Some(requested) = requested else {
         return; // no default budget to clamp
     };
+    if let Some(available) = output_room(model, context).filter(|room| requested > *room) {
+        options.max_tokens = Some(available);
+    }
+}
+
+/// The output room a request leaves under the model's combined input+output
+/// ceiling: the window minus the estimated input ([`estimated_input_tokens`]).
+/// `None` when the window is unknown, or when the input alone fills it: no
+/// budget can save that request, so it stays as sent for the overflow
+/// recovery arm.
+pub(crate) fn output_room(model: &Model, context: &Context) -> Option<u64> {
+    if model.context_window == 0 {
+        return None;
+    }
     let available = model
         .context_window
         .saturating_sub(estimated_input_tokens(context));
-    // Zero room means the input alone fills the window — no budget can
-    // save the request, so it stays as sent for the overflow recovery arm.
-    if requested > available && available > 0 {
-        options.max_tokens = Some(available);
-    }
+    (available > 0).then_some(available)
 }
 
 /// Start streaming a completion for `model` using provider-native options.
@@ -168,7 +228,7 @@ pub fn stream_simple(
     let provider = resolve_provider(&model.api)?;
     let mut options = options;
     // A `None` caller still gets the default output budget downstream
-    // (`build_base_options` fills `min(model.maxTokens, 32000)`), so
+    // (`build_base_options` fills the model's max output), so
     // materialize the options to clamp that default too. The materialized
     // default builds the same request otherwise.
     let simple = options.get_or_insert_with(SimpleStreamOptions::default);
@@ -308,7 +368,7 @@ mod tests {
     #[test]
     fn clamp_resolves_the_default_budget_when_none_set() {
         // The main-loop shape: no explicit max_tokens, so the effective
-        // request budget is min(model.maxTokens, 32000).
+        // request budget is the model's max output.
         let model = test_model(1_000, 40_000);
         let context = text_context(3_600); // 900 estimated input tokens
         let mut options = StreamOptions::default();

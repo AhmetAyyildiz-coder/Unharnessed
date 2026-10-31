@@ -192,20 +192,19 @@ pub fn should_compact(
     threshold > 0 && context_tokens > threshold
 }
 
-/// The effective requested output budget of the session's next model call:
-/// the per-request default `min(model.maxTokens, 32000)`, plus the thinking
-/// budget budget-folding providers (Anthropic/Bedrock models without
-/// adaptive thinking) add on top of it for the session's reasoning level,
-/// capped at the model's declared max output; 0 when the model declares no
-/// max output. The combined input+output ceiling reserves what the request
-/// will actually claim, or a budget-folded request can overflow while the
-/// trigger still says "not due".
+/// The output room the threshold keeps free for the session's next model
+/// call ([`uh_ai::compaction_output_reserve`]): the model's max output capped
+/// at 32,000, plus the thinking budget budget-folding providers
+/// (Anthropic/Bedrock models without adaptive thinking) add on top of it for
+/// the session's reasoning level, capped at the model's declared max output;
+/// 0 when the model declares no max output. Requests ask for more while the
+/// context leaves room, clamped to that room.
 #[must_use]
-pub fn request_output_budget(
+pub fn output_reserve(
     model: &uh_types::ai::Model,
     thinking: uh_types::ai::ModelThinkingLevel,
 ) -> u64 {
-    uh_ai::effective_request_max_tokens(model, thinking)
+    uh_ai::compaction_output_reserve(model, thinking)
 }
 
 /// The message-anchored context estimate over the live loop context (TS

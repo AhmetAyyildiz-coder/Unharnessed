@@ -18,6 +18,7 @@ import {
   IconEye,
   IconFilePlus,
   IconFlag,
+  IconImage,
   IconPencil,
   IconPython,
   IconRestart,
@@ -412,7 +413,7 @@ function Thought({ thought, live }: { thought: Extract<TurnItem, { kind: "though
       >
         <span className="thought-slot">
           <Orb on={thinking} state="composing" />
-          {opens && <IconChevron className="thought-chevron" />}
+          {!thinking && <IconChevron className="thought-chevron" />}
         </span>
         {thinking ? (
           <span className="thought-label">
@@ -662,6 +663,7 @@ function CallRun({ items, start, end, running }: { items: TurnItem[]; start: num
 const KINDS: Record<Cell["kind"], { Icon: typeof IconPython; live: string; done: string; failed: string }> = {
   edit: { Icon: IconPencil, live: "Editing", done: "Edited", failed: "Edit failed" },
   write: { Icon: IconFilePlus, live: "Writing", done: "Wrote", failed: "Write failed" },
+  view: { Icon: IconImage, live: "Viewing", done: "Viewed", failed: "View failed" },
   read: { Icon: IconEye, live: "Reading", done: "Read", failed: "Read failed" },
   search: { Icon: IconSearch, live: "Searching", done: "Searched", failed: "Search failed" },
   shell: { Icon: IconTerminal, live: "Running", done: "Ran", failed: "Failed" },

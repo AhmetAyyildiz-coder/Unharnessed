@@ -137,6 +137,32 @@ pub fn build_turn_prefix_request(messages: &[AgentMessage]) -> Vec<AgentMessage>
 /// (see `execute_compaction`'s split-turn flush).
 pub type SummaryDeltaSink = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 
+/// A summarizer reply that stopped with an error: `message` is the labeled
+/// failure text, `kind` the provider's stream-failure kind ("refusal",
+/// "safety", ...) when it recorded one.
+#[derive(Debug)]
+pub struct SummaryCallError {
+    pub message: String,
+    pub kind: Option<String>,
+}
+
+impl SummaryCallError {
+    /// Whether the provider declined the content itself (a refusal or a
+    /// safety filter), which the same request would meet again.
+    #[must_use]
+    pub fn is_content_refusal(&self) -> bool {
+        matches!(self.kind.as_deref(), Some("refusal" | "safety"))
+    }
+}
+
+impl std::fmt::Display for SummaryCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for SummaryCallError {}
+
 /// Run one summarizer wire call through `uh_ai::complete_simple` (TS
 /// `completeSimple` under `SUMMARIZATION_SYSTEM_PROMPT`). `headers` are
 /// the routed model's merged request headers (TS `_resolveAuxiliaryModel`
@@ -203,13 +229,23 @@ pub async fn complete_summary_call(
         }
     };
     if assistant.stop_reason == uh_types::ai::StopReason::Error {
-        anyhow::bail!(
-            "{failure}: {}",
-            assistant
-                .error_message
-                .as_deref()
-                .unwrap_or("Unknown error")
-        );
+        return Err(SummaryCallError {
+            message: format!(
+                "{failure}: {}",
+                assistant
+                    .error_message
+                    .as_deref()
+                    .unwrap_or("Unknown error")
+            ),
+            kind: assistant
+                .diagnostics
+                .iter()
+                .flatten()
+                .find(|diagnostic| diagnostic.type_ == "provider_stream_failure")
+                .and_then(|diagnostic| diagnostic.details.as_ref()?.get("kind")?.as_str())
+                .map(str::to_string),
+        }
+        .into());
     }
     let summary = assistant
         .content

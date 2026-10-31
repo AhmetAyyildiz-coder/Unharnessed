@@ -47,7 +47,7 @@ impl AgentSession {
         }
         let carries_images = !images.is_empty() || batch.iter().any(|row| !row.images.is_empty());
         // The live thinking level (the agent state's, matching
-        // `request_output_budget`'s read) rides the decision: a mid-run
+        // `output_reserve`'s read) rides the decision: a mid-run
         // `/effort` or model switch must not route with the build-time
         // level.
         let live_level =

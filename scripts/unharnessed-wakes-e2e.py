@@ -24,7 +24,14 @@ BIN = os.environ.get("UNHARNESSED_BIN", str(ROOT / "target/release/unharnessed")
 OUT = Path(sys.argv[1]).resolve()
 WORK = OUT / "work"
 WORK.mkdir(parents=True, exist_ok=True)
-ENV = dict(os.environ, UNHARNESSED_KERNEL_VENV=str(OUT / "kernel-venv"), DO_NOT_TRACK="1")
+# A throwaway HOME and agent dir: no credentials, so the faux provider is
+# the only model the session can reach. The uv cache stays the real one.
+HOME = OUT / "home"
+(HOME / "agent").mkdir(parents=True, exist_ok=True)
+ENV = dict(os.environ, HOME=str(HOME), UNHARNESSED_CODING_AGENT_DIR=str(HOME / "agent"),
+           UV_CACHE_DIR=os.environ.get("UV_CACHE_DIR", str(Path.home() / ".cache/uv")),
+           UNHARNESSED_PACKAGE_DIR=os.environ.get("UNHARNESSED_PACKAGE_DIR", str(ROOT)),
+           UNHARNESSED_KERNEL_VENV=str(OUT / "kernel-venv"), DO_NOT_TRACK="1")
 FAILED = []
 
 
@@ -120,6 +127,16 @@ def run_acp(name, responses, steps):
             wait(send("session/prompt", {"sessionId": session, "prompt": [{"type": "text", "text": step["prompt"]}]}))
         elif "listen" in step:
             listen(step["listen"])
+        elif "kill" in step:
+            # The panel's stop: the first command row matching the text.
+            def row():
+                for _, frame in reversed(frames):
+                    if frame.get("method") == "_unharnessed/kernel/changed" and "commands" in frame["params"]:
+                        return next((c for c in frame["params"]["commands"] if step["kill"] in c["command"]), None)
+            end = time.time() + 10
+            while row() is None and time.time() < end:
+                listen(0.2)
+            wait(send("_unharnessed/kernel/kill", {"sessionId": session, "id": (row() or {}).get("id")}))
     wait(send("session/close", {"sessionId": session}))
     child.stdin.close()
     child.wait(timeout=60)
@@ -222,5 +239,31 @@ frames = run_acp("acp_goal_wake", [
 woken = [(at, turn) for at, turn, text in acp_texts(frames) if text == "goal done"]
 check("ACP resumes a goal after its backoff", woken and woken[0][0] >= 9 and woken[0][1] == 2,
       f"goal done chunks {woken}")
+
+# 9. -p: a background bash() its own cell kills does not wake the model.
+code, seconds, events = run_print("print_cell_kill", [
+    call('h = bash("sleep 30; echo never")\nh.kill()'), "stopped it", "woken"],
+    ["--mode", "json", "--no-session", "start then stop a command"])
+done = [message for message in messages(events) if message.get("customType") == "async_bash_completion"]
+check("-p does not wake on a command its own cell killed",
+      code == 0 and not done and text_of(messages(events, "assistant")[-1]) == "stopped it",
+      f"exit {code}, completion rows {len(done)}")
+
+# 10. -p: nor when a later cell kills it.
+code, seconds, events = run_print("print_later_kill", [
+    call('h = bash("sleep 30; echo never")'), call("h.kill()"), "stopped it later", "woken"],
+    ["--mode", "json", "--no-session", "start a command, stop it later"])
+done = [message for message in messages(events) if message.get("customType") == "async_bash_completion"]
+check("-p does not wake on a command a later cell killed",
+      code == 0 and not done and text_of(messages(events, "assistant")[-1]) == "stopped it later",
+      f"exit {code}, completion rows {len(done)}")
+
+# 11. ACP: a stop from the panel still wakes the model, which did not ask for it.
+frames = run_acp("acp_panel_kill_wake", [
+    call('h = bash("sleep 30; echo never")'), "started", "notified of the stop"],
+    [{"prompt": "start a background command"}, {"kill": "sleep 30"}, {"listen": 6}])
+texts = [text for _, _, text in acp_texts(frames)]
+check("ACP wakes on a command the panel stopped", texts == ["started", "notified of the stop"],
+      f"texts {texts}")
 
 sys.exit(1 if FAILED else 0)

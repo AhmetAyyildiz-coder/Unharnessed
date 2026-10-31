@@ -235,12 +235,12 @@ export type ChatCommand = {
 
 /**
  * What a Python cell does, guessed from its code (cell.ts): it edits a
- * file, writes one, runs a command, looks for files, reads them, or none
- * of these.
+ * file, writes one, looks at images, runs a command, looks for files,
+ * reads them, or none of these.
  */
 export type Cell = {
-  kind: "edit" | "write" | "shell" | "search" | "read" | "python";
-  /** The files it edits, writes or reads, as its code names them. */
+  kind: "edit" | "write" | "view" | "shell" | "search" | "read" | "python";
+  /** The files it edits, writes, looks at or reads, as its code names them. */
   files: string[];
   /** Those of `files` out of the agent's folder, and the folder each lies in, as shown (cell.ts, awayDir). */
   away?: Record<string, string>;

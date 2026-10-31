@@ -881,11 +881,13 @@ button {
   }
 }
 
+/* No stacking context of its own, nor the box's: what opens from the box
+   (the menus, the context card, the tooltips) takes its place among the
+   screen's layers, over the kernel's tray (.dock > .kernel-collapse). */
 .composer-shell {
   position: relative;
   flex: none;
   margin: 0 12px 12px;
-  isolation: isolate;
 }
 
 .composer-glow {
@@ -913,9 +915,9 @@ button {
   animation-play-state: running;
 }
 
+/* Over the glow by coming after it. */
 .composer {
   position: relative;
-  z-index: 1;
   background: var(--uh-raised);
   border-radius: 20px;
   box-shadow:
@@ -936,8 +938,10 @@ button {
     inset 0 1px 0 var(--uh-highlight);
 }
 
+/* The text over its mirror, among themselves. */
 .composer-field {
   position: relative;
+  isolation: isolate;
 }
 
 /* The pills under the mentions: drawn behind the text, which stays the
@@ -1850,13 +1854,15 @@ body.vscode-high-contrast-light .composer-shell {
 
 /* Under the pills' band (their 27 px and 8 px each side), and 16 px over
    it, the conversation fades into the page: solid by the pills' top, so
-   they stand on the page's colour. Out of the tray, which clips. */
+   they stand on the page's colour. Out of the tray, which clips. Over the
+   conversation only: first in the dock and on its level, so what opens up
+   from the box (the context card, the menus) and the tooltips stay over it. */
 .dock::before {
   position: absolute;
   right: 0;
   bottom: 100%;
   left: 0;
-  z-index: 1;
+  z-index: 0;
   height: calc(16px + 27px + 16px);
   pointer-events: none;
   content: "";
@@ -2697,7 +2703,9 @@ body.vscode-high-contrast-light .seti {
 }
 
 /* The dock: the box and what stands over it, the conversation ending at
-   its top. */
+   its top. The screen's layers, low to high: the conversation, the fade
+   (.dock::before, 0), the box; the kernel's tray (2); back to the latest
+   (3); the menus and the context card (10); the tooltips (30). */
 .dock {
   position: relative;
   flex: none;
@@ -2712,6 +2720,7 @@ body.vscode-high-contrast-light .seti {
   position: absolute;
   bottom: 8px;
   left: 50%;
+  z-index: 3;
   translate: -50% 0;
   color: var(--uh-text);
   background: var(--uh-raised-2);
@@ -2723,7 +2732,6 @@ body.vscode-high-contrast-light .seti {
    band (27 px and 8 px each side), over its fade: half above, half in. */
 .screen:has(> .dock > .kernel-collapse.is-shown) .to-end {
   bottom: calc(27px + 16px - 15px);
-  z-index: 3;
 }
 
 /* A pill's list open over them: it would cover it; it waits. */

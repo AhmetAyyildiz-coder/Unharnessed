@@ -487,7 +487,10 @@ pub fn stream_simple_anthropic(
     let budgets = options.and_then(|options| options.thinking_budgets.as_ref());
     let adjusted = match adjust_max_tokens_for_thinking(
         base.max_tokens.unwrap_or(0),
-        model.max_tokens,
+        // The budget folds on top of the clamped base: cap the sum at the
+        // window room too, or a long context overflows by the budget.
+        crate::stream::output_room(model, context)
+            .map_or(model.max_tokens, |room| model.max_tokens.min(room)),
         reasoning.expect("checked above"),
         budgets,
     ) {

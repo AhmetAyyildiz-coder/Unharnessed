@@ -26,10 +26,10 @@ const DIFF_CELLS = 250_000;
 
 /**
  * What a Python cell does, guessed from its code: it edits a file (changes
- * the text it writes), writes one, runs a command, looks for files, reads
- * them, or none of these. When it does several, the first of these wins. A
- * guess, not what happened: an edit whose text was not found still reads
- * as an edit.
+ * the text it writes), writes one, looks at images (`attach_image`), runs a
+ * command, looks for files, reads them, or none of these. When it does
+ * several, the first of these wins. A guess, not what happened: an edit
+ * whose text was not found still reads as an edit.
  */
 export function readCell(source: string): Cell {
   const cell = skeleton(source);
@@ -37,14 +37,19 @@ export function readCell(source: string): Cell {
   const names = assignments(cell);
   const reads = new Set<string>();
   const writes = new Set<string>();
+  const views = new Set<string>();
   let wrote = false;
   let read = false;
+  let viewed = false;
+  const add = (files: Set<string>, path: string | undefined) => {
+    // An f-string's path whose name the code computes, `src/{name}`, names no file.
+    const name = path?.slice(path.lastIndexOf("/") + 1);
+    if (path && name && !/[{\n]/.test(name) && path.length <= 300) files.add(path);
+  };
   const file = (path: string | undefined, writing: boolean) => {
     if (writing) wrote = true;
     else read = true;
-    // An f-string's path whose name the code computes, `src/{name}`, names no file.
-    const name = path?.slice(path.lastIndexOf("/") + 1);
-    if (path && name && !/[{\n]/.test(name) && path.length <= 300) (writing ? writes : reads).add(path);
+    add(writing ? writes : reads, path);
   };
   for (const call of code.matchAll(/(?<![\w.])(?:io\.|codecs\.)?open\(/g)) {
     const given = args(code, call.index + call[0].length - 1);
@@ -57,6 +62,10 @@ export function readCell(source: string): Cell {
     const given = args(code, call.index + call[0].length - 1);
     file(literal(cell, names, on), call[1] === "open" ? opensToWrite(cell, names, given, 0) : call[1].startsWith("write"));
   }
+  for (const call of code.matchAll(/(?<![\w.])attach_image\(/g)) {
+    viewed = true;
+    for (const arg of args(code, call.index + call[0].length - 1)) add(views, literal(cell, names, arg));
+  }
   const commands: (string | undefined)[] = [];
   for (const call of code.matchAll(/(?<![\w.])(?:bash|os\.system|subprocess\.(?:run|call|check_call|check_output|Popen))\(/g)) {
     const command = args(code, call.index + call[0].length - 1)[0];
@@ -68,6 +77,7 @@ export function readCell(source: string): Cell {
     const diff = replacements(cell);
     return diff ? { kind: "edit", files: [...writes], diff } : { kind: "edit", files: [...writes] };
   }
+  if (viewed) return { kind: "view", files: [...views] };
   const searches = (command: string | undefined) => command !== undefined && SH_SEARCH.test(command.trim());
   const shell = commands.find((command) => !searches(command));
   if (commands.length > 0 && !commands.every(searches)) return withCommand({ kind: "shell", files: [] }, shell);

@@ -4,7 +4,7 @@ use super::*;
 use crate::FAUX_TEST_LOCK;
 
 /// The faux model's per-request output budget (maxTokens `16_384` under the
-/// `32_000` request cap): threshold fixtures subtract it from the window
+/// `32_000` compaction output reserve): threshold fixtures subtract it from the window
 /// alongside the headroom (the combined input+output ceiling).
 const FAUX_REQUEST_BUDGET: u64 = 16_384;
 
