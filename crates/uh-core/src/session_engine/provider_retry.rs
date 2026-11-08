@@ -155,8 +155,14 @@ pub fn has_provider_stream_failure(message: &AssistantMessage) -> bool {
     !is_faux_provider_queue_exhausted(message) && provider_stream_failure_details(message).is_some()
 }
 
-/// Deterministic rejections never retry; auth gets one retry before it can be
-/// marked stale. A 404 is the exception: a live model briefly 404s on routing
+/// How many retries an auth failure gets before it is marked stale: another
+/// process sharing the login may be mid-refresh (an OAuth refresh revokes the
+/// access token the others hold), and the retries reread the stored login, so
+/// a few backoff steps (2 + 4 + 8 + 16 s) let the new token land.
+pub const AUTH_FAILURE_RETRIES: u32 = 4;
+
+/// Deterministic rejections never retry; auth gets [`AUTH_FAILURE_RETRIES`]
+/// before it can be marked stale. A 404 is the exception: a live model briefly 404s on routing
 /// blips, so it counts as transient unavailability, not a permanent rejection.
 /// Safety filters deterministically reject identical requests, so they never
 /// retry (TS #2472: a `content_filter` rejection surfaces immediately).
@@ -173,7 +179,7 @@ pub fn is_permanent_provider_failure_kind(
         // topped up, so it settles on the first attempt (the disclosure
         // row still fires — the failure-scoped outcome).
         Some("invalid_request" | "refusal" | "permission" | "safety" | "payment_required") => true,
-        Some("auth") => retries_performed > 0,
+        Some("auth") => retries_performed >= AUTH_FAILURE_RETRIES,
         _ => false,
     }
 }
@@ -471,15 +477,15 @@ mod tests {
             0,
             Some(400)
         ));
-        // Auth retries once before it can be marked stale.
+        // Auth retries AUTH_FAILURE_RETRIES times before it can be marked stale.
         assert!(!is_permanent_provider_failure_kind(
             Some("auth"),
-            0,
+            AUTH_FAILURE_RETRIES - 1,
             Some(401)
         ));
         assert!(is_permanent_provider_failure_kind(
             Some("auth"),
-            1,
+            AUTH_FAILURE_RETRIES,
             Some(401)
         ));
         // 404 is transient.
