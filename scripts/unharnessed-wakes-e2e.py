@@ -266,4 +266,18 @@ texts = [text for _, _, text in acp_texts(frames)]
 check("ACP wakes on a command the panel stopped", texts == ["started", "notified of the stop"],
       f"texts {texts}")
 
+# 12. ACP: a background command that ends during the turn wakes a turn of
+# its own, once the prompt has answered: the panel shows the two answers apart.
+frames = run_acp("acp_bash_wake_during_turn", [
+    call('h = bash("sleep 1; echo bg-done")'), call("import asyncio\nawait asyncio.sleep(3)"),
+    "first answer", "notified: bg-done"],
+    [{"prompt": "start a background command, then work"}, {"listen": 6}])
+stamp, answer = acp_answer(frames, 3)
+turns = [(turn, text) for _, turn, text in acp_texts(frames)]
+woken = [at for at, _, text in acp_texts(frames) if text == "notified: bg-done"]
+check("ACP wakes after the turn that a background command ended during",
+      answer.get("result", {}).get("stopReason") == "end_turn"
+      and turns == [(1, "first answer"), (2, "notified: bg-done")] and woken[0] > stamp,
+      f"answer at {stamp}, turns {turns}, woken {woken}")
+
 sys.exit(1 if FAILED else 0)

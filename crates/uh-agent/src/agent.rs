@@ -13,8 +13,8 @@ use tokio::sync::watch;
 use crate::abort::{AbortController, AbortSignal};
 use crate::agent_loop::{
     AfterToolCallFn, AgentEventSink, AgentLoopConfig, BeforeToolCallFn, ConvertToLlmFn,
-    GetContinuationMessagesFn, PollMessagesFn, ShouldStopAfterTurnFn, ShouldStopBeforeTurnFn,
-    TransformContextFn,
+    GetContinuationMessagesFn, OutputLimitMessageFn, PollMessagesFn, ShouldStopAfterTurnFn,
+    ShouldStopBeforeTurnFn, TransformContextFn,
 };
 use crate::stream::StreamFn;
 use crate::types::{
@@ -113,6 +113,7 @@ pub struct AgentOptions {
     pub should_stop_after_turn: Option<ShouldStopAfterTurnFn>,
     pub should_stop_before_turn: Option<ShouldStopBeforeTurnFn>,
     pub get_continuation_messages: Option<GetContinuationMessagesFn>,
+    pub output_limit_message: Option<OutputLimitMessageFn>,
     pub steering_mode: Option<QueueMode>,
     pub follow_up_mode: Option<QueueMode>,
     pub session_id: Option<String>,
@@ -353,6 +354,7 @@ struct AgentInner {
     /// own state exists. A plain mutex: cloned at run-config build, never
     /// held across an await.
     get_continuation_messages: Mutex<Option<GetContinuationMessagesFn>>,
+    output_limit_message: Option<OutputLimitMessageFn>,
     /// Per-run model override (TS `Agent.modelOverride`): when set, the
     /// loop config serves every LLM request of the run on this model with
     /// its own thinking level, while the agent state keeps identifying the
@@ -584,6 +586,9 @@ impl AgentInner {
         config.get_steering_messages = Some(steering);
         config.get_follow_up_messages = Some(follow_up);
         config.get_continuation_messages = continuation;
+        config
+            .output_limit_message
+            .clone_from(&self.output_limit_message);
         config.tool_execution = self.tool_execution;
         config.before_tool_call.clone_from(&self.before_tool_call);
         config.after_tool_call.clone_from(&self.after_tool_call);
@@ -818,6 +823,7 @@ impl Agent {
             should_stop_after_turn: Mutex::new(options.should_stop_after_turn),
             should_stop_before_turn: options.should_stop_before_turn,
             get_continuation_messages: Mutex::new(options.get_continuation_messages),
+            output_limit_message: options.output_limit_message,
             model_override: Mutex::new(None),
             session_id: options.session_id,
             tool_execution: options

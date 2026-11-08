@@ -73,7 +73,10 @@ export function readCell(source: string): Cell {
   }
   if (wrote) {
     const edit = EDIT.test(code) || [...writes].some((path) => reads.has(path));
-    if (!edit) return { kind: "write", files: [...writes] };
+    if (!edit) {
+      const diff = writings(cell);
+      return diff ? { kind: "write", files: [...writes], diff } : { kind: "write", files: [...writes] };
+    }
     const diff = replacements(cell);
     return diff ? { kind: "edit", files: [...writes], diff } : { kind: "edit", files: [...writes] };
   }
@@ -160,14 +163,12 @@ function unescape(text: string): string {
 }
 
 /**
- * What an edit's `.replace(old, new)` calls change, when its code writes
- * both texts out: as strings, names set to them, or their `dedent`. Each
- * replacement's lines, kept, removed or added, a `…` between two. Only the
- * texts the code holds: no line of the file around them.
+ * The text an expression at `at` holds, when the code writes it out: a
+ * string (not an f-string, whose text the code computes), a name set to one
+ * before there, or their `dedent`.
  */
-function replacements(cell: Skeleton): Cell["diff"] {
-  const { code } = cell;
-  const assigned = [...code.matchAll(/^[ \t]*(\w+)[ \t]*=(?!=)(.+)$/gm)];
+function texts(cell: Skeleton): (expression: string, at: number) => string | undefined {
+  const assigned = [...cell.code.matchAll(/^[ \t]*(\w+)[ \t]*=(?!=)(.+)$/gm)];
   const text = (expression: string, at: number): string | undefined => {
     const expr = expression.trim();
     let match: RegExpExecArray | null;
@@ -188,6 +189,18 @@ function replacements(cell: Skeleton): Cell["diff"] {
     }
     return undefined;
   };
+  return text;
+}
+
+/**
+ * What an edit's `.replace(old, new)` calls change, when its code writes
+ * both texts out (texts). Each replacement's lines, kept, removed or added,
+ * a `…` between two. Only the texts the code holds: no line of the file
+ * around them.
+ */
+function replacements(cell: Skeleton): Cell["diff"] {
+  const { code } = cell;
+  const text = texts(cell);
   const lines: DiffLine[] = [];
   for (const call of code.matchAll(/\.replace\(/g)) {
     const given = args(code, call.index + call[0].length - 1);
@@ -201,6 +214,31 @@ function replacements(cell: Skeleton): Cell["diff"] {
   if (lines.length === 0) return undefined;
   const count = (sign: DiffLine[0]) => lines.filter((line) => line[0] === sign).length;
   return { lines, added: count("+"), removed: count("-") };
+}
+
+/**
+ * What a cell that writes files writes, when its code writes the text out
+ * (texts): what `.write_text`, `.write_bytes` or `.write` is given, all its
+ * lines added, a `…` between two. Whether a file was there before, and what
+ * it held, the code does not say: nothing is removed.
+ */
+function writings(cell: Skeleton): Cell["diff"] {
+  const { code } = cell;
+  const text = texts(cell);
+  const lines: DiffLine[] = [];
+  for (const call of code.matchAll(/\.(write_text|write_bytes|write)\(/g)) {
+    if (call[1] === "write" && /^sys\.std(?:out|err)$/.test(receiver(code, call.index))) continue;
+    const given = args(code, call.index + call[0].length - 1);
+    const written = given.length > 0 ? text(given[0], call.index) : undefined;
+    if (!written) continue;
+    const rows = written.split("\n");
+    // A text that ends with a line break: nothing after it.
+    if (rows.length > 1 && rows.at(-1) === "") rows.pop();
+    if (lines.length > 0) lines.push(["…", ""]);
+    lines.push(...rows.map((row): DiffLine => ["+", row]));
+  }
+  if (lines.length === 0) return undefined;
+  return { lines, added: lines.filter((line) => line[0] === "+").length, removed: 0 };
 }
 
 /** `textwrap.dedent`: the white space every non-blank line starts with, taken off. */

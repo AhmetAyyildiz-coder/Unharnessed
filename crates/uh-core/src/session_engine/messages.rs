@@ -33,6 +33,9 @@ pub const ASYNC_BASH_COMPLETION_CUSTOM_TYPE: &str = "async_bash_completion";
 /// notice's queued row carries (the TUI renders it with its own label,
 /// no lane prefix).
 pub const ASYNC_BASH_COMPLETION_PREVIEW_LABEL: &str = "Background command finished";
+/// The row the agent loop adds when the provider cut a response at the
+/// output limit: the model reads it as the user's turn and goes on.
+pub const OUTPUT_LIMIT_CUSTOM_TYPE: &str = "output_limit";
 
 /// Why an unsuccessful compaction ran (TS `CompactionOutcomeReason`): the
 /// automatic threshold trigger or the overflow recovery.
@@ -191,6 +194,23 @@ pub fn create_async_bash_completion_message(
             "exitCode": exit_code,
         })),
         timestamp,
+        rest: serde_json::Map::default(),
+    }
+}
+
+/// The row that asks the model to go on after the provider cut its
+/// response at the output limit (see [`OUTPUT_LIMIT_CUSTOM_TYPE`]).
+#[must_use]
+pub fn create_output_limit_message() -> uh_types::session::CustomMessage {
+    uh_types::session::CustomMessage {
+        custom_type: OUTPUT_LIMIT_CUSTOM_TYPE.to_string(),
+        content: UserContent::Text(
+            "Your response hit the output limit and was cut off. Continue from where it stopped; break the remaining work into smaller steps."
+                .to_string(),
+        ),
+        display: true,
+        details: None,
+        timestamp: now_millis(),
         rest: serde_json::Map::default(),
     }
 }

@@ -44,6 +44,7 @@ mod rewind;
 mod session;
 mod settings;
 mod skills;
+mod steer;
 mod types;
 mod usage;
 
@@ -316,8 +317,8 @@ async fn terminated() {
 }
 
 /// Start a wake turn for each wake that comes due. A wake that cannot run
-/// yet (a prompt turn holds the session and delivers it at its end, or no
-/// session is open) goes back to the queue until the next change.
+/// yet (a prompt turn holds the session, or no session is open) goes back
+/// to the queue until the next change: the turn's end is one.
 async fn watch_wakes(
     state: Arc<Mutex<ConnectionState>>,
     mode: AcpModeState,
@@ -476,6 +477,7 @@ async fn handle_request(
             handle_session_close(id, params, state, mode, tx).await;
         }
         rewind::REWIND => rewind::handle_rewind(id, params, state, mode, tx).await,
+        steer::STEER => steer::handle_steer(id, params, state, mode, tx).await,
         other => {
             let _ = tx.send(jsonrpc::error_response(
                 &id,

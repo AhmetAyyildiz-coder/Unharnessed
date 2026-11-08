@@ -20,6 +20,10 @@ use super::{AgentEventSink, AgentLoopConfig};
 // The loop
 // ---------------------------------------------------------------------------
 
+/// How many responses in a row the provider may cut at the output limit
+/// before the run ends on the cut one.
+const MAX_OUTPUT_LIMIT_CONTINUATIONS: u32 = 3;
+
 /// Port of `runLoop`.
 // Direct port of the TS turn loop; refactoring is out of scope for this
 // zero-behavior-change sweep.
@@ -34,6 +38,7 @@ pub(crate) async fn run_loop(
 ) -> anyhow::Result<()> {
     let mut first_turn = true;
     let mut last_turn: Option<ShouldStopAfterTurnContext> = None;
+    let mut cut_in_a_row = 0;
     let mut pending_messages =
         poll_messages_unless_aborted(config.get_steering_messages.as_ref(), signal).await?;
 
@@ -99,6 +104,19 @@ pub(crate) async fn run_loop(
                 .into_iter()
                 .cloned()
                 .collect::<Vec<ToolCall>>();
+
+            // The provider cut the response at the output limit before the
+            // model ended its turn: it goes on from there. A response cut
+            // before it said anything is a context overflow, the host's.
+            let cut = message.stop_reason == StopReason::Length
+                && tool_calls.is_empty()
+                && message.usage.output > 0;
+            cut_in_a_row = if cut { cut_in_a_row + 1 } else { 0 };
+            let go_on = config
+                .output_limit_message
+                .as_ref()
+                .filter(|_| cut && cut_in_a_row <= MAX_OUTPUT_LIMIT_CONTINUATIONS)
+                .and_then(|row| row());
 
             let mut tool_results: Vec<ToolResultMessage> = Vec::new();
             has_more_tool_calls = false;
@@ -180,7 +198,7 @@ pub(crate) async fn run_loop(
                     return Ok(());
                 }
                 PostTurnResult::Completed(messages) => {
-                    pending_messages = messages;
+                    pending_messages = go_on.into_iter().chain(messages).collect();
                     // Steering drained by this poll owns the turn boundary;
                     // stop only when it was empty.
                     if pending_messages.is_empty() && should_stop_before_turn!() {

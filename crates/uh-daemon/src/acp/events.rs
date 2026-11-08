@@ -72,6 +72,9 @@ pub enum AcpEngineEvent {
     MessageEnd {
         role: String,
     },
+    /// The provider cut the response at the output limit, and the agent
+    /// goes on.
+    OutputLimit,
     ToolExecutionStart {
         tool_call_id: String,
         tool_name: String,
@@ -161,6 +164,10 @@ pub fn acp_updates_for_event(
             state.open_thinking_blocks = 0;
             Vec::new()
         }
+        AcpEngineEvent::OutputLimit => vec![session_info_update(&UnharnessedSessionMeta {
+            output_limit: Some(true),
+            ..Default::default()
+        })],
         AcpEngineEvent::MessageStart { .. }
         | AcpEngineEvent::AssistantDelta { .. }
         | AcpEngineEvent::MessageEnd { .. } => Vec::new(),

@@ -6,6 +6,7 @@ import { History } from "./history";
 import { Providers } from "./providers";
 import { Settings } from "./settings";
 import { ShownAgent } from "./shown";
+import { ToolTabs } from "./tabs";
 import type { WebviewMessage } from "./protocol";
 import { ChatViewProvider } from "./view";
 
@@ -26,9 +27,15 @@ export function activate(context: vscode.ExtensionContext): void {
   const sleepAfter = process.env.UNHARNESSED_E2E_LOGS ? Number(process.env.UNHARNESSED_E2E_SLEEP_MS) || undefined : undefined;
   conversations = new Conversations(binary, cwd, version, files, shown, log, sleepAfter);
   const history = new History(shown, conversations, cwd, log);
-  const view = new ChatViewProvider(context.extensionUri, conversations, providers, settings, history, files, log);
+  const tabs = new ToolTabs();
+  const view = new ChatViewProvider(context.extensionUri, conversations, providers, settings, history, files, tabs, log);
 
-  context.subscriptions.push(log, vscode.window.registerWebviewViewProvider(ChatViewProvider.viewId, view));
+  context.subscriptions.push(
+    log,
+    tabs,
+    vscode.workspace.registerTextDocumentContentProvider(ToolTabs.scheme, tabs),
+    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewId, view),
+  );
   // The E2E drives the panel's messages from its suite (test/e2e/suite.cjs).
   if (process.env.UNHARNESSED_E2E_LOGS) {
     context.subscriptions.push(

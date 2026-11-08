@@ -44,12 +44,19 @@ export function App() {
   const [kernel, setKernel] = useState<KernelState>({ commands: [], variables: [] });
   const [paths, setPaths] = useState<Paths | null>(null);
   const [draft, setDraft] = useState<Draft>(() => ({ text: savedDraft(), images: [] }));
-  /** A sent prompt being changed in the message box, and the draft it pushed out, back once the edit ends. */
-  const [editing, setEditing] = useState<{ id: number; saved: Draft } | null>(null);
+  /**
+   * A sent prompt being changed in the message box, or a waiting message
+   * (`queued`), and the draft it pushed out, back once the edit ends.
+   */
+  const [editing, setEditing] = useState<{ id: number; saved: Draft; queued: boolean } | null>(null);
   const draftNow = useRef(draft);
   useEffect(() => {
     draftNow.current = draft;
   }, [draft]);
+  const editingNow = useRef(editing);
+  useEffect(() => {
+    editingNow.current = editing;
+  }, [editing]);
   const [managing, setManaging] = useState(false);
   const [tuning, setTuning] = useState(false);
   const splashDone = useCallback(() => setPhase("main"), []);
@@ -90,18 +97,12 @@ export function App() {
         case "history":
           setHistory(message.history);
           break;
-        case "chatDraft": {
-          // The waiting messages come first: they were written before.
-          const { text, images } = message;
-          setDraft((draft) => ({
-            text: [text, draft.text].filter(Boolean).join("\n\n"),
-            images: [...images, ...draft.images],
-          }));
-          break;
-        }
         case "chatEdit": {
-          const { id, text, images } = message;
-          setEditing((editing) => ({ id, saved: editing?.saved ?? draftNow.current }));
+          const { id, text, images, queued } = message;
+          const was = editingNow.current;
+          // The waiting message changed before stays as it was.
+          if (was?.queued && was.id !== id) post({ type: "release", id: was.id });
+          setEditing({ id, saved: was?.saved ?? draftNow.current, queued });
           setDraft({ text, images });
           break;
         }
@@ -140,14 +141,19 @@ export function App() {
   }, []);
 
   const endEdit = () => {
+    if (editing?.queued) post({ type: "release", id: editing.id });
     if (editing) setDraft(editing.saved);
     setEditing(null);
   };
-  // The edited turn left (a new conversation, an agent that restarted): the text stays, as a new message.
+  // The edited turn or waiting message left (a new conversation, a restarted agent): the text stays, as a new message.
   useEffect(() => {
-    const turn = editing && chat.entries.find((entry) => entry.id === editing.id);
-    if (editing && (turn?.kind !== "turn" || turn.rewindTo === undefined)) setEditing(null);
-  }, [chat.entries, editing]);
+    if (!editing) return;
+    const turn = chat.entries.find((entry) => entry.id === editing.id);
+    const left = editing.queued
+      ? !chat.queue.some((message) => message.id === editing.id)
+      : turn?.kind !== "turn" || turn.rewindTo === undefined;
+    if (left) setEditing(null);
+  }, [chat.entries, chat.queue, editing]);
 
   // Nothing connected yet: the providers screen is the way in.
   const onboarding = providers !== null && !providers.some((p) => p.connected);

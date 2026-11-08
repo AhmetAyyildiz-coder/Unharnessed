@@ -91,6 +91,10 @@ pub struct UnharnessedSessionMeta {
     pub command: Option<UnharnessedCommandMeta>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<UnharnessedThinkingMeta>,
+    /// The provider cut the agent's response at the output limit: the agent
+    /// goes on from where it stopped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_limit: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_end: Option<UnharnessedTurnEndMeta>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,7 +175,8 @@ pub struct UnharnessedThinkingMeta {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnharnessedTurnStartMeta {
-    /// `prompt` or `wake`.
+    /// `prompt`, `wake`, or `steer`: a message steered into the running
+    /// turn (`_unharnessed/session/steer`) joined it here.
     pub origin: String,
     /// What woke the agent: `bash` (a detached `bash()` finished), `quota`
     /// (a provider usage limit reset), `goal` (a goal backoff passed, or its

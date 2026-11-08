@@ -33,7 +33,9 @@ import {
   IconCompact,
   IconCross,
   IconFlag,
+  IconGrip,
   IconPencil,
+  IconPlay,
   IconPlus,
   IconSend,
   IconStop,
@@ -46,9 +48,12 @@ import { isLocal, ModelList, providerName } from "./models";
 import { PickMenu } from "./PickMenu";
 import { Popover } from "./Popover";
 import { UsageRing } from "./Usage";
-import { post } from "./vscode";
+import { onHostMessage, post } from "./vscode";
 
 const PLACEHOLDER = "Ask Unharnessed";
+
+/** The keys that send a message into the running turn. */
+const NOW_KEYS = /Mac/.test(navigator.userAgent) ? "⌘⏎" : "Ctrl+Enter";
 
 const set = (change: ConfigChange) => post({ type: "setConfig", ...change });
 
@@ -92,15 +97,17 @@ const KINDS: Record<ChatCommand["kind"], string> = {
 
 /**
  * The message box at the bottom of home: what is being written and the
- * images it carries, the messages waiting for the running turn, and the
- * session's pickers (the model, its reasoning effort, its fast mode). Over
- * it, the agent's background commands and REPL variables (Kernel.tsx).
- * Enter sends; while a turn runs the message waits, and stop ends the turn.
+ * images it carries, the messages waiting for the running turn on top, and
+ * the session's pickers (the model, its reasoning effort, its fast mode).
+ * Over it, the agent's background commands and REPL variables (Kernel.tsx).
+ * Enter sends; while a turn runs the message waits, ⌘/Ctrl+Enter sends it
+ * into the turn, and stop ends the turn.
  * While there is a goal, its line tops the box, and its timer with pause and
  * play stands in for stop.
  * A `/` at the start opens the commands, prompts and skills. While turn
- * `editing`'s prompt is in it, sending it goes in place of that prompt;
- * `onEditEnd` ends the edit, sent or given up.
+ * `editing`'s prompt is in it, sending it goes in place of that prompt (a
+ * waiting message's, in its place in the queue); `onEditEnd` ends the edit,
+ * sent or given up.
  */
 export function Composer({
   session,
@@ -144,6 +151,7 @@ export function Composer({
   const toggle = (next: Menu) => setMenu((open) => (open === next ? null : next));
   const close = () => setMenu(null);
   const hasContent = draft.text.trim() !== "" || draft.images.length > 0;
+  const editingQueued = editing !== null && chat.queue.some((message) => message.id === editing);
   const phase = goalPhase(chat.goal);
   const lit = useGoalLight(shell, glow, phase);
 
@@ -188,6 +196,24 @@ export function Composer({
     box.setSelectionRange(box.value.length, box.value.length);
   }, [editing]);
 
+  // VS Code takes a drag of files that reaches the panel for its editors, unless Shift is held: one the box
+  // can take stays in the panel, refused outside the box.
+  useEffect(() => {
+    const keep = (event: globalThis.DragEvent) => {
+      if (!droppable(event.dataTransfer)) return;
+      event.stopPropagation();
+      if (event.defaultPrevented) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "none";
+    };
+    document.addEventListener("dragenter", keep);
+    document.addEventListener("dragover", keep);
+    return () => {
+      document.removeEventListener("dragenter", keep);
+      document.removeEventListener("dragover", keep);
+    };
+  }, []);
+
   const setText = (text: string) => onDraft((current) => ({ ...current, text }));
   const edit = (text: string, caretAt: number) => {
     placeCaret.current = caretAt;
@@ -214,9 +240,25 @@ export function Composer({
     }
   };
 
-  const submit = () => {
+  // The images the extension read from a drop out of VS Code; subscribed anew each render, for the current draft.
+  useEffect(() =>
+    onHostMessage((message) => {
+      if (message.type !== "droppedImages") return;
+      addFiles(message.images.map(fileOf));
+      if (message.errors.length > 0) setNotes((current) => [...current, ...message.errors]);
+    }),
+  );
+
+  /** `now`: into the running turn. */
+  const submit = (now = false) => {
     if (!hasContent) return;
-    post({ type: "send", text: draft.text.trim(), images: draft.images, edit: editing ?? undefined });
+    post({
+      type: "send",
+      text: draft.text.trim(),
+      images: draft.images,
+      edit: editing ?? undefined,
+      now: now || undefined,
+    });
     if (editing === null) onDraft(() => ({ text: "", images: [] }));
     else onEditEnd();
     setNotes([]);
@@ -274,7 +316,7 @@ export function Composer({
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      submit();
+      submit(event.metaKey || event.ctrlKey);
     }
     if (event.key === "Escape" && editing !== null) {
       event.preventDefault();
@@ -292,9 +334,19 @@ export function Composer({
 
   const onDrop = (event: DragEvent) => {
     setDragging(false);
-    if (event.dataTransfer.files.length === 0) return;
+    if (!droppable(event.dataTransfer)) return;
     event.preventDefault();
-    addFiles([...event.dataTransfer.files]);
+    if (event.dataTransfer.files.length > 0) {
+      addFiles([...event.dataTransfer.files]);
+      return;
+    }
+    // From VS Code (the explorer, a tab): files' URIs, which the extension reads.
+    const list = event.dataTransfer.getData(CODE_URIS) || event.dataTransfer.getData("text/uri-list");
+    const uris = list
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line !== "" && !line.startsWith("#"));
+    if (uris.length > 0) post({ type: "readImages", uris });
   };
 
   const current = config?.model?.choices.find((choice) => choice.value === config.model?.current);
@@ -303,17 +355,17 @@ export function Composer({
     draft.images.length > 0 && !images.imageModel && !!current?.input.length && !current.input.includes("image");
 
   return (
-    // The dock: the box, the waiting messages over it, the kernel's pills over them (laid over the conversation's end).
+    // The dock: the box, the waiting messages on its top, the kernel's pills over it (laid over the conversation's end).
     <div className="dock">
       <KernelTray kernel={kernel} />
-      {chat.queue.length > 0 && <Queue queue={chat.queue} />}
       <div
         ref={shell}
         className={dragging ? "composer-shell is-dragging" : "composer-shell"}
         data-goal={phase ?? undefined}
         onDragOver={(event) => {
-          if (!event.dataTransfer.types.includes("Files")) return;
+          if (!droppable(event.dataTransfer)) return;
           event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
           setDragging(true);
         }}
         onDragLeave={() => setDragging(false)}
@@ -344,11 +396,12 @@ export function Composer({
               onClose={() => setDismissed(shutKey)}
             />
           )}
+          {chat.queue.length > 0 && <Queue queue={chat.queue} paused={chat.paused} busy={chat.busy} />}
           <GoalHead goal={chat.goal} lit={lit} />
           {editing !== null && (
             <div className="composer-editing">
               <IconPencil />
-              <span>Editing an earlier message</span>
+              <span>{editingQueued ? "Editing a waiting message" : "Editing an earlier message"}</span>
               <button
                 className="icon-button"
                 type="button"
@@ -420,7 +473,7 @@ export function Composer({
               className="chip"
               type="button"
               aria-label="Attach images"
-              data-tip={images.block ? "Images are blocked in the settings" : "Attach images"}
+              data-tip={images.block ? "Images are blocked in the settings" : "Attach images, or drop them with Shift held"}
               data-tip-align="start"
               disabled={images.block}
               onClick={() => picker.current?.click()}
@@ -463,10 +516,16 @@ export function Composer({
                 className="send"
                 type="button"
                 aria-label="Send"
-                data-tip={chat.busy ? "Send when the agent is done" : "Send"}
+                data-tip={
+                  editingQueued
+                    ? "Keep it in its place"
+                    : chat.busy
+                      ? `Send when the agent is done; ${NOW_KEYS} sends it now`
+                      : "Send"
+                }
                 data-tip-align="end"
                 disabled={!hasContent}
-                onClick={submit}
+                onClick={() => submit()}
               >
                 <IconSend />
               </button>
@@ -643,6 +702,19 @@ function FileMenu({
   );
 }
 
+/** What VS Code puts on a drag from the explorer or a tab: every dragged file's URI (`text/uri-list` has the first). */
+const CODE_URIS = "application/vnd.code.uri-list";
+
+/** A drag the message box takes: files, or files' URIs. */
+function droppable(data: DataTransfer | null): data is DataTransfer {
+  return !!data && ["Files", CODE_URIS, "text/uri-list"].some((type) => data.types.includes(type));
+}
+
+/** An image the extension read, as a file to attach. */
+function fileOf({ name, mimeType, data }: { name: string; mimeType: string; data: string }): File {
+  return new File([Uint8Array.from(atob(data), (char) => char.charCodeAt(0))], name, { type: mimeType });
+}
+
 /** The images the message carries, each with its remove button. */
 function Attachments({ images, onRemove }: { images: Attachment[]; onRemove: (at: number) => void }) {
   return (
@@ -664,29 +736,163 @@ function Attachments({ images, onRemove }: { images: Attachment[]; onRemove: (at
   );
 }
 
-/** The messages waiting for the running turn, in the order they go. */
-function Queue({ queue }: { queue: QueuedMessage[] }) {
+/** What a waiting message's drag carries: its id. */
+const QUEUED = "application/x-unharnessed-queued";
+
+/**
+ * The messages waiting for the running turn, on top of the box, in the
+ * order they go: those sent into the turn and not taken yet first. One goes
+ * now, comes back to the box to be changed, or leaves; dragged, it takes
+ * another place. A stop pauses them, play sends them again.
+ */
+function Queue({ queue, paused, busy }: { queue: QueuedMessage[]; paused: boolean; busy: boolean }) {
+  const [open, setOpen] = useState(true);
+  const [dragged, setDragged] = useState<number | null>(null);
+  /** Where the dragged one would land: before the waiting message at this place, or last past them. */
+  const [target, setTarget] = useState<number | null>(null);
+  const waiting = queue.filter((message) => message.state !== "steering");
+  const from = waiting.findIndex((message) => message.id === dragged);
+  // Before or after itself, it would not move.
+  const landing = target !== null && from >= 0 && target !== from && target !== from + 1 ? target : null;
+
+  const end = () => {
+    setDragged(null);
+    setTarget(null);
+  };
+  const drop = () => {
+    if (dragged !== null && landing !== null) {
+      post({ type: "moveQueued", id: dragged, to: landing > from ? landing - 1 : landing });
+    }
+    end();
+  };
+
   return (
-    <ul className="queue" aria-label="Waiting messages">
-      {queue.map((message) => (
-        <li className="queued" key={message.id}>
-          <span className="queued-label">Next</span>
-          <span className="queued-text">
-            {message.text || `${message.images.length} image${message.images.length > 1 ? "s" : ""}`}
-          </span>
+    <div className={paused ? "queue is-paused" : "queue"}>
+      <div className="queue-head">
+        <button className="queue-toggle" type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <IconChevronDown />
+          <span>{paused ? "Paused" : "Waiting"}</span>
+          <span className="queue-count">{queue.length}</span>
+        </button>
+        {paused && (
           <button
-            className="queued-remove"
+            className="queue-resume"
             type="button"
-            aria-label="Remove"
-            data-tip="Remove"
+            data-tip="Send them again, in order"
             data-tip-align="end"
-            onClick={() => post({ type: "unqueue", id: message.id })}
+            onClick={() => post({ type: "resumeQueue" })}
           >
-            <IconCross />
+            <IconPlay />
+            Resume
           </button>
-        </li>
-      ))}
-    </ul>
+        )}
+      </div>
+      <div className={open ? "queue-drawer is-open" : "queue-drawer"}>
+        <ol className="queue-list" aria-label="Waiting messages">
+          {queue.map((message) => {
+            const at = waiting.indexOf(message);
+            const movable = message.state === "waiting" && waiting.length > 1;
+            const edge =
+              landing === null
+                ? undefined
+                : landing === at
+                  ? "before"
+                  : landing === at + 1 && at === waiting.length - 1
+                    ? "after"
+                    : undefined;
+            return (
+              <li
+                key={message.id}
+                className={message.id === dragged ? "queued is-dragged" : "queued"}
+                data-state={message.state}
+                data-drop={edge}
+                draggable={movable}
+                onDragStart={(event) => {
+                  event.dataTransfer.setData(QUEUED, String(message.id));
+                  event.dataTransfer.effectAllowed = "move";
+                  setDragged(message.id);
+                }}
+                onDragOver={(event) => {
+                  if (dragged === null || at < 0) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  const box = event.currentTarget.getBoundingClientRect();
+                  setTarget(event.clientY > box.top + box.height / 2 ? at + 1 : at);
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  drop();
+                }}
+                onDragEnd={end}
+              >
+                <span className="queued-mark" aria-hidden="true">
+                  {message.state === "steering" ? (
+                    <span className="queued-dot" />
+                  ) : message.state === "held" ? (
+                    <IconPencil />
+                  ) : (
+                    <>
+                      <span className="queued-index">{at + 1}</span>
+                      {movable && <IconGrip className="queued-grip" />}
+                    </>
+                  )}
+                </span>
+                <button
+                  className="queued-text"
+                  type="button"
+                  disabled={message.state !== "waiting"}
+                  onClick={() => post({ type: "edit", id: message.id })}
+                >
+                  {message.text || `${message.images.length} image${message.images.length > 1 ? "s" : ""}`}
+                </button>
+                {message.images.length > 0 && (
+                  <span className="queued-thumbs">
+                    {message.images.slice(0, 3).map((image, i) => (
+                      <img key={i} src={image.thumb} alt={image.name} />
+                    ))}
+                    {message.images.length > 3 && <span className="queued-more">+{message.images.length - 3}</span>}
+                  </span>
+                )}
+                {message.state === "waiting" ? (
+                  <span className="queued-actions">
+                    <button
+                      className="queued-action is-now"
+                      type="button"
+                      aria-label="Send now"
+                      data-tip={busy ? "Send now: the agent reads it at its next step" : "Send now"}
+                      onClick={() => post({ type: "sendNow", id: message.id })}
+                    >
+                      <IconSend />
+                    </button>
+                    <button
+                      className="queued-action"
+                      type="button"
+                      aria-label="Edit"
+                      data-tip="Edit"
+                      onClick={() => post({ type: "edit", id: message.id })}
+                    >
+                      <IconPencil />
+                    </button>
+                    <button
+                      className="queued-action"
+                      type="button"
+                      aria-label="Remove"
+                      data-tip="Remove"
+                      data-tip-align="end"
+                      onClick={() => post({ type: "unqueue", id: message.id })}
+                    >
+                      <IconCross />
+                    </button>
+                  </span>
+                ) : (
+                  <span className="queued-tag">{message.state === "steering" ? "Sending" : "Editing"}</span>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    </div>
   );
 }
 

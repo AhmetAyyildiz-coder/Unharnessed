@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """End-to-end checks of the per-request output budget on the real binary:
 a request asks for the model's whole max output, a long context clamps it
-to the room the window leaves (measured from the last answer's usage), and a
-folded thinking budget stays inside that room.
+to the room the window leaves (measured from the last answer's usage), a
+folded thinking budget stays inside that room, and a response the API cut
+at that limit goes on (three times in a row at most).
 
 usage: scripts/unharnessed-output-budget-e2e.py <out-dir>
 
@@ -55,26 +56,39 @@ def text(answer, context_tokens):
     return {"text": answer, "input": context_tokens}
 
 
+def cut(thinking, output_tokens):
+    """A response the API cut at max_tokens while the model still thought."""
+    return {"thinking": thinking, "input": 2_000, "output": output_tokens}
+
+
 def sse(answer):
-    """One Messages API stream: a tool call or a text block."""
+    """One Messages API stream: a tool call, a text block, or a thinking
+    block cut at max_tokens."""
     events = [("message_start", {"type": "message_start", "message": {
         "id": "msg_e2e", "type": "message", "role": "assistant", "model": "fake", "content": [],
         "stop_reason": None, "usage": {"input_tokens": answer["input"], "output_tokens": 1,
                                        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}})]
+    deltas = []
     if "tool" in answer:
         block = {"type": "tool_use", "id": "toolu_e2e", "name": "ipython", "input": {}}
-        delta = {"type": "input_json_delta", "partial_json": json.dumps({"code": answer["tool"]})}
+        deltas.append({"type": "input_json_delta", "partial_json": json.dumps({"code": answer["tool"]})})
         stop = "tool_use"
+    elif "thinking" in answer:
+        block = {"type": "thinking", "thinking": "", "signature": ""}
+        deltas += [{"type": "thinking_delta", "thinking": answer["thinking"]},
+                   {"type": "signature_delta", "signature": "sig-e2e"}]
+        stop = "max_tokens"
     else:
         block = {"type": "text", "text": ""}
-        delta = {"type": "text_delta", "text": answer["text"]}
+        deltas.append({"type": "text_delta", "text": answer["text"]})
         stop = "end_turn"
-    events += [("content_block_start", {"type": "content_block_start", "index": 0, "content_block": block}),
-               ("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": delta}),
-               ("content_block_stop", {"type": "content_block_stop", "index": 0}),
+    events.append(("content_block_start", {"type": "content_block_start", "index": 0, "content_block": block}))
+    events += [("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": delta})
+               for delta in deltas]
+    events += [("content_block_stop", {"type": "content_block_stop", "index": 0}),
                # The final usage, as the Messages API sends it: input counts included.
                ("message_delta", {"type": "message_delta", "delta": {"stop_reason": stop}, "usage": {
-                   "input_tokens": answer["input"], "output_tokens": 20,
+                   "input_tokens": answer["input"], "output_tokens": answer.get("output", 20),
                    "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}),
                ("message_stop", {"type": "message_stop"})]
     return "".join(f"event: {name}\ndata: {json.dumps(data)}\n\n" for name, data in events).encode()
@@ -159,6 +173,34 @@ check("a fresh budgeted request asks the model's max with its budget inside",
 check("a long context keeps max_tokens and the budget inside the room",
       len(sent) == 2 and sent[1][0] is not None and sent[1][0] <= 25_000
       and sent[1][1] is not None and sent[1][1] < sent[1][0], f"(max_tokens, budget) {sent}")
+
+# 4. A response the API cut at the output limit, the model still thinking,
+# goes on in the same run: the next request carries the cut thinking, then
+# the row that asks the model to go on.
+THOUGHT = "Weighing the muzzle blast against the room's reflections"
+code, requests = run("cut_goes_on", OPUS, "max", [cut(THOUGHT, 128_000), text("done", 2_100)])
+tail = requests[1]["messages"][-2:] if len(requests) == 2 else []
+check("a response cut at the output limit goes on in the same run",
+      code == 0 and len(tail) == 2 and tail[0]["role"] == "assistant"
+      and any(block.get("thinking") == THOUGHT for block in tail[0]["content"])
+      and tail[1]["role"] == "user" and "output limit" in json.dumps(tail[1]["content"]),
+      f"exit {code}, {len(requests)} requests, last messages {json.dumps(tail)[:600]}")
+events = [json.loads(line) for line in (OUT / "cut_goes_on.out").read_text().splitlines()[1:]
+          if line.startswith("{")]
+ends = [event["message"].get("content") for event in events if event.get("type") == "message_end"]
+check("and the run answers after it",
+      ends[-1:] == [[{"type": "text", "text": "done"}]]
+      and [event["type"] for event in events].count("agent_end") == 1, f"last message {ends[-1:]}")
+
+# 5. Cut again and again: three times it goes on, then the run ends on the cut.
+code, requests = run("cut_three_times_at_most", OPUS, "max", [cut(THOUGHT, 128_000)] * 5)
+check("a response cut again and again goes on three times, then the run ends",
+      code == 0 and len(requests) == 4, f"exit {code}, {len(requests)} requests")
+
+# 6. Cut before any output: not an answer to go on with.
+code, requests = run("cut_before_output", OPUS, "max", [cut("", 0)])
+check("a response cut before any output does not go on", len(requests) == 1,
+      f"exit {code}, {len(requests)} requests")
 
 STAND_IN.server.shutdown()
 sys.exit(1 if FAILED else 0)

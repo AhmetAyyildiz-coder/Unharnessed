@@ -523,6 +523,13 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         // the run at the boundary; the pump delivers it next). The
         // after-turn hook is the session's (see `install_stop_after_turn`).
         should_stop_before_turn: config.queued_steering_probe.clone(),
+        // A response the provider cut at the output limit goes on: this row
+        // asks the model to (a durable row like any the loop admits).
+        output_limit_message: Some(Arc::new(|| {
+            super::session_message_to_loop(&uh_types::session::AgentMessage::Custom(
+                super::messages::create_output_limit_message(),
+            ))
+        })),
         // TS `sdk.ts`: the Agent's steering/follow-up queues drain per
         // the session's configured modes (default "one-at-a-time").
         steering_mode: config.steering_mode,

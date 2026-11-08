@@ -39,6 +39,7 @@ use super::meta::{
     UnharnessedTurnStartMeta,
 };
 use super::producer::FrameSink;
+use super::session::STEER_CUSTOM_TYPE;
 use super::types::AcpSessionUpdate;
 
 pub(super) const DELETE: &str = "_unharnessed/sessions/delete";
@@ -180,6 +181,9 @@ pub(super) fn replay(entries: &[FileEntry], leaf: Option<&str>) -> Vec<Vec<AcpSe
                 payload.display,
                 payload.details.as_ref(),
             ),
+            FileEntry::Custom { payload, .. } if payload.custom_type == STEER_CUSTOM_TYPE => {
+                replay.steered = true;
+            }
             FileEntry::Compaction { payload, .. } => {
                 replay.push_event(&AcpEngineEvent::CompactionEnd {
                     tokens_before: Some(payload.tokens_before),
@@ -206,6 +210,8 @@ struct Replay {
     prompts: u64,
     /// The parent of the entry being read: where a prompt's turn goes back.
     rewind_to: Option<String>,
+    /// The next prompt was steered into the turn under way.
+    steered: bool,
 }
 
 impl Replay {
@@ -220,6 +226,11 @@ impl Replay {
                 {
                     self.start(Some("goal"));
                 } else {
+                    // The turn it was steered into went on in its own.
+                    if self.open && self.steered {
+                        self.end = Some(("done", None));
+                    }
+                    self.steered = false;
                     self.start_prompt(&user.content);
                 }
             }
@@ -291,7 +302,8 @@ impl Replay {
     }
 
     /// A row the agent wrote: a slash command and its answer, what woke it,
-    /// a goal's continuation; the others are its own bookkeeping.
+    /// a goal's continuation, an answer cut at the output limit; the others
+    /// are its own bookkeeping.
     fn custom(
         &mut self,
         kind: &str,
@@ -331,6 +343,12 @@ impl Replay {
                 self.start(Some("bash"));
             }
             uh_core::goals::GOAL_CONTEXT_CUSTOM_TYPE if !self.open => self.go_on(),
+            // The provider cut the answer at the output limit: the turn
+            // went on.
+            uh_core::session_engine::messages::OUTPUT_LIMIT_CUSTOM_TYPE => {
+                self.go_on();
+                self.push_event(&AcpEngineEvent::OutputLimit);
+            }
             _ => {}
         }
     }

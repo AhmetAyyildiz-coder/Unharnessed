@@ -27,6 +27,8 @@ const FLUSH_MS = 40;
 const OUTPUT_LIMIT = 20_000;
 /** The agent's kernel came back (crates/uh-daemon/src/acp/kernel.rs). */
 const RESTORED = "_unharnessed/kernel/restored";
+/** A message into the running turn (crates/uh-daemon/src/acp/steer.rs). */
+const STEER = "_unharnessed/session/steer";
 
 /** The panel's own commands, beside the agent's. */
 const PANEL_COMMANDS: ChatCommand[] = [{ name: "new", description: "Start a new conversation", kind: "panel" }];
@@ -37,22 +39,25 @@ type Turn = TurnHead & { items: TurnItem[] };
 /**
  * `edit`: the turn whose prompt it replaces. `quiet`: the goal's pause or
  * play, from the panel's buttons; shown neither waiting nor as a prompt.
+ * `held`: back in the message box to be changed; the queue waits at it.
  */
-type Queued = { id: number; text: string; images: Attachment[]; edit?: number; quiet?: boolean };
+type Queued = { id: number; text: string; images: Attachment[]; edit?: number; quiet?: boolean; held?: boolean };
 type Tool = Extract<TurnItem, { kind: "tool" }>;
 type Compaction = Extract<TurnItem, { kind: "compaction" }>;
 /** A compaction's mark: its turn, and where in it. */
 type Mark = { turn: Turn; at: number };
-export type ChatMessage = Extract<HostMessage, { type: "chat" | "chatPatch" | "chatDraft" | "chatEdit" }>;
+export type ChatMessage = Extract<HostMessage, { type: "chat" | "chatPatch" | "chatEdit" }>;
 
 /** `_meta.unharnessed` on an update (crates/uh-daemon/src/acp/meta.rs), the parts read here. */
 type Meta = {
   promptTurnId?: number;
   phase?: "event" | "responseBoundary" | "terminalQuiescence";
   outcome?: "result" | "error";
-  turnStart?: { origin: "prompt" | "wake"; wake?: keyof typeof WAKES; rewindTo?: string };
+  turnStart?: { origin: "prompt" | "wake" | "steer"; wake?: keyof typeof WAKES; rewindTo?: string };
   command?: { name: string; text: string; severity: string };
   thinking?: { state: "start" | "end"; messageId: string };
+  /** The provider cut the agent's answer at the output limit; it went on. */
+  outputLimit?: boolean;
   /** How a turn of a loaded conversation ended. */
   turnEnd?: { state: "done" | "cancelled" | "failed"; error?: string };
   compaction?: { tokensBefore?: number; summary?: string };
@@ -84,7 +89,8 @@ type Update = {
  * The conversation in the session: what the user sent, what the agent
  * streamed back, the turns it started on its own (a background command
  * ending, a usage limit resetting). One turn runs at a time: a message
- * sent meanwhile waits, then goes when the turn ends. A saved conversation
+ * sent meanwhile waits, then goes when the turn ends, unless it is sent
+ * into the turn; a stop pauses the waiting ones. A saved conversation
  * comes back as the agent replays it, turn after turn, before its session
  * opens. It outlives the panel; the panel gets it whole when it opens,
  * then what changed.
@@ -92,6 +98,12 @@ type Update = {
 export class Chat {
   private entries: ChatEntry[] = [];
   private queue: Queued[] = [];
+  /** Stopped: the waiting messages wait for play. */
+  private paused = false;
+  /** For the running turn, not taken yet: the turn ending without them, they come first in line. */
+  private steering: Queued[] = [];
+  /** Those of them the agent has: the others wait for it to say the turn started. */
+  private steered = new Set<Queued>();
   private commands: ChatCommand[] = PANEL_COMMANDS;
   private nextId = 1;
   /** Our prompt, sent and not answered yet. */
@@ -100,6 +112,10 @@ export class Chat {
   private live: Turn | undefined;
   /** The agent's turn ids, ours for this process. */
   private turns = new Map<number, Turn>();
+  /** When each turn began here; a turn the agent replays has no time. */
+  private began = new WeakMap<Turn, number>();
+  /** A tool's whole output, when the panel's is cut. */
+  private wholeOutput = new WeakMap<Tool, string>();
   /** Each prompt's images, whole, for when it is edited: the panel holds their thumbnails. */
   private images = new Map<number, Attachment[]>();
   /** The last streamed item: chunks of the same message and kind join it. */
@@ -159,7 +175,10 @@ export class Chat {
         }
       }
       this.sent = this.live = undefined;
-      if (state.kind !== "ready") this.handBack();
+      if (state.kind !== "ready") {
+        this.requeue();
+        this.pause();
+      }
       // The agent stopped before the conversation came back.
       if (state.kind === "failed" && this.loading) {
         this.loading = false;
@@ -188,6 +207,7 @@ export class Chat {
       busy: this.busy,
       loading: this.loading,
       queue: this.queued(),
+      paused: this.paused,
       commands: this.commands,
       usage: this.usage,
       goal: this.goalState,
@@ -204,9 +224,9 @@ export class Chat {
     return this.busy;
   }
 
-  /** Messages wait for the session to open or the running turn to end. */
+  /** Messages wait for the session to open, the running turn to end, or play. */
   get waiting(): boolean {
-    return this.queue.length > 0;
+    return this.queue.length > 0 || this.steering.length > 0;
   }
 
   /** A goal goes on: the agent continues it on its own. */
@@ -216,17 +236,30 @@ export class Chat {
 
   /**
    * `/new` starts a new conversation; anything else goes, now or after the
-   * running turn. An `edit` replaces that turn's prompt: the agent goes back
-   * to before it, and the turns from it on leave the conversation.
+   * running turn, or `now` into it. An `edit` replaces that turn's prompt:
+   * the agent goes back to before it, and the turns from it on leave the
+   * conversation; or that waiting message, in its place.
    */
-  send(text: string, images: Attachment[], edit?: number): void {
+  send(text: string, images: Attachment[], edit?: number, now = false): void {
     if (text.trim() === "/new" && images.length === 0) {
       this.onNew();
+      return;
+    }
+    const waiting = this.queue.find((message) => message.id === edit && !message.quiet);
+    if (waiting) {
+      Object.assign(waiting, { text, images, held: false });
+      this.log.info(`chat: waiting message ${waiting.id} changed (${text.length} chars, ${count(images.length, "image")})`);
+      if (now) this.sendNow(waiting.id);
+      else this.next();
       return;
     }
     const message = { id: this.nextId++, text, images, edit };
     // A goal reached or failed leaves with the next message.
     if (this.goalState?.status === "complete" || this.goalState?.status === "error") this.showGoal(null);
+    if (now && edit === undefined) {
+      this.now(message);
+      return;
+    }
     if (this.busy || !this.session.sessionId) {
       this.queue.push(message);
       this.log.info(`chat: queued (${this.queue.length} waiting)`);
@@ -247,9 +280,9 @@ export class Chat {
     return skill ? `/skill:${text.slice(1)}` : text;
   }
 
-  /** Stops the running turn; the waiting messages go back to the message box. */
+  /** Stops the running turn; the waiting messages wait for play. */
   cancel(): void {
-    this.handBack();
+    this.pause();
     const sessionId = this.session.sessionId;
     if (!sessionId || !this.busy) return;
     this.log.info("chat: stop requested");
@@ -260,7 +293,7 @@ export class Chat {
 
   /** The goal waits: the running turn stops, then `/goal pause` goes. */
   pauseGoal(): void {
-    if (this.queue[0]?.quiet) return;
+    if (this.queue.some((message) => message.quiet)) return;
     this.log.info("chat: goal paused from the panel");
     this.cancel();
     this.control("/goal pause");
@@ -268,7 +301,7 @@ export class Chat {
 
   /** The goal goes on: `/goal resume`, once nothing runs. */
   resumeGoal(): void {
-    if (this.queue[0]?.quiet) return;
+    if (this.queue.some((message) => message.quiet)) return;
     this.log.info("chat: goal resumed from the panel");
     this.control("/goal resume");
   }
@@ -290,19 +323,159 @@ export class Chat {
     this.next();
   }
 
-  /** A sent prompt back in the message box, to be changed and sent again. */
+  /** A sent prompt back in the message box, to be changed and sent again; or a waiting one, held meanwhile. */
   edit(id: number): void {
+    const waiting = this.queue.find((message) => message.id === id && !message.quiet);
+    if (waiting) {
+      this.release();
+      waiting.held = true;
+      const { text, images } = waiting;
+      this.log.info(`chat: waiting message ${id} back in the message box to change (${text.length} chars, ${count(images.length, "image")})`);
+      this.post({ type: "chatEdit", id, text, images, queued: true });
+      this.changed();
+      return;
+    }
     const turn = this.entries.find((entry) => entry.id === id);
     if (turn?.kind !== "turn" || !turn.prompt || turn.rewindTo === undefined) return;
     const { text } = turn.prompt;
     const images = this.images.get(id) ?? [];
     this.log.info(`chat: turn ${id} back in the message box to edit (${text.length} chars, ${count(images.length, "image")})`);
-    this.post({ type: "chatEdit", id, text, images });
+    this.post({ type: "chatEdit", id, text, images, queued: false });
+  }
+
+  /** The waiting message being changed (`id`, else any) stays as it was: the queue goes on. */
+  release(id?: number): void {
+    const held = this.queue.filter((message) => message.held && (id === undefined || message.id === id));
+    if (held.length === 0) return;
+    for (const message of held) message.held = false;
+    this.log.info(`chat: waiting message ${held.map((message) => message.id).join(", ")} left as it was`);
+    this.next();
+  }
+
+  /** Tool `id`'s code, or its whole output, uncut; a Python cell's code says so. */
+  toolPart(id: string, part: "input" | "output"): { text: string; python: boolean } | undefined {
+    for (const entry of this.entries) {
+      if (entry.kind !== "turn") continue;
+      const tool = entry.items.find((item): item is Tool => item.kind === "tool" && item.id === id);
+      if (!tool) continue;
+      const text = part === "input" ? tool.input : (this.wholeOutput.get(tool) ?? tool.output);
+      return text === undefined ? undefined : { text, python: tool.cell !== undefined };
+    }
+    return undefined;
   }
 
   unqueue(id: number): void {
     this.queue = this.queue.filter((message) => message.id !== id);
+    this.log.info(`chat: waiting message ${id} removed`);
+    this.next();
+  }
+
+  /** Waiting message `id` goes to place `to` among the waiting ones. */
+  move(id: number, to: number): void {
+    const message = this.queue.find((waiting) => waiting.id === id && !waiting.quiet);
+    if (!message) return;
+    const others = this.queue.filter((waiting) => waiting !== message);
+    const before = others.filter((waiting) => !waiting.quiet)[to];
+    others.splice(before ? others.indexOf(before) : others.length, 0, message);
+    this.queue = others;
+    const shown = this.queue.filter((waiting) => !waiting.quiet);
+    this.log.info(`chat: waiting message ${id} moved to ${shown.indexOf(message) + 1} of ${shown.length}`);
+    this.next();
+  }
+
+  /** Waiting message `id`, now: into the running turn, else ahead of the others. */
+  sendNow(id: number): void {
+    const at = this.queue.findIndex((message) => message.id === id && !message.quiet && !message.held);
+    if (at < 0) return;
+    const [message] = this.queue.splice(at, 1);
+    this.now(message);
+  }
+
+  /** The paused queue plays again. */
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    this.log.info("chat: queue plays again");
+    this.next();
+  }
+
+  /**
+   * Into the running turn (a turn editing an earlier prompt cannot join
+   * one); else sent, ahead of the waiting ones.
+   */
+  private now(message: Queued): void {
+    if (this.busy && this.session.sessionId && message.edit === undefined) {
+      this.steering.push(message);
+      this.steerAll();
+      this.changed();
+      return;
+    }
+    if (!this.busy && this.session.sessionId) {
+      void this.start(message);
+      return;
+    }
+    this.queue.unshift(message);
+    this.log.info(`chat: message ${message.id} first in line`);
+    this.next();
+  }
+
+  /** The agent's id for the turn running, once it said it started. */
+  private get liveTurn(): number | undefined {
+    for (const [id, turn] of this.turns) if (turn === this.live && turn.state === "running") return id;
+    return undefined;
+  }
+
+  /** What is for the running turn goes to the agent, once it said the turn started. */
+  private steerAll(): void {
+    const turn = this.liveTurn;
+    if (turn === undefined) return;
+    for (const message of this.steering) {
+      if (this.steered.has(message)) continue;
+      this.steered.add(message);
+      void this.steer(message, turn);
+    }
+  }
+
+  /** Into running turn `turn`: the agent reads it before its next step. One it refuses comes first in line. */
+  private async steer(message: Queued, turn: number): Promise<void> {
+    const sessionId = this.session.sessionId;
+    if (!sessionId) return;
+    const run = this.run;
+    try {
+      await this.agent.request(STEER, { sessionId, prompt: this.prompt(message), turn });
+      if (run !== this.run) return;
+      const { id, text, images } = message;
+      this.log.info(`chat: message ${id} sent into the running turn (${text.length} chars, ${count(images.length, "image")})`);
+    } catch (error) {
+      if (run !== this.run) return;
+      this.log.info(`chat: message ${message.id} not sent into the turn: ${errorText(error)}`);
+      const at = this.steering.indexOf(message);
+      if (at < 0) return;
+      this.steering.splice(at, 1);
+      this.steered.delete(message);
+      this.queue.unshift(message);
+      this.next();
+    }
+  }
+
+  /** Stopped: the waiting messages, and those sent into the turn it does not take, wait for play. */
+  private pause(): void {
+    // A goal command the buttons sent is not the user's to send again.
+    this.queue = this.queue.filter((message) => !message.quiet);
+    const waiting = this.queue.length + this.steering.length;
+    if (waiting === 0 || this.paused) return;
+    this.paused = true;
+    this.log.info(`chat: queue paused (${waiting} waiting)`);
     this.changed();
+  }
+
+  /** What was sent into the turn and not taken: first in line. */
+  private requeue(): void {
+    if (this.steering.length === 0) return;
+    this.log.info(`chat: ${count(this.steering.length, "message")} not taken by the turn, first in line`);
+    this.queue.unshift(...this.steering);
+    this.steering = [];
+    this.steered.clear();
   }
 
   /**
@@ -310,7 +483,8 @@ export class Chat {
    * one (`loading`), which comes back here as the agent replays it.
    */
   reset(loading: boolean): void {
-    this.handBack();
+    this.requeue();
+    this.pause();
     // Nothing the stopping process still sends lands in the next conversation.
     this.run++;
     this.turns.clear();
@@ -331,7 +505,9 @@ export class Chat {
     this.loading = false;
     if (this.session.current?.kind === "open") {
       const turns = this.entries.filter((entry) => entry.kind === "turn") as Turn[];
-      this.log.info(`chat: loaded ${count(turns.length, "turn")}; ${summary(turns.flatMap((turn) => turn.items))}`);
+      const stopped = turns.filter((turn) => turn.state === "cancelled").length;
+      const stops = stopped > 0 ? `; ${stopped} stopped` : "";
+      this.log.info(`chat: loaded ${count(turns.length, "turn")}; ${summary(turns.flatMap((turn) => turn.items))}${stops}`);
       if (this.restored !== undefined) this.kernelLine(this.restored);
     }
     this.restored = undefined;
@@ -375,6 +551,7 @@ export class Chat {
     };
     this.images.set(id, images);
     this.sent = turn;
+    this.began.set(turn, Date.now());
     if (edit !== undefined) {
       const error = await this.rewind(sessionId, edit);
       if (run !== this.run) return;
@@ -394,26 +571,33 @@ export class Chat {
       this.changed();
     }
     this.log.info(`chat: turn ${id} sent (${text.length} chars, ${count(images.length, "image")})`);
+    const prompt = this.prompt({ id, text, images });
+    try {
+      const { stopReason } = await this.agent.request<{ stopReason: string }>("session/prompt", { sessionId, prompt });
+      if (run !== this.run) return;
+      // The answer ends the last turn of the request: a message that joined it took it on.
+      const last = this.sent ?? turn;
+      if (stopReason === "max_tokens" || stopReason === "max_turn_requests") {
+        this.push(last, { kind: "notice", tone: "warning", text: "The autonomous run reached its limit." });
+      }
+      this.end(last, stopReason === "cancelled" ? "cancelled" : "done", undefined, stopReason);
+    } catch (error) {
+      if (run !== this.run) return;
+      this.end(this.sent ?? turn, "failed", errorText(error));
+    }
+  }
+
+  /** What goes to the agent: the text (a skill by the agent's name), its `@` links, its images. */
+  private prompt({ id, text, images }: Pick<Queued, "id" | "text" | "images">): unknown[] {
     const links = this.files.links(text);
     if (links.length > 0) this.log.info(`chat: turn ${id} links ${links.map((link) => link.name).join(", ")}`);
     const skill = this.skillCommand(text);
     if (skill !== text) this.log.info(`chat: turn ${id} runs ${skill.split(/\s/, 1)[0]}`);
-    const prompt = [
+    return [
       { type: "text", text: skill },
       ...links,
       ...images.map(({ mimeType, data }) => ({ type: "image", mimeType, data })),
     ];
-    try {
-      const { stopReason } = await this.agent.request<{ stopReason: string }>("session/prompt", { sessionId, prompt });
-      if (run !== this.run) return;
-      if (stopReason === "max_tokens" || stopReason === "max_turn_requests") {
-        this.push(turn, { kind: "notice", tone: "warning", text: "The autonomous run reached its limit." });
-      }
-      this.end(turn, stopReason === "cancelled" ? "cancelled" : "done", undefined, stopReason);
-    } catch (error) {
-      if (run !== this.run) return;
-      this.end(turn, "failed", errorText(error));
-    }
   }
 
   /** The agent goes back to before `edited`'s prompt; why not, when it cannot. */
@@ -438,6 +622,7 @@ export class Chat {
     if (this.compacting?.turn === turn) this.unmark();
     if (turn.state === "running") {
       turn.state = state;
+      if (state === "done") this.worked(turn);
       if (error) turn.error = error;
       this.dirtyHeads.add(turn.id);
       const why = reason ? ` (${reason})` : "";
@@ -449,32 +634,31 @@ export class Chat {
     if (this.sent === turn) this.sent = undefined;
     if (this.live === turn) this.live = undefined;
     this.streaming = undefined;
+    // The turn is over: the agent let go of what it did not take.
+    if (!this.busy) this.requeue();
     this.next();
     this.changed();
   }
 
-  /** The next waiting message, once nothing runs. */
-  private next(): void {
-    if (this.busy || !this.session.sessionId) return;
-    const message = this.queue.shift();
-    if (message) void this.start(message);
-    else this.changed();
+  /** How long a turn that began here worked, once done. */
+  private worked(turn: Turn): void {
+    const began = this.began.get(turn);
+    if (began !== undefined) turn.ms = Date.now() - began;
   }
 
-  /** The waiting messages, back to the message box. */
-  private handBack(): void {
-    // A goal command the buttons sent is not the user's to write again.
-    this.queue = this.queue.filter((message) => !message.quiet);
-    if (this.queue.length === 0) return;
-    const text = this.queue
-      .map((message) => message.text)
-      .filter(Boolean)
-      .join("\n\n");
-    const images = this.queue.flatMap((message) => message.images);
-    this.log.info(`chat: ${this.queue.length} waiting back in the message box`);
-    this.queue = [];
-    this.post({ type: "chatDraft", text, images });
+  /**
+   * The next waiting message, once nothing runs: a goal command from the
+   * buttons first, paused or not; then the first in line, unless the queue
+   * is paused or waits at a message being changed.
+   */
+  private next(): void {
+    if (this.paused && this.queue.length === 0 && this.steering.length === 0) this.paused = false;
     this.changed();
+    if (this.busy || !this.session.sessionId) return;
+    const quiet = this.queue.findIndex((message) => message.quiet);
+    const at = quiet >= 0 ? quiet : this.paused || this.queue[0]?.held ? -1 : 0;
+    const [message] = at >= 0 ? this.queue.splice(at, 1) : [];
+    if (message) void this.start(message);
   }
 
   private onUpdate(params: unknown): void {
@@ -552,19 +736,27 @@ export class Chat {
       this.entries.push(turn);
       return;
     }
+    if (start.origin === "steer") {
+      this.joined(agentTurn, start);
+      return;
+    }
     if (start.origin === "prompt" && this.sent) {
       this.turns.set(agentTurn, this.sent);
       this.live = this.sent;
+      // It may have waited for a turn the agent started.
+      this.began.set(this.sent, Date.now());
       if (start.rewindTo !== undefined) {
         this.sent.rewindTo = start.rewindTo;
         this.dirtyHeads.add(this.sent.id);
         this.changed();
       }
+      this.steerAll();
       return;
     }
     const turn: Turn = { kind: "turn", id: this.nextId++, wake: start.wake, state: "running", items: [] };
     this.turns.set(agentTurn, turn);
     this.live = turn;
+    this.began.set(turn, Date.now());
     // Our prompt waits for it: the agent's turn shows above it.
     const at = this.sent ? this.entries.indexOf(this.sent) : -1;
     if (at >= 0) {
@@ -575,6 +767,36 @@ export class Chat {
       this.dirtyHeads.add(turn.id);
     }
     this.log.info(`chat: turn ${turn.id} started by the agent (${start.wake ? WAKES[start.wake] : start.origin})`);
+    this.steerAll();
+    this.changed();
+  }
+
+  /** A message sent into the running turn joined it: what follows is its own turn, under it. */
+  private joined(agentTurn: number, start: NonNullable<Meta["turnStart"]>): void {
+    const message = this.steering.shift();
+    if (message) this.steered.delete(message);
+    const before = this.turns.get(agentTurn) ?? this.live;
+    const turn: Turn = { kind: "turn", id: message?.id ?? this.nextId++, state: "running", items: [] };
+    if (message) {
+      turn.prompt = { text: message.text, images: message.images.map(thumbOf) };
+      this.images.set(turn.id, message.images);
+    }
+    if (start.rewindTo !== undefined) turn.rewindTo = start.rewindTo;
+    if (before?.state === "running") {
+      if (this.thinking?.turn === before) this.settle();
+      before.state = "done";
+      this.worked(before);
+      this.dirtyHeads.add(before.id);
+      this.log.info(`chat: turn ${before.id} done (joined); ${summary(before.items)}`);
+    }
+    if (this.sent === before) this.sent = turn;
+    this.turns.set(agentTurn, turn);
+    this.live = turn;
+    this.began.set(turn, Date.now());
+    this.streaming = undefined;
+    this.entries.push(turn);
+    this.dirtyHeads.add(turn.id);
+    this.log.info(`chat: turn ${turn.id} joined the running turn`);
     this.changed();
   }
 
@@ -658,6 +880,7 @@ export class Chat {
       const text = update.content.map((block) => block.content?.text ?? "").join("\n");
       const cut = text.length - OUTPUT_LIMIT;
       tool.output = cut > 0 ? `${text.slice(0, OUTPUT_LIMIT)}\n… ${cut} more characters` : text;
+      if (cut > 0) this.wholeOutput.set(tool, text);
     }
     if (meta.ipython?.attachments?.length) tool.images = meta.ipython.attachments.length;
     // A cell that raised ran to its end for the agent (its traceback is its result); here it failed.
@@ -670,7 +893,7 @@ export class Chat {
     this.changed();
   }
 
-  /** Reasoning opening and closing, a command's answer, a compaction, a goal's change; the end of a turn the agent started or replayed. */
+  /** Reasoning opening and closing, a command's answer, a cut answer, a compaction, a goal's change; the end of a turn the agent started or replayed. */
   private info(turn: Turn, meta: Meta): void {
     if (meta.turnEnd) {
       this.end(turn, meta.turnEnd.state, meta.turnEnd.error);
@@ -678,6 +901,10 @@ export class Chat {
     }
     if (meta.thinking?.state === "start") this.think(turn, meta.thinking.messageId);
     if (meta.thinking?.state === "end") this.settle();
+    if (meta.outputLimit) {
+      this.push(turn, { kind: "notice", tone: "info", text: "The answer hit the output limit; the agent went on." });
+      if (!this.loading) this.log.info(`chat: turn ${turn.id} cut at the output limit`);
+    }
     if (meta.command) {
       const { severity, text } = meta.command;
       const tone = severity === "error" || severity === "warning" ? severity : "info";
@@ -770,10 +997,18 @@ export class Chat {
     this.dirtyItems.set(turn.id, items.add(at));
   }
 
+  /** What the panel shows waiting: what was sent into the turn first, then the queue. */
   private queued(): QueuedMessage[] {
-    return this.queue
-      .filter((message) => !message.quiet)
-      .map(({ id, text, images }) => ({ id, text, images: images.map(thumbOf) }));
+    const shown = ({ id, text, images, held }: Queued, steering: boolean): QueuedMessage => ({
+      id,
+      text,
+      images: images.map(thumbOf),
+      state: steering ? "steering" : held ? "held" : "waiting",
+    });
+    return [
+      ...this.steering.map((message) => shown(message, true)),
+      ...this.queue.filter((message) => !message.quiet).map((message) => shown(message, false)),
+    ];
   }
 
   private showGoal(goal: Goal | null): void {
@@ -805,7 +1040,7 @@ export class Chat {
       if (entry?.kind !== "turn") continue;
       for (const at of indexes) items.push([id, at, entry.items[at]]);
     }
-    const patch: ChatPatch = { heads, items, busy: this.busy, queue: this.queued() };
+    const patch: ChatPatch = { heads, items, busy: this.busy, queue: this.queued(), paused: this.paused };
     if (this.commandsChanged) patch.commands = this.commands;
     if (this.usageChanged) patch.usage = this.usage;
     if (this.goalChanged) patch.goal = this.goalState;
@@ -855,7 +1090,7 @@ function toolInput(raw: unknown): string {
 
 /** For the log: `edit src/a.ts +2 -1`, `read /etc/hosts (in /etc/)`, `shell \`npm test\``. */
 function cellText({ kind, files, away, command, diff }: Cell): string {
-  const changed = diff ? `+${diff.added} -${diff.removed}` : "";
+  const changed = !diff ? "" : kind === "write" ? `+${diff.added}` : `+${diff.added} -${diff.removed}`;
   const named = files.map((path) => (away?.[path] ? `${path} (in ${away[path]})` : path));
   return [kind, ...named, command === undefined ? "" : `\`${command}\``, changed].filter(Boolean).join(" ");
 }

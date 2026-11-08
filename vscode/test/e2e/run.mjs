@@ -104,6 +104,21 @@ const OLLAMA = `127.0.0.1:${ollama.address().port}`;
 // The edit scenario's model: one answer per prompt.
 const EDIT_SCRIPT = { responses: ["first answer", "second answer", "the changed answer"] };
 
+// The queue scenario's model: a cell that takes 3 s, which a message sent
+// into the turn joins; a long answer, which a stop cuts; then an answer per
+// waiting message. Restarted, it starts over.
+const QUEUE_SCRIPT = {
+  tokensPerSecond: 40,
+  responses: [
+    { content: [{ type: "toolCall", name: "ipython", arguments: { code: "import time\ntime.sleep(3)" } }] },
+    "joined answer",
+    "word ".repeat(80),
+    "late answer",
+    "three answer",
+    "one answer",
+  ],
+};
+
 // The compaction scenario's model: two answers, then the summary of the
 // compaction that follows the second, slow enough to show while it runs.
 const COMPACTION_SCRIPT = {
@@ -198,6 +213,31 @@ const EDITS = [
 ];
 const EDITS_SCRIPT = {
   responses: [...EDITS.map((code) => ({ content: [{ type: "toolCall", name: "ipython", arguments: { code } }] })), "Done."],
+};
+
+// The wake after the turn scenario's model: a command left in the
+// background ends while the turn works on, then an answer per turn.
+const WAKE_AFTER_SCRIPT = {
+  responses: [
+    { content: [{ type: "toolCall", name: "ipython", arguments: { code: 'h = bash("sleep 1; echo bg-done")' } }] },
+    { content: [{ type: "toolCall", name: "ipython", arguments: { code: "import asyncio\nawait asyncio.sleep(3)" } }] },
+    "First answer.",
+    "Noted.",
+  ],
+};
+
+// The output limit scenario's model: an answer cut while it still thinks,
+// then the rest of it.
+const CUT_SCRIPT = {
+  responses: [{ content: [{ type: "thinking", thinking: "Working through the acoustics." }], stopReason: "length" }, "Done."],
+};
+
+// The open tool scenario's model: a cell that prints more than the panel shows.
+const LONG_SCRIPT = {
+  responses: [
+    { content: [{ type: "toolCall", id: "long", name: "ipython", arguments: { code: 'print("x" * 30000)' } }] },
+    "Done.",
+  ],
 };
 
 // A 1x1 PNG, as the panel attaches it.
@@ -324,15 +364,17 @@ const scenarios = [
       // What the conversation has used: nothing measured once open, then each reply measures the context.
       "chat: usage not measured of 100,000 tokens (compacts at 79,520), $0.0000",
       { wait: "chat: usage ", times: 2, capture: { measured: "chat: usage ([0-9,]+) of 100,000 tokens" } },
-      // A stop: the running turn ends, the message waiting behind it comes back to the box.
+      // A stop: the running turn ends, the message waiting behind it waits, paused; removed, the queue goes on.
       { post: { type: "send", text: "talk", images: [] } },
       "chat: turn 2 sent",
       { post: { type: "send", text: "after the stop", images: [] } },
       "chat: queued (1 waiting)",
       { post: { type: "cancel" } },
-      "chat: 1 waiting back in the message box",
+      "chat: queue paused (1 waiting)",
       "chat: stop requested",
       "chat: turn 2 cancelled (cancelled)",
+      { post: { type: "unqueue", id: 3 } },
+      "chat: waiting message 3 removed",
       // A message sent while a turn runs goes once it ends.
       { post: { type: "send", text: "one", images: [] } },
       "chat: turn 4 sent",
@@ -454,6 +496,67 @@ const scenarios = [
     ],
   },
   {
+    name: "queue",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify(QUEUE_SCRIPT) },
+    steps: [
+      "session: opened",
+      // Sent into the turn while its cell runs: the agent reads it after the cell, in a turn of its own.
+      { post: { type: "send", text: "first", images: [] } },
+      { wait: "chat: turn 1 cell: ", timeout: 90_000 },
+      { post: { type: "send", text: "steered", images: [], now: true } },
+      "chat: message 2 sent into the running turn (7 chars, 0 images)",
+      { wait: "chat: turn 1 done (joined); 1 tool", timeout: 90_000 },
+      "chat: turn 2 joined the running turn",
+      "chat: turn 2 done (end_turn); 1 text",
+      // Waiting behind a long answer: moved, changed in its place, one more sent into the turn.
+      { post: { type: "send", text: "talk", images: [] } },
+      "chat: turn 3 sent (4 chars, 0 images)",
+      { post: { type: "send", text: "one", images: [] } },
+      "chat: queued (1 waiting)",
+      { post: { type: "send", text: "two", images: [] } },
+      "chat: queued (2 waiting)",
+      { post: { type: "send", text: "three", images: [] } },
+      "chat: queued (3 waiting)",
+      { post: { type: "moveQueued", id: 6, to: 0 } },
+      "chat: waiting message 6 moved to 1 of 3",
+      { post: { type: "edit", id: 4 } },
+      "chat: waiting message 4 back in the message box to change (3 chars, 0 images)",
+      { post: { type: "send", text: "one, changed", images: [], edit: 4 } },
+      "chat: waiting message 4 changed (12 chars, 0 images)",
+      { post: { type: "send", text: "late", images: [], now: true } },
+      "chat: message 7 sent into the running turn (4 chars, 0 images)",
+      // A stop before the agent takes it: it waits first, with the others, paused.
+      { post: { type: "cancel" } },
+      "chat: queue paused (4 waiting)",
+      "chat: turn 3 cancelled (cancelled)",
+      "chat: 1 message not taken by the turn, first in line",
+      { post: { type: "unqueue", id: 5 } },
+      "chat: waiting message 5 removed",
+      // Played again: in their order.
+      { post: { type: "resumeQueue" } },
+      "chat: queue plays again",
+      "chat: turn 7 sent (4 chars, 0 images)",
+      "chat: turn 7 done (end_turn); 1 text",
+      "chat: turn 6 sent (5 chars, 0 images)",
+      "chat: turn 6 done (end_turn); 1 text",
+      "chat: turn 4 sent (12 chars, 0 images)",
+      "chat: turn 4 done (end_turn); 1 text",
+      // Restarted: the turn the message joined ended, only the cut one stopped; the joined message goes back.
+      { post: { type: "restartAgent" } },
+      "conversations: [1] restarts",
+      { wait: "chat: loaded 6 turns; ", capture: { stops: "; (1) stopped$" } },
+      { post: { type: "edit", id: 9 } },
+      "chat: turn 9 back in the message box to edit (7 chars, 0 images)",
+      { post: { type: "send", text: "steered, changed", images: [], edit: 9 } },
+      "chat: back to before turn 9",
+      "(16 chars, 0 images)",
+      // The model, started over: the cell, then its answer.
+      { wait: "done (end_turn); 1 tool, 1 text", timeout: 90_000 },
+    ],
+  },
+  {
     name: "compaction",
     binary,
     auth: { openai: { type: "api_key", key: "sk-e2e" } },
@@ -497,19 +600,17 @@ const scenarios = [
     env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify({ tokensPerSecond: 40, responses: ["word ".repeat(80), "word ".repeat(80)] }) },
     steps: [
       "session: opened",
-      // A "/" back in the message box opens the commands menu; more text after it closes it, and the panel stays up.
+      // A "/" back in the message box opens the commands menu; other text in its place closes it, and the panel stays up.
       { post: { type: "send", text: "talk", images: [] } },
       "chat: turn 1 sent",
       { post: { type: "send", text: "/", images: [] } },
       "chat: queued (1 waiting)",
-      { post: { type: "cancel" } },
-      "chat: 1 waiting back in the message box",
-      { post: { type: "send", text: "talk again", images: [] } },
-      "chat: turn 3 sent",
+      { post: { type: "edit", id: 2 } },
+      "chat: waiting message 2 back in the message box to change (1 chars, 0 images)",
       { post: { type: "send", text: "x", images: [] } },
-      { wait: "chat: queued (1 waiting)", times: 2 },
-      { post: { type: "cancel" } },
-      { wait: "chat: 1 waiting back in the message box", times: 2 },
+      "chat: queued (2 waiting)",
+      { post: { type: "edit", id: 3 } },
+      "chat: waiting message 3 back in the message box to change (1 chars, 0 images)",
       { post: { type: "listFiles" } },
       { wait: "files: ", times: 2 },
     ],
@@ -552,7 +653,8 @@ const scenarios = [
       { post: { type: "send", text: "set a to 2", images: [] } },
       // What each cell does, from its code: the panel's icon and words.
       { wait: "chat: turn 1 cell: edit src/app.ts", timeout: 90_000 },
-      "chat: turn 1 cell: write src/new.ts",
+      // A write's lines, from the text its code writes.
+      "chat: turn 1 cell: write src/new.ts +3",
       "chat: turn 1 cell: read src/app.ts",
       "chat: turn 1 cell: search `grep -rn 'a = 2' src`",
       "chat: turn 1 cell: shell `echo built`",
@@ -578,6 +680,22 @@ const scenarios = [
       // A file out of the agent's folder shows the folder it lies in.
       "chat: turn 1 cell: read /etc/hosts (in /etc/)",
       { wait: "chat: turn 1 done (end_turn); 3 tools, 1 text", timeout: 90_000 },
+    ],
+  },
+  {
+    name: "open tool",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify(LONG_SCRIPT) },
+    steps: [
+      "session: opened",
+      { post: { type: "send", text: "print a lot", images: [] } },
+      { wait: "chat: turn 1 done (end_turn); 1 tool, 1 text", timeout: 90_000 },
+      // A tab on the cell's code, then on all it printed: the panel's is cut.
+      { post: { type: "openCell", id: "long", part: "input" } },
+      "opened tool long input: 18 chars",
+      { post: { type: "openCell", id: "long", part: "output" } },
+      "opened tool long output: 30001 chars",
     ],
   },
   {
@@ -609,6 +727,23 @@ const scenarios = [
       "chat: loaded 1 turn; 1 text",
       { post: { type: "listChats" } },
       '"read @notes.txt and @"docs/read me.md", not @build/gone.txt" (current)',
+    ],
+  },
+  {
+    name: "dropped images",
+    binary,
+    workspace: { "shot.png": "png bytes\n", "notes.txt": "six times seven\n" },
+    steps: [
+      { wait: "starting agent:", capture: { cwd: "\\(cwd ([^)]+)\\)" } },
+      // Files dropped from the explorer: the images among them are read, a missing one is said.
+      {
+        post: {
+          type: "readImages",
+          uris: ["file://${cwd}/shot.png", "file://${cwd}/notes.txt", "file://${cwd}/gone.png"],
+        },
+      },
+      "could not read dropped file://",
+      "dropped 3 files, images read: shot.png",
     ],
   },
   {
@@ -690,6 +825,34 @@ const scenarios = [
       "ended (stopped)",
       "chat: turn 2 started by the agent (a background command ended)",
       "chat: turn 2 done; 1 text",
+    ],
+  },
+  {
+    // The command ended during the turn: its notice waits for the turn's
+    // answer, then wakes a turn of its own, the first answer kept apart.
+    name: "wake after the turn",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify(WAKE_AFTER_SCRIPT) },
+    steps: [
+      "session: opened",
+      { post: { type: "send", text: "start a command, then work", images: [] } },
+      { wait: "chat: turn 1 done (end_turn); 2 tools, 1 text", timeout: 60_000 },
+      "chat: turn 2 started by the agent (a background command ended)",
+      "chat: turn 2 done; 1 text",
+    ],
+  },
+  {
+    // The provider cut the answer at the output limit: the turn goes on, and says so.
+    name: "output limit",
+    binary,
+    auth: { openai: { type: "api_key", key: "sk-e2e" } },
+    env: { UNHARNESSED_OFFLINE: "1", UNHARNESSED_FAUX_SCRIPT: JSON.stringify(CUT_SCRIPT) },
+    steps: [
+      "session: opened",
+      { post: { type: "send", text: "make the sound", images: [] } },
+      "chat: turn 1 cut at the output limit",
+      "chat: turn 1 done (end_turn); 1 thought, 1 notice, 1 text",
     ],
   },
   {

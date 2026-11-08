@@ -1,12 +1,14 @@
 import { randomBytes } from "node:crypto";
+import { posix } from "node:path";
 import * as vscode from "vscode";
 import type { Conversation, Conversations } from "./conversations";
 import type { Files } from "./files";
 import type { History } from "./history";
 import { connectedModels } from "./instructions";
-import type { Draft, HostMessage, WebviewMessage } from "./protocol";
+import type { HostMessage, WebviewMessage } from "./protocol";
 import type { Providers } from "./providers";
 import type { Settings } from "./settings";
+import type { ToolTabs } from "./tabs";
 
 /**
  * The panel in the right side bar: hosts the React app from dist/webview. It
@@ -26,6 +28,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly settings: Settings,
     private readonly history: History,
     private readonly files: Files,
+    private readonly tabs: ToolTabs,
     private readonly log: vscode.LogOutputChannel,
   ) {
     conversations.onCreate((conversation) => this.follow(conversation));
@@ -58,11 +61,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const shown = () => this.conversations.isShown(conversation);
     agent.onChange((state) => shown() && this.post({ type: "agent", agent: state }));
     session.onChange(() => shown() && this.post({ type: "session", session: session.current }));
-    chat.onPost((message) => {
-      if (shown()) this.post(message);
-      // Its waiting messages, back in its own message box.
-      else if (message.type === "chatDraft") conversation.draft = joined(message, conversation.draft);
-    });
+    chat.onPost((message) => shown() && this.post(message));
     kernel.onChange(() => shown() && this.post({ type: "kernel", kernel: kernel.current }));
   }
 
@@ -81,6 +80,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     switch (message.type) {
       case "ready":
         this.log.info("webview ready");
+        // A panel that comes back is not changing a waiting message.
+        this.shown.chat.release();
         this.post({
           type: "init",
           splash: !this.splashPlayed,
@@ -223,14 +224,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "copy":
         void vscode.env.clipboard.writeText(message.text);
         break;
+      case "openCell":
+        void this.openTool(message.id, message.part);
+        break;
       case "send":
-        this.shown.chat.send(message.text, message.images, message.edit);
+        this.shown.chat.send(message.text, message.images, message.edit, message.now);
         break;
       case "edit":
         this.shown.chat.edit(message.id);
         break;
+      case "release":
+        this.shown.chat.release(message.id);
+        break;
       case "listFiles":
         void this.files.list().then(({ files, open }) => this.post({ type: "files", files, open }));
+        break;
+      case "readImages":
+        void this.readImages(message.uris);
         break;
       case "cancel":
         this.shown.chat.cancel();
@@ -243,7 +253,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "unqueue":
         this.shown.chat.unqueue(message.id);
         break;
+      case "moveQueued":
+        this.shown.chat.move(message.id, message.to);
+        break;
+      case "sendNow":
+        this.shown.chat.sendNow(message.id);
+        break;
+      case "resumeQueue":
+        this.shown.chat.resume();
+        break;
       case "newChat":
+        // A waiting message being changed stays as it was.
+        this.shown.chat.release();
         this.conversations.newChat(message.draft);
         break;
       case "listChats":
@@ -252,7 +273,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "openChat": {
         // The conversation in the panel is already there.
         const saved = this.history.saved(message.id);
-        if (saved) this.conversations.openSaved(saved, message.draft);
+        if (!saved) break;
+        this.shown.chat.release();
+        this.conversations.openSaved(saved, message.draft);
         break;
       }
       case "deleteChat": {
@@ -291,6 +314,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  /** A tool's code or whole output, in its own tab. */
+  private async openTool(id: string, part: "input" | "output"): Promise<void> {
+    const found = this.shown.chat.toolPart(id, part);
+    if (!found) return;
+    const name = part === "output" ? "output.txt" : found.python ? "cell.py" : "input.json";
+    try {
+      const document = await this.tabs.open(id, name, found.text);
+      this.log.info(`opened tool ${id} ${part}: ${document.getText().length} chars`);
+    } catch (error) {
+      this.log.warn(`could not open tool ${id} ${part}: ${String(error)}`);
+    }
+  }
+
   private async open(path: string): Promise<void> {
     try {
       await vscode.window.showTextDocument(vscode.Uri.file(path), { preview: false });
@@ -300,16 +336,41 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /** The images among files dropped from VS Code, for the message box: the panel can't read a file. */
+  private async readImages(uris: string[]): Promise<void> {
+    const images: { name: string; mimeType: string; data: string }[] = [];
+    const errors: string[] = [];
+    for (const text of uris) {
+      const uri = vscode.Uri.parse(text);
+      const name = posix.basename(uri.path);
+      const mimeType = IMAGE_MIMES[posix.extname(name).toLowerCase()];
+      if (!mimeType) continue;
+      try {
+        images.push({ name, mimeType, data: Buffer.from(await vscode.workspace.fs.readFile(uri)).toString("base64") });
+      } catch (error) {
+        this.log.warn(`could not read dropped ${uri.toString(true)}: ${String(error)}`);
+        errors.push(`${name} could not be read.`);
+      }
+    }
+    this.log.info(`dropped ${uris.length} files, images read: ${images.map(({ name }) => name).join(", ") || "none"}`);
+    this.post({ type: "droppedImages", images, errors });
+  }
+
   private post(message: HostMessage): void {
     void this.view?.webview.postMessage(message);
   }
 }
 
-/** Waiting messages back in a message box: they come first, they were written before. */
-function joined({ text, images }: { text: string; images: Draft["images"] }, draft: Draft): Draft {
-  return { text: [text, draft.text].filter(Boolean).join("\n\n"), images: [...images, ...draft.images] };
-}
+/** The images the providers read, by extension. */
+const IMAGE_MIMES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
 
+/** Waiting messages back in a message box: they come first, they were written before. */
 function renderHtml(webview: vscode.Webview, dist: vscode.Uri): string {
   const nonce = randomBytes(16).toString("base64");
   const asset = (name: string) => webview.asWebviewUri(vscode.Uri.joinPath(dist, name)).toString();

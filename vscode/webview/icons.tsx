@@ -368,3 +368,21 @@ export function IconFlag(props: IconProps) {
     </Icon>
   );
 }
+
+/** Two columns of three dots: a handle to drag by. */
+export function IconGrip(props: IconProps) {
+  return (
+    <Icon strokeWidth={2.2} {...props}>
+      <path d="M9.5 6.5h0M14.5 6.5h0M9.5 12h0M14.5 12h0M9.5 17.5h0M14.5 17.5h0" />
+    </Icon>
+  );
+}
+
+/** A soft triangle pointing right: play again. */
+export function IconPlay(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8.5 6.8v10.4a.6.6 0 0 0 .9.5l8-5.2a.6.6 0 0 0 0-1l-8-5.2a.6.6 0 0 0-.9.5z" />
+    </Icon>
+  );
+}

@@ -158,7 +158,10 @@ const MAX_IMAGE_BASE64_BYTES: usize = 4_500_000;
 /// `images.blockImages` refuses them all; under `images.autoResize` an
 /// image past the limit is refused, the agent having nothing to shrink it
 /// with (the client shrinks it first).
-fn image_refusal(mode: &AcpModeState, images: &[super::types::ImageBlock]) -> Option<String> {
+pub(super) fn image_refusal(
+    mode: &AcpModeState,
+    images: &[super::types::ImageBlock],
+) -> Option<String> {
     if images.is_empty() {
         return None;
     }
@@ -209,8 +212,8 @@ pub(super) enum TurnStart {
 }
 
 /// Start a wake turn when the session is open and idle. The wake comes
-/// back when a prompt turn holds the session (its settle loop delivers the
-/// due wakes), the session is closing or cancelled, or none is open.
+/// back when a prompt turn holds the session (it runs once that turn has
+/// answered), the session is closing or cancelled, or none is open.
 pub(super) async fn start_wake_turn(
     wake: Wake,
     state: &Arc<Mutex<ConnectionState>>,
@@ -622,19 +625,9 @@ async fn run_prompt_turn(
                 match session.autonomous_follow_up(&final_message).await {
                     // A wake that came due during the run (a detached
                     // `bash()` completion, a goal backoff, a quota reset)
-                    // runs as its next turn; the daemon queued it into the
-                    // running turn the same way.
-                    AutonomousFollowUp::Inactive => match mode.engine.take_due_wake().await {
-                        Some(wake) => {
-                            session.run_pre_turn_compaction(&mode).await;
-                            if let Err(error) = admit_wake(&mode, wake).await {
-                                turn_failure = Some(format!("{error:#}"));
-                                break;
-                            }
-                            mode.engine.session.agent().wait_for_idle().await;
-                        }
-                        None => break,
-                    },
+                    // waits for this turn to answer: the wake watcher then
+                    // runs it as a turn of its own, as a reload shows it.
+                    AutonomousFollowUp::Inactive => break,
                     AutonomousFollowUp::Continue { text } => {
                         // An injected continuation runs as the next turn
                         // of the same prompt (a fresh user row: the
@@ -979,6 +972,7 @@ async fn clear_prompt_slot(state: &Arc<Mutex<ConnectionState>>, session_id: &str
         if entry.session.id == session_id {
             entry.prompt_task = None;
             entry.prompt_is_wake = false;
+            entry.session.drop_steers();
             // A cancel stops the turn it was sent during, not the next.
             entry.session.clear_cancel();
             entry.session.poke_wakes();

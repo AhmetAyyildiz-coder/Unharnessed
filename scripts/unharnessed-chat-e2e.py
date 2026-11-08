@@ -10,8 +10,9 @@ templates, `/skill:<name>` and `enableSkillCommands`), what `/goal` and
 conversations (`session/list`, `session/load` after `--resume`, and
 `_unharnessed/sessions/delete`), what the conversation has used
 (`_meta.unharnessed.usage`: the context, the compaction's threshold, the
-cost, a compaction at work), and an OpenRouter reasoning that streams as
-one block.
+cost, a compaction at work), an OpenRouter reasoning that streams as
+one block, and an answer the provider cut at the output limit (the turn goes
+on, live and on reload).
 
 usage: scripts/unharnessed-chat-e2e.py <out-dir>
 
@@ -596,6 +597,45 @@ def scenario_history():
     check("history: the last agent exits cleanly", third.close() == 0)
 
 
+def cut_and_answer(updates):
+    """The reasoning, the cut and the answer of a turn, in order, once each."""
+    seen = []
+    for update in updates:
+        kind = "cut" if unharnessed(update).get("outputLimit") else update["sessionUpdate"]
+        if kind in ("agent_thought_chunk", "cut", "agent_message_chunk") and seen[-1:] != [kind]:
+            seen.append(kind)
+    return seen
+
+
+def scenario_output_limit():
+    first = Agent("output-limit", [
+        {"content": [{"type": "thinking", "thinking": "Working through the acoustics."}], "stopReason": "length"},
+        "Done.",
+    ])
+    answer = first.prompt("make the sound")
+    check("output limit: the prompt ends once, after the answer",
+          answer.get("result") == {"stopReason": "end_turn"}, answer)
+    starts = turn_starts(first)
+    seen = cut_and_answer(update for _, update in first.updates())
+    check("output limit: one turn, the cut between the reasoning and the answer",
+          len(starts) == 1 and seen == ["agent_thought_chunk", "cut", "agent_message_chunk"], (starts, seen))
+    sessions = first.request("session/list", {})["result"]["sessions"]
+    session_id = sessions[0]["sessionId"] if sessions else None
+    path = unharnessed(sessions[0]).get("path", "") if sessions else ""
+    check("output limit: the agent exits cleanly", first.close() == 0)
+
+    again = Agent("output-limit-load", [], home="output-limit", args=("--resume", path), load=session_id)
+    answer_at = again.frames.index(again.loaded)
+    replayed = [f["params"]["update"] for f in again.frames[:answer_at] if f.get("method") == "session/update"
+                and unharnessed(f["params"]["update"]).get("promptTurnId")]
+    turns = {unharnessed(update)["promptTurnId"] for update in replayed}
+    seen = cut_and_answer(replayed)
+    check("load: the cut answer comes back as it went, in one turn",
+          len(turns) == 1 and seen == ["agent_thought_chunk", "cut", "agent_message_chunk"]
+          and unharnessed(replayed[-1]).get("turnEnd") == {"state": "done"}, (turns, seen))
+    check("output limit: the loaded agent exits cleanly", again.close() == 0)
+
+
 def usages(agent):
     """Every usage report so far, as (frame index, its `_meta.unharnessed`)."""
     with agent.lock:
@@ -690,7 +730,8 @@ def scenario_usage():
 
 
 for scenario in (scenario_turn, scenario_thinking, scenario_openrouter_thinking, scenario_cancel, scenario_wake, scenario_commands,
-                 scenario_session_commands, scenario_images, scenario_history, scenario_usage):
+                 scenario_session_commands, scenario_images, scenario_history, scenario_usage,
+                 scenario_output_limit):
     name = scenario.__name__[len("scenario_"):]
     if os.environ.get("UNHARNESSED_E2E_ONLY", name) != name:
         continue

@@ -1,8 +1,9 @@
 /*
  * The panel's look. Soft and round, with a little matter: surfaces float on a
  * neutral grey and are told apart by a step of lightness and wide, faint
- * shadows rather than by lines. Controls are pills and discs; a press gives,
- * springs back and leaves a puff of dust (powder.ts). Things move on springs.
+ * shadows rather than by lines. Controls are pills and discs; a press gives
+ * and comes straight back, a thin ring and a few sparks leaving the pointer,
+ * sharp, never blurred (powder.ts). Things move on springs.
  * The cyan is the only colour, kept for what must stand out: the logo, the
  * live state, focus, the main action. Everything is drawn in this panel,
  * never in native VS Code popups; our icons are drawn by hand (icons.tsx).
@@ -36,7 +37,7 @@ body {
   --uh-raised: #222223;
   --uh-raised-2: #2a2a2c;
   /* A code block's face: the page under a light veil of ink, solid (what
-     sits on it, the copy button, hides the code beneath). */
+     sits on it, a cell's open button, hides the code beneath). */
   --uh-code: color-mix(in srgb, var(--uh-text) 2.25%, var(--uh-bg));
   /* Its band on top, a step greyer: it stands out from the page. */
   --uh-code-head: color-mix(in srgb, var(--uh-text) 7%, var(--uh-bg));
@@ -2283,53 +2284,289 @@ body.vscode-high-contrast-light .kernel-tray {
   }
 }
 
+/* The waiting messages, on top of the box (Composer.tsx): a head with how
+   many, and play once a stop paused them; then a row each, in the order they
+   go, a faint line under them and the box below. Under the pointer, a row
+   shows its handle in its number's place and what it does: now (cyan),
+   change, remove. One sent into the running turn and not taken yet breathes
+   a cyan dot. */
 .queue {
+  padding: 5px 5px 4px;
+  border-bottom: 1px solid var(--uh-line);
+}
+
+.queue-head {
   display: flex;
-  flex: none;
-  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding-left: 2px;
+}
+
+.queue-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px 0 5px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--uh-muted);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  transition:
+    color 180ms var(--uh-soft),
+    background-color 180ms var(--uh-soft);
+}
+
+.queue-toggle:hover {
+  color: var(--uh-text);
+  background: var(--uh-tint);
+}
+
+.queue-toggle svg {
+  width: 13px;
+  height: 13px;
+  transition: rotate 320ms var(--uh-soft);
+}
+
+.queue-toggle[aria-expanded="false"] svg {
+  rotate: -90deg;
+}
+
+.queue-count {
+  min-width: 17px;
+  padding: 0 5px;
+  font-size: 10.5px;
+  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+  color: var(--uh-text);
+  text-align: center;
+  background: var(--uh-tint-strong);
+  border-radius: 999px;
+}
+
+.queue-resume {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
-  margin: 0 16px 8px;
+  height: 24px;
+  margin-left: auto;
+  padding: 0 11px 0 7px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--uh-on-accent);
+  cursor: pointer;
+  background: var(--uh-accent);
+  border: 0;
+  border-radius: 999px;
+  animation: uh-pop 360ms var(--uh-spring);
+  transition: scale 180ms var(--uh-spring);
+}
+
+.queue-resume:active {
+  scale: 0.94;
+}
+
+.queue-resume svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* The rows open and shut like a drawer; open, they let their tooltips out. */
+.queue-drawer {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 420ms var(--uh-soft);
+}
+
+.queue-drawer.is-open {
+  grid-template-rows: 1fr;
+}
+
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  margin: 0;
   padding: 0;
+  overflow: hidden;
   list-style: none;
 }
 
+.queue-drawer.is-open .queue-list {
+  padding-top: 2px;
+  overflow: visible;
+  transition: overflow 0s 420ms allow-discrete;
+}
+
 .queued {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   min-height: 30px;
-  padding: 0 4px 0 12px;
+  padding: 0 3px 0 3px;
   font-size: 12px;
-  background: var(--uh-raised);
-  border-radius: 999px;
-  box-shadow:
-    0 0 0 1px var(--uh-line),
-    inset 0 1px 0 var(--uh-highlight);
+  border-radius: 12px;
+  transition:
+    background-color 180ms var(--uh-soft),
+    opacity 180ms var(--uh-soft);
   animation: uh-pop 360ms var(--uh-spring);
 }
 
-.queued-label {
-  flex: none;
-  font-size: 11px;
-  font-weight: 500;
-  color: rgb(var(--uh-accent-rgb) / 0.9);
+.queued:hover {
+  background: var(--uh-tint);
 }
 
-.queued-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--uh-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.queued[draggable="true"] {
+  cursor: grab;
 }
 
-.queued-remove {
+.queued.is-dragged {
+  opacity: 0.35;
+}
+
+/* Where the dragged message lands: a cyan line on the row's edge. */
+.queued[data-drop]::after {
+  position: absolute;
+  right: 10px;
+  left: 10px;
+  height: 2px;
+  pointer-events: none;
+  content: "";
+  background: var(--uh-accent);
+  border-radius: 1px;
+}
+
+.queued[data-drop="before"]::after {
+  top: -1.5px;
+}
+
+.queued[data-drop="after"]::after {
+  bottom: -1.5px;
+}
+
+.queued-mark {
   display: grid;
   flex: none;
   place-items: center;
   width: 22px;
   height: 22px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--uh-faint);
+}
+
+.queued-mark svg {
+  width: 14px;
+  height: 14px;
+}
+
+.queued-grip {
+  display: none;
+}
+
+.queued[draggable="true"]:hover .queued-grip {
+  display: block;
+  color: var(--uh-muted);
+}
+
+.queued[draggable="true"]:hover .queued-index {
+  display: none;
+}
+
+.queue.is-paused .queued-index {
+  opacity: 0.6;
+}
+
+.queued[data-state="held"] .queued-mark {
+  color: rgb(var(--uh-accent-rgb) / 0.9);
+}
+
+.queued-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--uh-accent);
+  border-radius: 50%;
+  animation: uh-breathe 1.6s ease-in-out infinite;
+}
+
+.queued-text {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  font: inherit;
+  color: var(--uh-muted);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  transition: color 180ms var(--uh-soft);
+}
+
+.queued:hover .queued-text {
+  color: var(--uh-text);
+}
+
+.queued-text:disabled {
+  cursor: default;
+}
+
+.queued-thumbs {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+}
+
+.queued-thumbs img {
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--uh-line);
+}
+
+.queued-more {
+  font-size: 10.5px;
+  color: var(--uh-faint);
+}
+
+.queued-tag {
+  flex: none;
+  padding-right: 8px;
+  font-size: 11px;
+  color: var(--uh-faint);
+}
+
+/* What a row does shows under the pointer, or with the focus in it. */
+.queued-actions {
+  display: flex;
+  flex: none;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity 180ms var(--uh-soft);
+}
+
+.queued:hover .queued-actions,
+.queued:focus-within .queued-actions {
+  opacity: 1;
+}
+
+.queued-action {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
   padding: 0;
   color: var(--uh-faint);
   cursor: pointer;
@@ -2341,14 +2578,19 @@ body.vscode-high-contrast-light .kernel-tray {
     background-color 180ms var(--uh-soft);
 }
 
-.queued-remove:hover {
+.queued-action:hover {
   color: var(--uh-text);
   background: var(--uh-tint-strong);
 }
 
-.queued-remove svg {
-  width: 13px;
-  height: 13px;
+.queued-action.is-now:hover {
+  color: var(--uh-on-accent);
+  background: var(--uh-accent);
+}
+
+.queued-action svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* The `/` and `@` menus (PickMenu.tsx): a row per entry, its icon, its name,
@@ -2755,7 +2997,7 @@ body.vscode-high-contrast-light .seti {
 
 /* Thoughts and cells one after another read as one list: as close as
    cells in a row (4 px, .call-group.is-flat). */
-.turn > :is(.thought, .call-group) + :is(.thought, .call-group) {
+:is(.turn, .work-list) > :is(.thought, .call-group) + :is(.thought, .call-group) {
   margin-top: -7px;
 }
 
@@ -2900,6 +3142,12 @@ body.vscode-high-contrast-light .seti {
 
 .working {
   font-size: 12.5px;
+}
+
+/* Where "Thinking" has its orb (.thought-slot): as far from the word, in the
+   same column. */
+.working-line > .orb {
+  margin: 0 4px 0 2px;
 }
 
 .turn-end {
@@ -3303,10 +3551,18 @@ body.vscode-high-contrast-light .kernel-line {
 
 .orb > canvas {
   flex: none;
-  scale: 0.7;
-  /* A glow that hugs each dot, too tight to merge into a cloud. */
-  filter: brightness(1.2) drop-shadow(0 0 1px rgb(var(--uh-accent-rgb) / 0.95))
-    drop-shadow(0 0 2px rgb(var(--uh-accent-rgb) / 0.5));
+  /* Over its box a little, which keeps the word in place. */
+  scale: 0.84;
+  /* Lifted: its dots fade to black behind; and a faint glow that hugs each
+     dot, too tight to merge into a cloud. */
+  filter: brightness(var(--uh-orb-lift, 1.3)) drop-shadow(0 0 1px rgb(var(--uh-accent-rgb) / 0.12))
+    drop-shadow(0 0 2px rgb(var(--uh-accent-rgb) / 0.06));
+}
+
+/* On a pale page its dots fade to white: lifted more, it would wash out. */
+body.vscode-light .orb > canvas,
+body.vscode-high-contrast-light .orb > canvas {
+  --uh-orb-lift: 1.2;
 }
 
 .orb.is-leaving {
@@ -3335,6 +3591,11 @@ body.vscode-high-contrast-light .kernel-line {
 
 .thought-slot .orb.is-leaving {
   margin-right: 0;
+}
+
+/* Beside "Thinking", a little larger. */
+.thought-slot .orb > canvas {
+  scale: 0.92;
 }
 
 .thought-verb {
@@ -3707,6 +3968,123 @@ body.vscode-high-contrast-light .kernel-line {
   overflow: hidden;
 }
 
+/* What a turn did before its answer (Chat.tsx, WorkRun): flat while it
+   runs, as it always was; once the turn is done the line grows in as the
+   rest folds away under it and slides to its indent, in one move, as cells
+   in a row do. Only the answer stays out. */
+.work-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  --form: 520ms var(--uh-soft);
+}
+
+.work-head-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--form),
+    opacity 380ms ease 120ms;
+}
+
+.work-head-wrap > div,
+.work-fold > div {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Under the line, a hairline across: what it did opens below it. */
+.work-rule {
+  flex: none;
+  height: 1px;
+  margin-top: 6px;
+  background: var(--uh-line-strong);
+}
+
+.work-group.is-flat > .work-head-wrap {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.work-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--form),
+    opacity 340ms ease;
+}
+
+.work-group.is-open > .work-fold {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+/* Open, what it did under the line, where it lay. */
+.work-list {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 10px 0 2px;
+  transition: padding var(--form);
+}
+
+.work-group.is-flat .work-list {
+  padding: 0;
+}
+
+/* As "Thought for 6s", then what it did, as a run of cells says it; its
+   words apart by the line's gap. */
+.work-head {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 5px;
+  min-height: calc(13px * 1.6 + 2px);
+  padding: 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--uh-faint);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+.work-head:focus-visible {
+  outline: 2px solid rgb(var(--uh-accent-rgb) / 0.5);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.work-verb {
+  color: var(--uh-muted);
+  transition: color 180ms var(--uh-soft);
+}
+
+/* The line's gap is the room before the dot. */
+.work-head > .call-meta .sep:first-child {
+  margin-left: 0;
+}
+
+.work-chevron {
+  width: 13px;
+  height: 13px;
+  transition:
+    rotate 280ms var(--uh-soft),
+    color 180ms var(--uh-soft);
+}
+
+.work-head[aria-expanded="true"] .work-chevron {
+  rotate: 90deg;
+}
+
+.work-head:hover .work-verb,
+.work-head:hover .work-chevron {
+  color: var(--uh-text);
+}
+
 /* What a cell opens on: its code, what it changed, what it printed. No labels. */
 .call-open {
   display: flex;
@@ -3728,27 +4106,43 @@ body.vscode-high-contrast-light .kernel-line {
   background: var(--uh-sunk);
 }
 
-/* Copy shows when the pointer is on the sheet. */
-.call-copy.icon-button {
+/* The code, and what it printed: each holds its open button. */
+.call-part {
+  --under: var(--uh-code);
+  position: relative;
+}
+
+.call-part.is-sunk {
+  --under: var(--uh-sunk);
+}
+
+/* Open shows when the pointer is on its part: a solid disc a step lighter
+   than what it sits on, the lines beneath hidden. */
+.call-tab.icon-button {
   position: absolute;
   top: 5px;
   right: 5px;
   width: 26px;
   height: 26px;
   opacity: 0;
+  background: color-mix(in srgb, var(--uh-text) 8%, var(--under));
   transition:
     opacity 180ms var(--uh-soft),
     color 220ms var(--uh-soft),
     background-color 220ms var(--uh-soft);
 }
 
-.call-copy svg {
+.call-tab.icon-button:hover {
+  background: color-mix(in srgb, var(--uh-text) 14%, var(--under));
+}
+
+.call-tab svg {
   width: 14px;
   height: 14px;
 }
 
-.call-sheet:hover .call-copy,
-.call-copy:focus-visible {
+.call-part:hover > .call-tab,
+.call-tab:focus-visible {
   opacity: 1;
 }
 
@@ -5337,23 +5731,22 @@ body.vscode-high-contrast-light .kernel-line {
 }
 
 /* The press: the pressed control's dust (powder.ts). */
+/* A thin ring, sized and placed by powder.ts. */
 .puff {
   position: fixed;
   z-index: 50;
-  width: 60px;
-  height: 60px;
-  margin: -30px 0 0 -30px;
   pointer-events: none;
-  background: radial-gradient(circle, rgb(var(--uh-accent-rgb) / 0.42) 0%, transparent 68%);
+  border: 1px solid rgb(var(--uh-accent-rgb) / 0.9);
   border-radius: 50%;
-  filter: blur(7px);
 }
 
+/* A spark: a short stroke, turned and thrown by powder.ts. */
 .grain {
   position: fixed;
   z-index: 51;
+  width: 1.5px;
   pointer-events: none;
-  border-radius: 50%;
+  border-radius: 1px;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -15,6 +15,7 @@ import {
   IconArrowDown,
   IconChevron,
   IconCompact,
+  IconExternal,
   IconEye,
   IconFilePlus,
   IconFlag,
@@ -27,7 +28,7 @@ import {
   IconVariables,
 } from "./icons";
 import { ThinkingOrb } from "thinking-orbs";
-import { CopyButton, Markdown } from "./Markdown";
+import { Markdown } from "./Markdown";
 import { MentionText } from "./mentions";
 import { count } from "./Usage";
 import { post } from "./vscode";
@@ -58,7 +59,15 @@ const WAKES: Record<NonNullable<Turn["wake"]>, string> = {
   goal: "the goal's pause ended",
 };
 
-export const EMPTY_CHAT: ChatState = { entries: [], busy: false, queue: [], commands: [], usage: null, goal: null };
+export const EMPTY_CHAT: ChatState = {
+  entries: [],
+  busy: false,
+  queue: [],
+  paused: false,
+  commands: [],
+  usage: null,
+  goal: null,
+};
 
 /** What changed, onto the conversation; what did not change keeps its identity (and its render). */
 export function applyPatch(chat: ChatState, patch: ChatPatch): ChatState {
@@ -89,6 +98,7 @@ export function applyPatch(chat: ChatState, patch: ChatPatch): ChatState {
     entries,
     busy: patch.busy,
     queue: patch.queue,
+    paused: patch.paused,
     commands: patch.commands ?? chat.commands,
     usage: patch.usage === undefined ? chat.usage : patch.usage,
     goal: patch.goal === undefined ? chat.goal : patch.goal,
@@ -235,6 +245,21 @@ const TurnView = memo(function TurnView({
     (last?.kind === "tool" && last.status === "running") ||
     (last?.kind === "compaction" && last.state === "running");
   const working = running && !busy;
+  // What it did before its answer, then the answer, out of the fold.
+  const answer = answerAt(turn);
+  const split = answer ?? turn.items.length;
+  const all = pieces(turn.items);
+  const show = (piece: Piece) =>
+    piece.kind === "item" ? (
+      <Item
+        key={piece.at}
+        item={turn.items[piece.at]}
+        running={running}
+        streaming={running && piece.at === turn.items.length - 1}
+      />
+    ) : (
+      <CallRun key={`run ${piece.start}`} items={turn.items} start={piece.start} end={piece.end} running={running} />
+    );
   return (
     <section className={dim ? `turn is-dimmed-${dim}` : "turn"}>
       {turn.prompt && (
@@ -245,18 +270,14 @@ const TurnView = memo(function TurnView({
         />
       )}
       {!turn.prompt && turn.wake && <p className="turn-wake">The agent went on by itself: {WAKES[turn.wake]}.</p>}
-      {pieces(turn.items).map((piece) =>
-        piece.kind === "item" ? (
-          <Item
-            key={piece.at}
-            item={turn.items[piece.at]}
-            running={running}
-            streaming={running && piece.at === turn.items.length - 1}
-          />
-        ) : (
-          <CallRun key={`run ${piece.start}`} items={turn.items} start={piece.start} end={piece.end} running={running} />
+      {[
+        split > 0 && (
+          <WorkRun key="work" items={turn.items.slice(0, split)} folded={answer !== undefined} ms={turn.ms}>
+            {all.filter((piece) => first(piece) < split).map(show)}
+          </WorkRun>
         ),
-      )}
+        ...all.filter((piece) => first(piece) >= split).map(show),
+      ]}
       {working && (
         <p className="working-line">
           <Orb on state="breathing" />
@@ -591,6 +612,62 @@ function CompactionMark({ compaction }: { compaction: Compaction }) {
 /** A turn's items, each run of cells in a row gathered: anything else between two cells, a thought too, ends a run. */
 type Piece = { kind: "item"; at: number } | { kind: "run"; start: number; end: number };
 
+function first(piece: Piece): number {
+  return piece.kind === "item" ? piece.at : piece.start;
+}
+
+/**
+ * Where a done turn's answer begins: the text (and notices) it ended on.
+ * What came before it folds, if a cell ran there; else nothing does.
+ */
+function answerAt(turn: Turn): number | undefined {
+  if (turn.state !== "done") return undefined;
+  let at = turn.items.length;
+  while (at > 0 && (turn.items[at - 1].kind === "text" || turn.items[at - 1].kind === "notice")) at--;
+  return turn.items.slice(0, at).some((item) => item.kind === "tool") ? at : undefined;
+}
+
+/**
+ * What a turn did before its answer. While it runs it lies flat, as it
+ * always did; once done it folds in one move into "Worked for 2m 14s ·
+ * 6 cells +52 −11", which opens again. A conversation coming back shows it
+ * folded already, without its time.
+ */
+function WorkRun({ items, folded, ms, children }: { items: TurnItem[]; folded: boolean; ms?: number; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const tools = items.filter((item): item is Tool => item.kind === "tool");
+  const classes = ["work-group", folded ? open && "is-open" : "is-open is-flat"].filter(Boolean).join(" ");
+  return (
+    <div className={classes}>
+      <div className="work-head-wrap" inert={!folded}>
+        <div>
+          <button className="work-head" type="button" data-no-press aria-expanded={open} onClick={() => setOpen(!open)}>
+            <span className="work-verb">Worked</span>
+            {ms !== undefined && <span>for {took(ms)}</span>}
+            <span className="call-meta">
+              <span className="sep">·</span>
+              {tools.length} cell{tools.length === 1 ? "" : "s"}
+              {tools.some(changes) && (
+                <>
+                  <span className="sep">·</span>
+                  <Changed tools={tools} />
+                </>
+              )}
+            </span>
+            <IconChevron className="work-chevron" />
+          </button>
+          <span className="work-rule" />
+        </div>
+      </div>
+      <div className="work-fold" inert={folded && !open}>
+        <div>
+          <div className="work-list">{children}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function pieces(items: TurnItem[]): Piece[] {
   const out: Piece[] = [];
   items.forEach((item, at) => {
@@ -615,7 +692,6 @@ function CallRun({ items, start, end, running }: { items: TurnItem[]; start: num
   const run = items.slice(start, end);
   const tools = run.filter((item): item is Tool => item.kind === "tool");
   const grouped = tools.length > 1 && (end < items.length || !running);
-  const edits = tools.flatMap((tool) => (tool.status !== "failed" && tool.cell?.diff ? [tool.cell.diff] : []));
   const classes = ["call-group", grouped ? open && "is-open" : "is-open is-flat"].filter(Boolean).join(" ");
   return (
     <div className={classes}>
@@ -629,12 +705,9 @@ function CallRun({ items, start, end, running }: { items: TurnItem[]; start: num
             <span className="call-target">
               {tools.length} Python cell{tools.length === 1 ? "" : "s"}
             </span>
-            {edits.length > 0 && (
+            {tools.some(changes) && (
               <span className="call-meta">
-                <Changed
-                  added={edits.reduce((sum, diff) => sum + diff.added, 0)}
-                  removed={edits.reduce((sum, diff) => sum + diff.removed, 0)}
-                />
+                <Changed tools={tools} />
               </span>
             )}
             <IconChevron className="call-chevron" />
@@ -687,7 +760,7 @@ function ToolCall({ tool, live }: { tool: Tool; live: boolean }) {
   const diff = failed ? undefined : tool.cell?.diff;
   const meta: ReactNode[] = [];
   if (!live) {
-    if (diff) meta.push(<Changed added={diff.added} removed={diff.removed} />);
+    if (diff) meta.push(<Changed tools={[tool]} />);
     if (failed && tool.error) meta.push(tool.error);
     if (tool.images) meta.push(`${tool.images} image${tool.images > 1 ? "s" : ""} loaded`);
   }
@@ -746,16 +819,19 @@ function ToolCall({ tool, live }: { tool: Tool; live: boolean }) {
 
 /**
  * What a cell opens on, one sheet without labels: its Python, then a tone
- * deeper what came out of it, an edit's changes under the file's icon and
- * name, and what it printed.
+ * deeper what came out of it, an edit's changes (a write's lines) under the
+ * file's icon and name, and what it printed. The code and the print each
+ * open, whole, in an editor tab.
  */
 function CallSheet({ tool, files, diff, failed }: { tool: Tool; files: string[]; diff: Cell["diff"]; failed: boolean }) {
   const output = tool.output?.replace(/\n+$/, "");
   return (
     <div className="call-open">
       <div className="call-sheet">
-        <CopyButton className="call-copy" text={tool.input} />
-        <pre className="call-code">{highlight(tool.input)}</pre>
+        <div className="call-part">
+          <pre className="call-code">{highlight(tool.input)}</pre>
+          <OpenTab id={tool.id} part="input" />
+        </div>
         {diff && (
           <div className="is-sunk">
             <div className="call-diff-head">
@@ -766,7 +842,7 @@ function CallSheet({ tool, files, diff, failed }: { tool: Tool; files: string[];
                 </Fragment>
               ))}
               <span className="call-meta">
-                <Changed added={diff.added} removed={diff.removed} />
+                <Changed tools={[tool]} />
               </span>
             </div>
             <div className="call-lines">
@@ -780,12 +856,15 @@ function CallSheet({ tool, files, diff, failed }: { tool: Tool; files: string[];
           </div>
         )}
         {output && (
-          <div className={failed ? "call-lines is-sunk is-error" : "call-lines is-sunk is-output"}>
-            {output.split("\n").map((line, at) => (
-              <div key={at} className="call-line">
-                {line || " "}
-              </div>
-            ))}
+          <div className="call-part is-sunk">
+            <div className={failed ? "call-lines is-error" : "call-lines is-output"}>
+              {output.split("\n").map((line, at) => (
+                <div key={at} className="call-line">
+                  {line || " "}
+                </div>
+              ))}
+            </div>
+            <OpenTab id={tool.id} part="output" />
           </div>
         )}
       </div>
@@ -793,13 +872,47 @@ function CallSheet({ tool, files, diff, failed }: { tool: Tool; files: string[];
   );
 }
 
-/** The lines an edit adds and removes: `+2 −1`. */
-function Changed({ added, removed }: { added: number; removed: number }) {
+/** Opens a cell's code, or all it printed (the panel's is cut), in an editor tab. */
+function OpenTab({ id, part }: { id: string; part: "input" | "output" }) {
+  const tip = part === "input" ? "Open the code" : "Open the output";
+  return (
+    <button
+      className="icon-button call-tab"
+      type="button"
+      aria-label={tip}
+      data-tip={tip}
+      data-tip-side="left"
+      onClick={() => post({ type: "openCell", id, part })}
+    >
+      <IconExternal />
+    </button>
+  );
+}
+
+/**
+ * The lines cells' edits and writes add and remove: `+2 −1`; writes alone
+ * (whatever a file held before, their code does not say), `+42`.
+ */
+function Changed({ tools }: { tools: Tool[] }) {
+  const changed = tools.filter(changes);
+  const edits = changed.filter((tool) => tool.cell?.kind !== "write");
+  const sum = (of: Tool[], key: "added" | "removed") => of.reduce((n, tool) => n + (tool.cell?.diff?.[key] ?? 0), 0);
   return (
     <>
-      <span className="add">+{added}</span> <span className="del">−{removed}</span>
+      <span className="add">+{sum(changed, "added")}</span>
+      {edits.length > 0 && (
+        <>
+          {" "}
+          <span className="del">−{sum(edits, "removed")}</span>
+        </>
+      )}
     </>
   );
+}
+
+/** Whether a cell shows the lines it changed: it did not fail, and its code says which. */
+function changes(tool: Tool): boolean {
+  return tool.status !== "failed" && tool.cell?.diff !== undefined;
 }
 
 /** `a.ts` of `src/a.ts`. */

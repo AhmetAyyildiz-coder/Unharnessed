@@ -24,6 +24,9 @@ use super::producer::UpdateProducer;
 use super::types::{parse_prompt_blocks, AcpSessionUpdate, ImageBlock, PromptBlockError};
 use super::usage::UsageReporter;
 
+/// The session file's mark before a message steered into a running turn.
+pub(super) const STEER_CUSTOM_TYPE: &str = "steer";
+
 /// One hosted ACP session: the producer, the engine event subscription, the
 /// autonomous run state, and the prompt-lifecycle bookkeeping.
 pub struct AcpSession {
@@ -52,6 +55,9 @@ pub struct AcpSession {
     goal_budget_crossed: Arc<AtomicBool>,
     /// The context gauge's reports (`_meta.unharnessed.usage`).
     pub(super) usage: Arc<UsageReporter>,
+    /// The messages steered into the running turn and not taken yet, by
+    /// timestamp: the subscription tells the client when each joins.
+    steers: Arc<std::sync::Mutex<Vec<i64>>>,
 }
 
 impl AcpSession {
@@ -75,6 +81,7 @@ impl AcpSession {
         let arms = Arc::new(CompactionArms::new());
         let goal_budget_crossed = Arc::new(AtomicBool::new(false));
         let usage = UsageReporter::new(engine.clone(), model, producer.clone());
+        let steers = Arc::new(std::sync::Mutex::new(Vec::new()));
         let subscription = subscribe_engine_events(
             &engine,
             producer.clone(),
@@ -85,6 +92,7 @@ impl AcpSession {
             arms.clone(),
             goal_budget_crossed.clone(),
             usage.clone(),
+            steers.clone(),
         )
         .await;
         AcpSession {
@@ -100,7 +108,27 @@ impl AcpSession {
             arms,
             goal_budget_crossed,
             usage,
+            steers,
         }
+    }
+
+    /// A message steered into the running turn, by its timestamp: its
+    /// `message_start` starts a turn of its own for the client.
+    pub fn steered(&self, timestamp: i64) {
+        self.steers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(timestamp);
+    }
+
+    /// The turn is over: what was steered into it and not taken goes
+    /// (the client sends it again).
+    pub fn drop_steers(&self) {
+        self.steers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.agent.clear_steering_queue();
     }
 
     /// Release the engine event subscription; no further updates flow.
@@ -240,6 +268,7 @@ async fn subscribe_engine_events(
     arms: Arc<CompactionArms>,
     goal_budget_crossed: Arc<AtomicBool>,
     usage: Arc<UsageReporter>,
+    steers: Arc<std::sync::Mutex<Vec<i64>>>,
 ) -> Subscription {
     let agent = engine.session.agent().clone();
     let goal_driver = engine.goal_driver.clone();
@@ -256,6 +285,7 @@ async fn subscribe_engine_events(
             let arms = arms.clone();
             let goal_budget_crossed = goal_budget_crossed.clone();
             let usage = usage.clone();
+            let steers = steers.clone();
             Box::pin(async move {
                 // A user row that starts an agent run resets the overflow
                 // recovery machine (TS `startsAgentRun` at
@@ -268,6 +298,45 @@ async fn subscribe_engine_events(
                     arms.reset();
                 }
                 let turn_id = producer.active_prompt_turn().await;
+                // A steered message joins the running turn: from it on, the
+                // client shows a turn of its own, which goes back to before it.
+                if let AgentEvent::MessageStart {
+                    message: AgentMessage::Standard(Message::User(user)),
+                } = &event
+                {
+                    let steered = {
+                        let mut steers = steers
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let at = steers.iter().position(|&stamp| stamp == user.timestamp);
+                        at.map(|at| steers.remove(at)).is_some()
+                    };
+                    if steered {
+                        // Marked in the session file, before its row: a
+                        // replay tells it from a prompt after a stop.
+                        let rewind_to = {
+                            let mut persistence = session.lock().await;
+                            let leaf = persistence.get_leaf_id().map(str::to_string);
+                            if let Err(error) = persistence.append_custom_entry(STEER_CUSTOM_TYPE, None) {
+                                eprintln!("uh-daemon: the steer mark was not saved: {error:#}");
+                            }
+                            leaf
+                        };
+                        let update = AcpSessionUpdate::SessionInfoUpdate {
+                            meta: super::meta::unharnessed_meta(&UnharnessedSessionMeta {
+                                turn_start: Some(super::meta::UnharnessedTurnStartMeta {
+                                    origin: "steer".to_string(),
+                                    wake: None,
+                                    rewind_to,
+                                }),
+                                ..Default::default()
+                            }),
+                        };
+                        producer
+                            .publish(&update, turn_id, UnharnessedEventPhase::Event, None)
+                            .await;
+                    }
+                }
                 let engine_events: Vec<AcpEngineEvent> = project_event(&event);
                 for engine_event in engine_events {
                     let updates = {
@@ -378,6 +447,13 @@ async fn subscribe_engine_events(
 /// text) lives in the stream event variant.
 fn project_event(event: &AgentEvent) -> Vec<AcpEngineEvent> {
     match event {
+        AgentEvent::MessageStart {
+            message: AgentMessage::Custom(custom),
+        } if custom.payload.get("customType").and_then(Value::as_str)
+            == Some(uh_core::session_engine::messages::OUTPUT_LIMIT_CUSTOM_TYPE) =>
+        {
+            vec![AcpEngineEvent::OutputLimit]
+        }
         AgentEvent::MessageStart { message } => vec![AcpEngineEvent::MessageStart {
             role: message.role().to_string(),
         }],

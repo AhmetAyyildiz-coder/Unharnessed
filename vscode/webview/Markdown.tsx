@@ -131,7 +131,7 @@ function CodeBlock({ children }: { children: ReactNode }) {
 }
 
 /** Copies `text`, then says so a moment. */
-export function CopyButton({ className, text }: { className: string; text: string }) {
+function CopyButton({ className, text }: { className: string; text: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button

@@ -248,7 +248,8 @@ export type Cell = {
   command?: string;
   /**
    * An edit's changes, from the texts its code replaces (no line of the file
-   * around them), and how many lines it adds and removes.
+   * around them), and how many lines it adds and removes; or the lines a
+   * write writes, all added, when its code holds them.
    */
   diff?: { lines: DiffLine[]; added: number; removed: number };
 };
@@ -303,6 +304,8 @@ export type TurnHead = {
   wake?: "bash" | "quota" | "goal";
   state: "running" | "done" | "cancelled" | "failed";
   error?: string;
+  /** How long it worked, once done; absent on a turn the agent replays. */
+  ms?: number;
   /** Where the agent goes back to send the prompt again, changed; absent when it cannot (an earlier agent's turn). */
   rewindTo?: string;
 };
@@ -346,8 +349,12 @@ export type HistoryState = {
   error?: string;
 };
 
-/** A message waiting for the running turn to end. */
-export type QueuedMessage = { id: number; text: string; images: Thumb[] };
+/**
+ * A message waiting for the running turn to end. `held`: back in the
+ * message box to be changed, the queue waits at it. `steering`: sent into
+ * the running turn, which has not taken it yet.
+ */
+export type QueuedMessage = { id: number; text: string; images: Thumb[]; state: "waiting" | "held" | "steering" };
 
 /**
  * What the conversation has used, as the agent reports it after each
@@ -441,6 +448,8 @@ export type ChatState = {
   /** A saved conversation is coming back; the panel gets it once it is whole. */
   loading?: boolean;
   queue: QueuedMessage[];
+  /** Stopped: the waiting messages go once the queue plays again. */
+  paused: boolean;
   commands: ChatCommand[];
   /** `null` until the agent has reported it. */
   usage: Usage | null;
@@ -453,6 +462,7 @@ export type ChatPatch = {
   items: [entry: number, at: number, item: TurnItem][];
   busy: boolean;
   queue: QueuedMessage[];
+  paused: boolean;
   commands?: ChatCommand[];
   usage?: Usage | null;
   goal?: Goal | null;
@@ -488,10 +498,11 @@ export type HostMessage =
   | { type: "kernelPreview"; name: string; preview: VariablePreview }
   | { type: "history"; history: HistoryState }
   | { type: "chatPatch"; patch: ChatPatch }
-  /** The waiting messages, back in the message box after a stop. */
-  | { type: "chatDraft"; text: string; images: Attachment[] }
-  /** A sent prompt, back in the message box to be changed and sent again in place of turn `id`'s. */
-  | { type: "chatEdit"; id: number; text: string; images: Attachment[] }
+  /**
+   * A sent prompt, back in the message box to be changed and sent again in
+   * place of turn `id`'s; or waiting message `id`, to be changed in its place.
+   */
+  | { type: "chatEdit"; id: number; text: string; images: Attachment[]; queued: boolean }
   | { type: "agent"; agent: AgentState }
   /** `null` while the agent is not running. */
   | { type: "session"; session: SessionState | null }
@@ -511,7 +522,9 @@ export type HostMessage =
    */
   | { type: "settingResult"; key: string; error?: string }
   /** The folder's files for the `@` menu, relative and `/`-separated; `open` are those in an editor. */
-  | { type: "files"; files: string[]; open: string[] };
+  | { type: "files"; files: string[]; open: string[] }
+  /** The images among the files of a `readImages`, base64; one that could not be read is a sentence in `errors`. */
+  | { type: "droppedImages"; images: { name: string; mimeType: string; data: string }[]; errors: string[] };
 
 export type WebviewMessage =
   | { type: "ready" }
@@ -555,20 +568,34 @@ export type WebviewMessage =
   /** Open a skill's file in the editor. */
   | { type: "openFile"; path: string }
   | { type: "copy"; text: string }
+  /** A tool's code (its input) or its whole output, in an editor tab. */
+  | { type: "openCell"; id: string; part: "input" | "output" }
   /**
    * Sent now, or queued while a turn runs; its `@` mentions go as links.
-   * `edit` replaces that turn's prompt: the conversation goes back to before it.
+   * `edit` replaces that turn's prompt: the conversation goes back to before
+   * it; or that waiting message, in its place. `now`: into the running turn,
+   * which reads it before its next step.
    */
-  | { type: "send"; text: string; images: Attachment[]; edit?: number }
-  /** A sent prompt, to change: it comes back as `chatEdit`. */
+  | { type: "send"; text: string; images: Attachment[]; edit?: number; now?: boolean }
+  /** A sent prompt or a waiting message, to change: it comes back as `chatEdit`. */
   | { type: "edit"; id: number }
+  /** The waiting message being changed goes back unchanged. */
+  | { type: "release"; id: number }
   /** The folder's files, for the `@` menu. */
   | { type: "listFiles" }
-  /** Stop the running turn; the waiting messages come back to the box. */
+  /** Files dropped from VS Code (the explorer, a tab), by URI: the panel can't read them, `droppedImages` brings the images. */
+  | { type: "readImages"; uris: string[] }
+  /** Stop the running turn; the waiting messages wait, the queue paused. */
   | { type: "cancel" }
   /** The goal's pause (the running turn stops), play, and end (the running turn stops, the goal goes). */
   | { type: "goal"; action: "pause" | "resume" | "end" }
   | { type: "unqueue"; id: number }
+  /** A waiting message to place `to` in the queue. */
+  | { type: "moveQueued"; id: number; to: number }
+  /** A waiting message, now: into the running turn, or sent if none runs. */
+  | { type: "sendNow"; id: number }
+  /** The paused queue plays again. */
+  | { type: "resumeQueue" }
   /** A new conversation, its own agent; `draft` stays with the one the panel leaves. */
   | { type: "newChat"; draft: Draft }
   /** The saved conversations of the panel's folder. */

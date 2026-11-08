@@ -213,6 +213,39 @@ impl AgentSession {
         Ok(PromptOutcome::Prompt)
     }
 
+    /// A message to steer the running run with (TS `steer`), normalized
+    /// like a prompt: `Agent::steer` has it join the run before its next
+    /// model call.
+    ///
+    /// # Errors
+    ///
+    /// A session command cannot join a run; neither can images the run's
+    /// model cannot read (the image model serves a turn of their own).
+    pub async fn steer_message(
+        &self,
+        text: &str,
+        images: Vec<uh_agent::types::ImageContent>,
+    ) -> anyhow::Result<uh_agent::types::AgentMessage> {
+        let (skill_expanded, _) = crate::skills::expand_skill_command(text, &self.skills);
+        let normalized =
+            crate::skills::expand_prompt_template(&skill_expanded, &self.prompt_templates);
+        if parse_session_command(&self.slash_commands, &normalized).is_some() {
+            anyhow::bail!("A command cannot join a running turn.");
+        }
+        if let (false, Some(router)) = (images.is_empty(), self.image_model_router.as_ref()) {
+            let level = super::provider_adapter::model_thinking_level(
+                self.agent.state().await.thinking_level,
+            );
+            if (router.decide)(true, level)
+                .map_err(anyhow::Error::msg)?
+                .is_some()
+            {
+                anyhow::bail!("This model cannot read images: they wait for a turn of their own.");
+            }
+        }
+        Ok(user_prompt_message(&normalized, &images))
+    }
+
     /// Queue one custom row for the next admitted turn (TS
     /// `_pendingNextTurnMessages.push`): the row rides the turn's prompt
     /// messages ahead of the prompt's own user row.

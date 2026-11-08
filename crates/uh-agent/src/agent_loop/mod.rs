@@ -85,6 +85,10 @@ pub type GetContinuationMessagesFn = Arc<
         + Sync,
 >;
 
+/// The message that asks the model to go on after the provider cut its
+/// response at the output limit (`None`: the run ends on the cut).
+pub type OutputLimitMessageFn = Arc<dyn Fn() -> Option<AgentMessage> + Send + Sync>;
+
 /// `beforeToolCall`: return `{ block: true }` to prevent execution.
 pub type BeforeToolCallFn = Arc<
     dyn Fn(
@@ -128,6 +132,9 @@ pub struct AgentLoopConfig {
     pub get_steering_messages: Option<PollMessagesFn>,
     pub get_follow_up_messages: Option<PollMessagesFn>,
     pub get_continuation_messages: Option<GetContinuationMessagesFn>,
+    /// A response cut at the output limit goes on with this message, a few
+    /// times in a row at most; `None` ends the run there.
+    pub output_limit_message: Option<OutputLimitMessageFn>,
     /// Tool execution mode. Defaults to parallel (TS default).
     pub tool_execution: ToolExecutionMode,
     pub before_tool_call: Option<BeforeToolCallFn>,
@@ -156,6 +163,7 @@ impl AgentLoopConfig {
             get_steering_messages: None,
             get_follow_up_messages: None,
             get_continuation_messages: None,
+            output_limit_message: None,
             tool_execution: ToolExecutionMode::Parallel,
             before_tool_call: None,
             after_tool_call: None,
