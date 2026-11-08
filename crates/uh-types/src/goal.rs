@@ -14,6 +14,10 @@ pub enum GoalStatus {
     Idle,
     Active,
     Paused,
+    /// Stuck until the user or an outside change lifts it: the model said so
+    /// (`goal.block`), or its turns stopped doing anything. Reason in
+    /// `last_reason`.
+    Blocked,
     BudgetLimited,
     Complete,
     Error,
@@ -28,6 +32,7 @@ impl GoalStatus {
             GoalStatus::Idle => "idle",
             GoalStatus::Active => "active",
             GoalStatus::Paused => "paused",
+            GoalStatus::Blocked => "blocked",
             GoalStatus::BudgetLimited => "budget_limited",
             GoalStatus::Complete => "complete",
             GoalStatus::Error => "error",
@@ -66,6 +71,11 @@ pub struct GoalState {
     /// strikes twice, however often the session rebuilds).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub no_progress_turn_ms: Option<i64>,
+    /// The consecutive inactive turns (no tool call, no `bash()` running):
+    /// at the cap the goal goes `blocked`. Durable like the streak above; a
+    /// tool call, a user message or a resume resets it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_streak: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -95,6 +105,7 @@ pub fn empty_goal_state() -> GoalState {
         created_at: None,
         no_progress_streak: None,
         no_progress_turn_ms: None,
+        idle_streak: None,
         updated_at: None,
         last_reason: None,
         last_error: None,

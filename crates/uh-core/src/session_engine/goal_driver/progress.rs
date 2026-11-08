@@ -1,15 +1,20 @@
 //! The goal mint's progress gate (the 402 diagnosis's (a)/(b)): the
 //! just-settled turn's examination — the terminal kill, the quota-park
 //! refusal window, the durable no-progress streak with its doubling
-//! backoff, and the order-safety rules (the examined-turn dedup, the
-//! unconditional kill, the unconditional cap). Split out of the goal
-//! driver module (the repo's file-size convention): the driver's core
+//! backoff, the idle counter, and the order-safety rules (the examined-turn
+//! dedup, the unconditional kill, the unconditional cap). Split out of the
+//! goal driver module (the repo's file-size convention): the driver's core
 //! lifecycle stays in the parent, the progress concern lands in its own
 //! child beside it.
 
+use uh_types::ai::AssistantContentBlock;
+use uh_types::session::{AgentMessage, FileEntry};
+
 use super::{now_millis, GoalDriver};
-use crate::goals::{GoalState, GoalStatus};
+use crate::goals::{GoalState, GoalStatus, GOAL_CONTEXT_CUSTOM_TYPE};
 use crate::session::manager::SessionManager;
+use crate::session_engine::messages::ASYNC_BASH_COMPLETION_CUSTOM_TYPE;
+use crate::session_engine::provider_park::QUOTA_RESUME_MARKER_TEXT;
 use crate::session_engine::provider_retry::provider_stream_failure_kind;
 
 /// How many consecutive no-output turns the continuation mint tolerates
@@ -19,6 +24,18 @@ pub(crate) const CONTINUATION_NO_PROGRESS_CAP: u32 = 3;
 /// The backoff base for consecutive no-output turns (10s, 20s, 40s ...):
 /// each retry of a no-progress continuation waits twice as long.
 pub(crate) const CONTINUATION_NO_PROGRESS_BACKOFF_BASE_MS: u64 = 10_000;
+
+/// How many consecutive inactive turns (no tool call, no `bash()` running)
+/// the goal tolerates before it goes `blocked`. On the bench's 61 finished
+/// trials, Sol never resumed its work after more than one.
+const IDLE_TURN_CAP: u32 = 3;
+
+/// How much of the last answer a blocked goal keeps as its reason.
+const BLOCKED_REASON_CHARS: usize = 500;
+
+/// How long a continuation waits behind a running `bash()`: one that never
+/// ends (a server) still gets a relaunch this often.
+pub(crate) const COMMAND_WAIT_MS: u64 = 10 * 60 * 1000;
 
 /// The wake marker prompt (the goal-backoff analogue of
 /// `QUOTA_RESUME_MARKER_TEXT`): an idle in-process host prompts it once
@@ -66,7 +83,111 @@ pub fn terminal_provider_failure(message: &uh_agent::types::AssistantMessage) ->
     )
 }
 
+/// A blocked goal's reason: trimmed and capped.
+pub(super) fn capped_reason(reason: &str) -> String {
+    reason.trim().chars().take(BLOCKED_REASON_CHARS).collect()
+}
+
+/// What the turn that just settled did, read off the durable rows (a
+/// compaction in mid-turn cuts the live context, not these).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct TurnFacts {
+    /// When its first tool-calling message came; `None`: it called no tool.
+    first_tool_call_ms: Option<u64>,
+    /// A user message opened it (the wake markers are not one).
+    user_spoke: bool,
+    command_running: bool,
+    /// A running command started during it.
+    command_started: bool,
+}
+
+impl TurnFacts {
+    /// The rows back to the one that opened the turn: a user message, a goal
+    /// context or a command's completion.
+    pub(super) fn read(session: &SessionManager, running_commands: &[u64]) -> Self {
+        let mut first_tool_call_ms = None;
+        let mut user_spoke = false;
+        for entry in session.get_branch(None).into_iter().rev() {
+            match entry {
+                FileEntry::Message {
+                    message: AgentMessage::Assistant(assistant),
+                    ..
+                } if assistant
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, AssistantContentBlock::ToolCall(_))) =>
+                {
+                    first_tool_call_ms = Some(assistant.timestamp);
+                }
+                FileEntry::Message {
+                    message: AgentMessage::User(user),
+                    ..
+                } => {
+                    let text = user.content.text();
+                    user_spoke =
+                        text != GOAL_BACKOFF_WAKE_MARKER_TEXT && text != QUOTA_RESUME_MARKER_TEXT;
+                    break;
+                }
+                FileEntry::CustomMessage { payload, .. }
+                    if payload.custom_type == GOAL_CONTEXT_CUSTOM_TYPE
+                        || payload.custom_type == ASYNC_BASH_COMPLETION_CUSTOM_TYPE =>
+                {
+                    break;
+                }
+                _ => {}
+            }
+        }
+        Self {
+            first_tool_call_ms,
+            user_spoke,
+            command_running: !running_commands.is_empty(),
+            command_started: first_tool_call_ms
+                .is_some_and(|at| running_commands.iter().any(|started| *started >= at)),
+        }
+    }
+
+    /// A turn without action while a command runs, or one that started a
+    /// command and stopped there.
+    fn waits_on_a_command(self) -> bool {
+        self.command_running && (self.first_tool_call_ms.is_none() || self.command_started)
+    }
+
+    /// A turn that called tools while an older command (a server left
+    /// running) went on, and started none.
+    fn worked_beside_a_command(self) -> bool {
+        self.command_running && self.first_tool_call_ms.is_some() && !self.command_started
+    }
+}
+
 impl GoalDriver {
+    /// Whether the continuation of `turn` waits behind a running command. A
+    /// turn that worked beside an older command relaunches at once, but not
+    /// two in a row: the second is a model checking on a long command, and
+    /// it waits like a turn without action. A new command, none left running
+    /// or a user message ends the series.
+    pub(super) fn continuation_waits(
+        &mut self,
+        facts: TurnFacts,
+        turn: Option<&uh_agent::types::AssistantMessage>,
+    ) -> bool {
+        if facts.user_spoke || !facts.command_running || facts.command_started {
+            self.relaunched_beside_a_command = None;
+        }
+        if !facts.worked_beside_a_command() {
+            return facts.waits_on_a_command();
+        }
+        // The same turn consulted again keeps its answer.
+        let this_turn = turn.map(|turn| turn.timestamp);
+        if self
+            .relaunched_beside_a_command
+            .is_some_and(|relaunched| Some(relaunched) != this_turn)
+        {
+            return true;
+        }
+        self.relaunched_beside_a_command = this_turn;
+        false
+    }
+
     /// The mint's progress gate: examine the just-settled turn and report
     /// whether the mint may proceed. Every refusal arm (the terminal
     /// kill, the quota-park window, the no-progress strike, the cap)
@@ -79,6 +200,7 @@ impl GoalDriver {
         &mut self,
         session: &mut SessionManager,
         turn: &uh_agent::types::AssistantMessage,
+        facts: Option<TurnFacts>,
     ) -> anyhow::Result<bool> {
         // The gate's scope: only a turn THIS goal's lifetime produced
         // can judge it. `last_loop_assistant_message` reads the live
@@ -172,11 +294,22 @@ impl GoalDriver {
                 // restart cannot reset it and un-cap a degenerate loop,
                 // and the same corpse never strikes twice however often
                 // the session rebuilds).
+                // An empty answer does not count as idle, but a tool call
+                // or a user message earlier in its turn still breaks the
+                // idle series.
+                let idle_streak = if facts
+                    .is_some_and(|facts| facts.first_tool_call_ms.is_some() || facts.user_spoke)
+                {
+                    Some(0)
+                } else {
+                    self.state.idle_streak
+                };
                 self.set_state(
                     session,
                     GoalState {
                         no_progress_streak: Some(self.no_progress_streak),
                         no_progress_turn_ms: Some(turn.timestamp),
+                        idle_streak,
                         ..self.state.clone()
                     },
                 )?;
@@ -216,7 +349,75 @@ impl GoalDriver {
                     },
                 )?;
             }
+            if let Some(facts) = facts {
+                return self.judge_activity(session, turn, facts);
+            }
         }
         Ok(true)
+    }
+
+    /// The idle counter over a new turn that produced output: a tool call
+    /// resets it, a user message restarts it, a turn with neither and no
+    /// command running counts. Returns `false` once the goal went `blocked`.
+    fn judge_activity(
+        &mut self,
+        session: &mut SessionManager,
+        turn: &uh_agent::types::AssistantMessage,
+        facts: TurnFacts,
+    ) -> anyhow::Result<bool> {
+        let streak = self.state.idle_streak.unwrap_or(0);
+        let idle = if facts.first_tool_call_ms.is_some() {
+            0
+        } else {
+            let from = if facts.user_spoke { 0 } else { streak };
+            let counts =
+                !facts.command_running && turn.stop_reason != uh_agent::types::StopReason::Aborted;
+            from + u32::from(counts)
+        };
+        self.counted_no_progress_turn_ms = Some(turn.timestamp);
+        if idle >= IDLE_TURN_CAP {
+            self.set_state(
+                session,
+                GoalState {
+                    active: false,
+                    status: GoalStatus::Blocked,
+                    no_progress_turn_ms: Some(turn.timestamp),
+                    idle_streak: Some(idle),
+                    last_reason: Some(blocked_reason(turn)),
+                    last_error: None,
+                    ..self.state.clone()
+                },
+            )?;
+            return Ok(false);
+        }
+        if idle != streak {
+            self.set_state(
+                session,
+                GoalState {
+                    no_progress_turn_ms: Some(turn.timestamp),
+                    idle_streak: Some(idle),
+                    ..self.state.clone()
+                },
+            )?;
+        }
+        Ok(true)
+    }
+}
+
+/// The start of the last answer, what the user reads as the reason.
+fn blocked_reason(turn: &uh_agent::types::AssistantMessage) -> String {
+    let answer: Vec<&str> = turn
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            uh_agent::types::AssistantContent::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let reason = capped_reason(&answer.join("\n"));
+    if reason.is_empty() {
+        format!("No tool call in {IDLE_TURN_CAP} consecutive turns")
+    } else {
+        reason
     }
 }

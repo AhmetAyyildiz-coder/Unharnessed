@@ -159,11 +159,16 @@ fn slash_command_result(
     }
 }
 
-/// The goal status line (`Goal <status>: <objective>` / `No active goal.`).
+/// The goal status line (`Goal <status>: <objective>` / `No active goal.`);
+/// a blocked goal says why.
 fn goal_status_text(state: &crate::goals::GoalState) -> String {
     match &state.objective {
         Some(objective) if state.status != GoalStatus::Idle => {
-            format!("Goal {}: {objective}", state.status.slug())
+            let line = format!("Goal {}: {objective}", state.status.slug());
+            match (&state.status, &state.last_reason) {
+                (GoalStatus::Blocked, Some(reason)) => format!("{line}\nBlocked by: {reason}"),
+                _ => line,
+            }
         }
         _ => "No active goal.".to_string(),
     }

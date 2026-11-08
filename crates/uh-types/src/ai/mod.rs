@@ -810,7 +810,11 @@ pub fn supports_service_tier_fields(
     // Only OpenAI, Anthropic, Google and xAI models have priority endpoints
     // there; elsewhere the fast mode would be a toggle that does nothing.
     if provider == "openrouter" && api == "openai-completions" {
-        let vendor = model_id.trim_start_matches('~').split('/').next().unwrap_or("");
+        let vendor = model_id
+            .trim_start_matches('~')
+            .split('/')
+            .next()
+            .unwrap_or("");
         return match tier {
             ServiceTier::Flex => true,
             ServiceTier::Priority => matches!(vendor, "openai" | "anthropic" | "google" | "x-ai"),

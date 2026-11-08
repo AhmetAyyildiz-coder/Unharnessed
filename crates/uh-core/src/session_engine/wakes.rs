@@ -1,6 +1,6 @@
 //! Deferred wake-ups of an idle in-process session (`-p` and ACP): a
-//! detached `bash()` completion, a quota park's reset, and the goal's
-//! no-progress backoff. The daemon worker owned them before
+//! detached `bash()` completion, a quota park's reset, the goal's no-progress
+//! backoff, and the goal continuation owed behind a running `bash()`. The daemon worker owned them before
 //! (`bash_notices`, the quota-resume and goal-backoff cron jobs); the
 //! in-process hosts now drive them through [`SessionEngine::next_wake`].
 //!
@@ -33,6 +33,10 @@ pub enum Wake {
     /// A timed wake (quota reset, goal backoff): the turn runs on this
     /// marker prompt.
     Marker(&'static str),
+    /// The goal's wait on a command is over: the turn runs on the continuation
+    /// the host takes at admission
+    /// ([`SessionEngine::take_owed_goal_continuation`]).
+    GoalContinuation,
 }
 
 impl Wake {
@@ -42,7 +46,7 @@ impl Wake {
         match self {
             Wake::BashDone(_) => "bash",
             Wake::Marker(text) if *text == QUOTA_RESUME_MARKER_TEXT => "quota",
-            Wake::Marker(_) => "goal",
+            Wake::Marker(_) | Wake::GoalContinuation => "goal",
         }
     }
 }
@@ -85,9 +89,13 @@ impl SessionWakes {
     }
 
     /// Hand back a wake the host took but cannot run now: the next
-    /// [`SessionEngine::take_due_wake`] returns it first.
+    /// [`SessionEngine::take_due_wake`] returns it first. An owed continuation
+    /// needs no keeping: it stays owed until a boundary delivers it, and is
+    /// judged due again.
     pub fn requeue(&self, wake: Wake) {
-        self.state().requeued.push_front(wake);
+        if !matches!(wake, Wake::GoalContinuation) {
+            self.state().requeued.push_front(wake);
+        }
     }
 
     fn state(&self) -> MutexGuard<'_, WakeState> {
@@ -188,12 +196,24 @@ impl SessionEngine {
     }
 
     /// The next wake due now, if any: a requeued wake first, then a queued
-    /// `bash()` completion, a quota resume, and the goal backoff (dropped
-    /// when the goal is no longer active).
+    /// `bash()` completion, a quota resume, the goal backoff (dropped when
+    /// the goal is no longer active), and the continuation owed behind a
+    /// command (after the completion: it says what ended). A blocked goal
+    /// waits for the user: nothing wakes the session, and the completions
+    /// stay queued until the goal resumes.
     pub async fn take_due_wake(&self) -> Option<Wake> {
-        let (goal_window, goal_active) = {
+        if self.goal_driver.lock().await.state().status == uh_types::goal::GoalStatus::Blocked {
+            return None;
+        }
+        let owed = self.goal_driver.lock().await.owes_continuation();
+        let command_running = owed && !self.goal_running_commands().await.is_empty();
+        let (goal_window, goal_active, owed_due) = {
             let driver = self.goal_driver.lock().await;
-            (driver.backoff_wake_at(), driver.owns_continuation_wakeup())
+            (
+                driver.backoff_wake_at(),
+                driver.owns_continuation_wakeup(),
+                driver.owed_continuation_due(command_running),
+            )
         };
         let now = now_ms();
         let mut state = self.wakes.state();
@@ -221,7 +241,7 @@ impl SessionEngine {
                 return Some(Wake::Marker(GOAL_BACKOFF_WAKE_MARKER_TEXT));
             }
         }
-        None
+        owed_due.then_some(Wake::GoalContinuation)
     }
 
     /// Wait for the next wake.
@@ -229,20 +249,28 @@ impl SessionEngine {
     /// With a `limit` (`-p`), the wait returns `None` once the limit passes,
     /// and at once when nothing can wake the session any more: no queued
     /// notice, no live background `bash()`, no quota park, no open goal
-    /// backoff. Without one (ACP) it never gives up and sleeps until
-    /// something changes.
+    /// backoff. A goal waiting on a command has its own window and outlasts
+    /// the limit: it would otherwise die with the command it waits for.
+    /// Without a limit (ACP) it never gives up and sleeps until something
+    /// changes.
     pub async fn next_wake(&self, limit: Option<Duration>) -> Option<Wake> {
-        let give_up_at = limit.map(|limit| Instant::now() + limit);
+        let limit_at = limit.map(|limit| Instant::now() + limit);
         loop {
             if let Some(wake) = self.take_due_wake().await {
                 return Some(wake);
             }
+            let owed_wake_at = self.goal_driver.lock().await.owed_continuation_wake_at();
+            let give_up_at = limit_at.filter(|_| owed_wake_at.is_none());
             let deadline_ms = {
                 let state = self.wakes.state();
-                match (state.quota_resume_at_ms, state.goal_wake_at_ms) {
-                    (Some(quota), Some(goal)) => Some(quota.min(goal)),
-                    (quota, goal) => quota.or(goal),
-                }
+                [
+                    state.quota_resume_at_ms,
+                    state.goal_wake_at_ms,
+                    owed_wake_at,
+                ]
+                .into_iter()
+                .flatten()
+                .min()
             };
             let background = self
                 .provisioner

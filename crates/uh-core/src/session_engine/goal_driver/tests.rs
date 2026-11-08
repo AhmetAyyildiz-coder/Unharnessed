@@ -1095,6 +1095,7 @@ fn restore_persisted_adopts_the_state_without_rewriting_it() {
         created_at: Some(1),
         no_progress_streak: Some(2),
         no_progress_turn_ms: None,
+        idle_streak: None,
         updated_at: Some(2),
         last_reason: None,
         last_error: None,

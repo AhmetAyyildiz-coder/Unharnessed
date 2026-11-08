@@ -65,7 +65,13 @@ pub(crate) fn wire_continuation_hook(
             ) else {
                 return Ok(Vec::new());
             };
-            match goal.natural_continuation(&engine, &model).await {
+            let continuation = goal.natural_continuation(&engine, &model).await;
+            // A blocked goal (this boundary may have just blocked it) waits
+            // for the user: the autonomous arm must not keep the run going.
+            if engine.goal_state().await.status == uh_types::goal::GoalStatus::Blocked {
+                return Ok(Vec::new());
+            }
+            match continuation {
                 NaturalContinuation::QueuedInput => Ok(Vec::new()),
                 NaturalContinuation::ThresholdDue => {
                     // The autonomous continuation the threshold arm owes:

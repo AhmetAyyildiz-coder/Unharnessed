@@ -12,6 +12,7 @@ export function goalPhase(goal: Goal | null): GoalPhase | null {
     case "active":
       return "running";
     case "paused":
+    case "blocked":
     case "budget_limited":
       return "paused";
     case "complete":
@@ -26,6 +27,7 @@ export function goalPhase(goal: Goal | null): GoalPhase | null {
 const STATES: Record<Goal["status"], string> = {
   active: "Goal",
   paused: "Paused",
+  blocked: "Blocked",
   budget_limited: "Budget reached",
   complete: "Done",
   error: "Failed",
@@ -43,6 +45,8 @@ export function GoalHead({ goal, lit }: { goal: Goal | null; lit: number }) {
   const shown = last.current;
   const over = shown?.status === "complete" || shown?.status === "error";
   const end = over ? "Dismiss" : "End the goal";
+  // A blocked goal says why where it says what it is after.
+  const reason = shown?.status === "blocked" ? shown.lastReason : undefined;
   return (
     <div className="goal-head-wrap" aria-hidden={goal === null}>
       <div>
@@ -59,8 +63,8 @@ export function GoalHead({ goal, lit }: { goal: Goal | null; lit: number }) {
               <IconCheck className="mark-done" width={14} height={14} />
             </span>
             <span className="goal-state">{STATES[shown.status]}</span>
-            <span className="goal-objective" title={shown.objective}>
-              {shown.objective}
+            <span className="goal-objective" title={reason ? `${reason}\n\n${shown.objective}` : shown.objective}>
+              {reason ?? shown.objective}
             </span>
             <button
               className="icon-button goal-end"

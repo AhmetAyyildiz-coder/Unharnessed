@@ -47,10 +47,18 @@ pub struct GoalDriver {
     state: GoalState,
     /// Ids of assistant messages already counted (double-counting guard).
     accounted_messages: std::collections::HashSet<String>,
-    /// TS `_goalContinuationAwaitsRlmWork`: a continuation is owed behind
-    /// unsettled RLM descendant work. In-memory only (never persisted,
-    /// never rehydrated): descendant quiescence is a live-session fact.
-    owed_continuation_for_rlm_work: bool,
+    /// A continuation owed behind a running `bash()` (TS
+    /// `_goalContinuationAwaitsRlmWork`, there behind RLM descendants).
+    /// In-memory only (never persisted, never rehydrated): a restart kills
+    /// the kernel and its commands.
+    owed_continuation: bool,
+    /// When the owed continuation goes even though a command still runs
+    /// (epoch ms; 0 outside a wait).
+    command_wait_until_ms: u64,
+    /// The last turn that worked beside an older command and was relaunched
+    /// at once (its timestamp): the next one in a row waits
+    /// ([`GoalDriver::continuation_waits`]). In-memory, like the wait.
+    relaunched_beside_a_command: Option<i64>,
     /// A minted continuation its surface has not admitted yet. While set,
     /// no mint site mints or re-arms another (the
     /// pending-never-re-arms contract: exactly one continuation per owed
@@ -94,10 +102,10 @@ fn now_millis() -> u64 {
 
 mod progress;
 
-use progress::CONTINUATION_NO_PROGRESS_CAP;
 pub use progress::{
     terminal_provider_failure, turn_produced_no_output, GOAL_BACKOFF_WAKE_MARKER_TEXT,
 };
+use progress::{TurnFacts, COMMAND_WAIT_MS, CONTINUATION_NO_PROGRESS_CAP};
 
 impl GoalDriver {
     #[must_use]
@@ -105,7 +113,9 @@ impl GoalDriver {
         Self {
             state: empty_goal_state(),
             accounted_messages: std::collections::HashSet::default(),
-            owed_continuation_for_rlm_work: false,
+            owed_continuation: false,
+            command_wait_until_ms: 0,
+            relaunched_beside_a_command: None,
             pending_continuation: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             no_progress_streak: 0,
             no_progress_backoff_until_ms: 0,
@@ -159,7 +169,9 @@ impl GoalDriver {
         // pause/start/clear. Every other state-adoption site drops both
         // with the replaced goal; the branch reload does the same.
         self.continuation_consumed();
-        self.owed_continuation_for_rlm_work = false;
+        self.owed_continuation = false;
+        self.command_wait_until_ms = 0;
+        self.relaunched_beside_a_command = None;
         // The adopted goal's own durable streak applies (a different goal
         // never inherits the previous goal's strikes); the backoff window
         // does not survive the move.
@@ -218,6 +230,9 @@ impl GoalDriver {
         self.no_progress_backoff_until_ms = 0;
         self.parked_refusal_until_ms = 0;
         self.counted_no_progress_turn_ms = self.state.no_progress_turn_ms;
+        self.owed_continuation = false;
+        self.command_wait_until_ms = 0;
+        self.relaunched_beside_a_command = None;
         self.continuation_consumed();
     }
 
@@ -279,19 +294,24 @@ impl GoalDriver {
             // streak: its own three-strike budget starts at 0.
             no_progress_streak: Some(0),
             no_progress_turn_ms: None,
+            idle_streak: Some(0),
             updated_at: Some(now),
             last_reason: None,
             last_error: None,
         };
         let previous_accounted = std::mem::take(&mut self.accounted_messages);
-        let previous_owed = self.owed_continuation_for_rlm_work;
+        let previous_owed = self.owed_continuation;
+        let previous_command_wait = self.command_wait_until_ms;
+        let previous_relaunched_beside = self.relaunched_beside_a_command;
         let previous_pending = self.pending_continuation();
         // TS `_startGoal`: a fresh goal starts with no owed continuation
         // (and no pending one — `_clearQueuedGoalContexts` drops the queued
         // contexts with the state change) — and with a fresh no-progress
         // streak: a replacement goal never inherits the terminal goal's
         // strikes.
-        self.owed_continuation_for_rlm_work = false;
+        self.owed_continuation = false;
+        self.command_wait_until_ms = 0;
+        self.relaunched_beside_a_command = None;
         let previous_streak = self.no_progress_streak;
         let previous_backoff = self.no_progress_backoff_until_ms;
         let previous_parked = self.parked_refusal_until_ms;
@@ -305,7 +325,9 @@ impl GoalDriver {
             // A failed start leaves the previous goal's bookkeeping intact
             // (the no-progress cap included).
             self.accounted_messages = previous_accounted;
-            self.owed_continuation_for_rlm_work = previous_owed;
+            self.owed_continuation = previous_owed;
+            self.command_wait_until_ms = previous_command_wait;
+            self.relaunched_beside_a_command = previous_relaunched_beside;
             self.no_progress_streak = previous_streak;
             self.no_progress_backoff_until_ms = previous_backoff;
             self.parked_refusal_until_ms = previous_parked;
@@ -327,7 +349,7 @@ impl GoalDriver {
         self.set_state(session, empty_goal_state())?;
         // TS `_clearGoal` routes through `_clearQueuedGoalContexts`, which
         // drops any owed or pending continuation with the queued contexts.
-        self.owed_continuation_for_rlm_work = false;
+        self.owed_continuation = false;
         self.continuation_consumed();
         Ok(())
     }
@@ -355,9 +377,13 @@ impl GoalDriver {
         // A goal leaving the active state drops its pending mint with the
         // queued contexts (TS `_clearQueuedGoalContexts` at the pause/
         // complete/clear state changes): a continuation owed to a dead
-        // goal never wedges the next one's mint.
+        // goal never wedges the next one's mint. Nor does one still owed
+        // behind a command.
         if normalized.status != GoalStatus::Active {
             self.continuation_consumed();
+            self.owed_continuation = false;
+            self.command_wait_until_ms = 0;
+            self.relaunched_beside_a_command = None;
         }
         self.state = normalized;
         Ok(())
@@ -439,13 +465,14 @@ impl GoalDriver {
         // drops any owed or pending continuation with the queued contexts —
         // after the durable write, so a failed persist keeps the previous
         // goal's deferral exactly as it was.
-        self.owed_continuation_for_rlm_work = false;
+        self.owed_continuation = false;
         self.continuation_consumed();
         Ok(())
     }
 
-    /// Resume a paused/budget-limited goal. Returns the continuation context
-    /// message when the goal becomes active again.
+    /// Resume a paused/blocked/budget-limited goal, its idle turns forgotten.
+    /// Returns the continuation context message when the goal becomes active
+    /// again.
     ///
     /// # Errors
     ///
@@ -460,7 +487,7 @@ impl GoalDriver {
         }
         if !matches!(
             self.state.status,
-            GoalStatus::Paused | GoalStatus::BudgetLimited
+            GoalStatus::Paused | GoalStatus::Blocked | GoalStatus::BudgetLimited
         ) {
             return Ok(None);
         }
@@ -482,6 +509,7 @@ impl GoalDriver {
                 // budget (which stays budget_limited); a live resume clears it.
                 last_reason: exhausted.then(|| "Goal token budget already reached".to_string()),
                 last_error: None,
+                idle_streak: Some(0),
                 ..self.state.clone()
             },
         )?;
@@ -508,6 +536,29 @@ impl GoalDriver {
                 active: false,
                 status: GoalStatus::Complete,
                 last_reason: Some("Goal achieved".to_string()),
+                last_error: None,
+                ..self.state.clone()
+            },
+        )
+    }
+
+    /// Block the active goal (host `goal.block()`): it stops relaunching and
+    /// waits for the user (no-op when not active). The reason is capped like
+    /// the one the idle counter writes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the blocked goal state cannot be persisted.
+    pub fn block(&mut self, session: &mut SessionManager, reason: &str) -> anyhow::Result<()> {
+        if self.state.status != GoalStatus::Active {
+            return Ok(());
+        }
+        self.set_state(
+            session,
+            GoalState {
+                active: false,
+                status: GoalStatus::Blocked,
+                last_reason: Some(progress::capped_reason(reason)),
                 last_error: None,
                 ..self.state.clone()
             },
@@ -547,6 +598,35 @@ impl GoalDriver {
         Ok(())
     }
 
+    /// The continuation of a turn that just settled: what
+    /// [`GoalDriver::next_continuation_message`] mints, once the turn is
+    /// judged. `running_commands` holds when each `bash()` still running
+    /// started (Unix ms). An idle turn counts toward `blocked`; a turn
+    /// waiting on a command mints nothing and leaves the continuation owed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the goal state or its context message cannot be
+    /// persisted or built.
+    pub fn continuation_after_turn(
+        &mut self,
+        session: &mut SessionManager,
+        last_turn: Option<&uh_agent::types::AssistantMessage>,
+        running_commands: &[u64],
+    ) -> anyhow::Result<Option<CustomMessage>> {
+        if self.state.status != GoalStatus::Active {
+            return Ok(None);
+        }
+        let facts = TurnFacts::read(session, running_commands);
+        let message = self.mint_continuation(session, last_turn, Some(facts))?;
+        // This boundary delivers: nothing stays owed behind it.
+        if message.is_some() {
+            self.owed_continuation = false;
+            self.command_wait_until_ms = 0;
+        }
+        Ok(message)
+    }
+
     /// Build the next continuation context, consuming one continuation
     /// slot. The state change persists (TS `_getGoalContinuationMessages`
     /// and `_maybeResumeGoalContinuationAfterRlmWork` both run the mint
@@ -562,6 +642,15 @@ impl GoalDriver {
         session: &mut SessionManager,
         last_turn: Option<&uh_agent::types::AssistantMessage>,
     ) -> anyhow::Result<Option<CustomMessage>> {
+        self.mint_continuation(session, last_turn, None)
+    }
+
+    fn mint_continuation(
+        &mut self,
+        session: &mut SessionManager,
+        last_turn: Option<&uh_agent::types::AssistantMessage>,
+        facts: Option<TurnFacts>,
+    ) -> anyhow::Result<Option<CustomMessage>> {
         if self.state.status != GoalStatus::Active || self.state.objective.is_none() {
             return Ok(None);
         }
@@ -576,7 +665,7 @@ impl GoalDriver {
         // the consecutive cap with backoff, and only a turn that produced
         // output continues the loop.
         if let Some(turn) = last_turn {
-            if !self.progress_gate(session, turn)? {
+            if !self.progress_gate(session, turn, facts)? {
                 return Ok(None);
             }
         }
@@ -613,6 +702,16 @@ impl GoalDriver {
         if now < self.no_progress_backoff_until_ms || now < self.parked_refusal_until_ms {
             return Ok(None);
         }
+        // The model is waiting on a command: no relaunch now. It goes when
+        // the last command ends, or at the end of the window for one that
+        // never does ([`GoalDriver::owed_continuation_due`]).
+        if facts.is_some_and(|facts| self.continuation_waits(facts, last_turn)) {
+            self.mark_continuation_owed();
+            if self.owed_continuation && self.command_wait_until_ms == 0 {
+                self.command_wait_until_ms = now + COMMAND_WAIT_MS;
+            }
+            return Ok(None);
+        }
         // The pending-never-re-arms contract: a continuation minted but
         // not yet admitted by its surface blocks every further mint —
         // exactly one continuation per owed boundary, never duplicates
@@ -641,9 +740,9 @@ impl GoalDriver {
     }
 
     /// TS `_getGoalContinuationMessages`'s quiescence arm: the natural
-    /// turn end defers the continuation while descendant RLM work is
-    /// unsettled. The mint consumes nothing while it waits; descendant
-    /// settlement delivers it (`take_owed_continuation`).
+    /// turn end defers the continuation while a command runs. The mint
+    /// consumes nothing while it waits; the wake delivers it
+    /// (`take_owed_continuation`).
     ///
     /// TS arms only when nothing is already queued
     /// (`_goalContinuationAwaitsRlmWork ||= !hasQueuedMessages()`): a
@@ -656,14 +755,35 @@ impl GoalDriver {
         if self.pending_continuation() {
             return;
         }
-        self.owed_continuation_for_rlm_work = true;
+        self.owed_continuation = true;
     }
 
-    /// Whether a continuation is currently owed behind descendant work
+    /// Whether a continuation is currently owed behind a command
     /// (TS `_goalContinuationAwaitsRlmWork`).
     #[must_use]
     pub fn owes_continuation(&self) -> bool {
-        self.owed_continuation_for_rlm_work
+        self.owed_continuation
+    }
+
+    /// Whether the owed continuation can go now: the commands ended or their
+    /// window closed, and no other gate would refuse the mint.
+    #[must_use]
+    pub fn owed_continuation_due(&self, command_running: bool) -> bool {
+        let now = now_millis();
+        self.owed_continuation
+            && self.state.status == GoalStatus::Active
+            && !self.pending_continuation()
+            && now >= self.no_progress_backoff_until_ms
+            && now >= self.parked_refusal_until_ms
+            && (!command_running || now >= self.command_wait_until_ms)
+    }
+
+    /// When the owed continuation goes even if a command still runs: an idle
+    /// host wakes at this instant.
+    #[must_use]
+    pub fn owed_continuation_wake_at(&self) -> Option<u64> {
+        (self.owed_continuation && self.state.status == GoalStatus::Active)
+            .then_some(self.command_wait_until_ms)
     }
 
     /// TS `_maybeResumeGoalContinuationAfterRlmWork`: deliver the owed
@@ -682,7 +802,7 @@ impl GoalDriver {
         session: &mut SessionManager,
         last_turn: Option<&uh_agent::types::AssistantMessage>,
     ) -> anyhow::Result<Option<CustomMessage>> {
-        let owed = self.owed_continuation_for_rlm_work;
+        let owed = self.owed_continuation;
         if !owed {
             return Ok(None);
         }
@@ -691,7 +811,7 @@ impl GoalDriver {
         if self.pending_continuation() {
             return Ok(None);
         }
-        self.owed_continuation_for_rlm_work = false;
+        self.owed_continuation = false;
         match self.next_continuation_message(session, last_turn) {
             Ok(None) => {
                 // The mint refused for progress reasons (the goal
@@ -700,16 +820,19 @@ impl GoalDriver {
                 // in backoff keeps it, so a later boundary after the
                 // window still delivers the owed continuation.
                 if self.state.status == GoalStatus::Active {
-                    self.owed_continuation_for_rlm_work = true;
+                    self.owed_continuation = true;
                 }
                 Ok(None)
             }
-            Ok(message) => Ok(message),
+            Ok(message) => {
+                self.command_wait_until_ms = 0;
+                Ok(message)
+            }
             Err(error) => {
                 // A failed mint (the durable continuation slot never landed)
                 // restores the deferral: the natural boundary retries instead
                 // of silently dropping the owed continuation.
-                self.owed_continuation_for_rlm_work = true;
+                self.owed_continuation = true;
                 Err(error)
             }
         }

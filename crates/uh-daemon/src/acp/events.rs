@@ -96,6 +96,7 @@ pub enum AcpEngineEvent {
         tokens_used: Option<u64>,
         created_at: Option<u64>,
         updated_at: Option<u64>,
+        last_reason: Option<String>,
     },
 }
 
@@ -208,6 +209,7 @@ pub fn acp_updates_for_event(
             tokens_used,
             created_at,
             updated_at,
+            last_reason,
         } => {
             vec![session_info_update(&UnharnessedSessionMeta {
                 goal: Some(super::meta::UnharnessedGoalMeta {
@@ -217,6 +219,7 @@ pub fn acp_updates_for_event(
                     tokens_used: *tokens_used,
                     created_at: *created_at,
                     updated_at: *updated_at,
+                    last_reason: last_reason.clone(),
                 }),
                 ..Default::default()
             })]
@@ -562,6 +565,7 @@ mod tests {
                 tokens_used: Some(42),
                 created_at: None,
                 updated_at: None,
+                last_reason: None,
             },
             &mut state,
         );

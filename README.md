@@ -11,14 +11,18 @@ What it does:
 - **Three built-in skills**, the kernel's API to the harness: `goal` (persistent
   goals), `mcp` (generic MCP client) and `attach-image`.
 - **Automatic compaction** (threshold, overflow recovery, `/compact`),
-  **goals**, **autonomous mode** with turn/token/time budgets, and **provider
+  **goals** (a goal ends `blocked` when the model says so or after 3 turns
+  without a tool call: the hand comes back, and `-p` exits with code 0),
+  **autonomous mode** with turn/token/time budgets, and **provider
   retry/failover** (backoff, the same model on another configured provider,
   waiting out a quota reset).
 - **Wake-ups of an idle session**: a background `bash()` that outlives its
   cell, a goal's backoff and a quota reset start the next turn. `-p` waits for
   them before exiting, at most `--background-wait-ms` per wait (default 10
   minutes, `0` = no wait), then kills the commands still running; in ACP the
-  agent starts the turn itself and streams it as `session/update`.
+  agent starts the turn itself and streams it as `session/update`. A goal
+  waiting on a running command has its own wait: it relaunches when the last
+  one ends, or every 10 minutes for one that never does.
 - **Sessions** saved as append-only JSONL, resumable.
 - **Skills** from `~/.unharnessed/skills`, `<project>/.unharnessed/skills`,
   `.agents/skills` in parent directories, and the `skills` setting; `AGENTS.md`

@@ -174,7 +174,8 @@ pub struct UnharnessedTurnStartMeta {
     /// `prompt` or `wake`.
     pub origin: String,
     /// What woke the agent: `bash` (a detached `bash()` finished), `quota`
-    /// (a provider usage limit reset), `goal` (a goal backoff passed).
+    /// (a provider usage limit reset), `goal` (a goal backoff passed, or its
+    /// wait on a command ended).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wake: Option<String>,
     /// Where the conversation stood before the prompt: going back there
@@ -211,6 +212,9 @@ pub struct UnharnessedGoalMeta {
     /// stands at it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<u64>,
+    /// Why it stands where it does: what a blocked goal shows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_reason: Option<String>,
 }
 
 /// One compaction that ran during the session.

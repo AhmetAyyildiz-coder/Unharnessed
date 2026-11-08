@@ -190,8 +190,10 @@ impl HeadlessAutonomous {
     /// The TS print-mode exit contract: stderr text when the run must exit
     /// non-zero — a configured gate still failing (after its retry window,
     /// or with an autonomous limit reached), or an autonomous run without
-    /// gates that stopped before terminal evidence.
-    pub async fn exit_stderr(&self) -> Option<String> {
+    /// gates that stopped before terminal evidence. A blocked goal is that
+    /// evidence: the run ended on its verdict, even when the same turn met a
+    /// limit.
+    pub async fn exit_stderr(&self, goal_blocked: bool) -> Option<String> {
         let state = self.state.lock().await;
         let status = autonomous_status(&state);
         let now = now_millis();
@@ -217,7 +219,7 @@ impl HeadlessAutonomous {
                 limit_text
             ));
         }
-        if status.enabled && status.gates.commands.is_empty() {
+        if status.enabled && status.gates.commands.is_empty() && !goal_blocked {
             if let Some(reason) = limit {
                 return Some(format!(
                     "Autonomous run stopped before terminal evidence; {}",

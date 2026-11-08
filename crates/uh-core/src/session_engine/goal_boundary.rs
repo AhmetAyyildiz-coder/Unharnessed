@@ -20,14 +20,17 @@
 //!   goal mints one continuation context per natural turn end.
 //! - `rollback_goal_continuation_mint`: the cancelled-threshold-queue and
 //!   input-arrival rollbacks (the slot returns for the next boundary).
+//! - `take_owed_goal_continuation`: the continuation a turn left owed behind
+//!   a running `bash()`, once its wake comes.
 //! - `fail_goal_for_terminal_error`: `_finishGoalForTerminalAssistantMessage`
 //!   — a failed run fails an active goal; an abort keeps it.
 
 use uh_types::session::CustomMessage;
 
 use super::engine::SessionEngine;
-use super::goal_driver::UsageOutcome;
+use super::goal_driver::{GoalDriver, UsageOutcome};
 use crate::goals::{create_goal_context_message, GoalContextKind, GoalStatus};
+use crate::session::manager::SessionManager;
 
 /// Convert one custom row to its loop form via the shared wire shape (the
 /// same round-trip [`super::AgentSession`]'s injected-prompt path uses), for
@@ -41,6 +44,22 @@ pub fn custom_message_to_loop_row(
         serde_json::to_value(uh_types::session::AgentMessage::Custom(message.clone())).ok()?,
     )
     .ok()
+}
+
+/// TS `_finishGoalWithError`: a failed mint fails the goal, best-effort — its
+/// own persist failure must not reject the boundary hook either.
+fn fail_goal_on_mint_error(
+    driver: &mut GoalDriver,
+    session: &mut SessionManager,
+    error: &anyhow::Error,
+) {
+    let message = format!("{error:#}");
+    tracing::warn!("goal continuation mint failed the persist: {message}");
+    if let Err(fail_error) =
+        driver.finish_for_terminal_message(session, uh_types::ai::StopReason::Error, Some(&message))
+    {
+        tracing::warn!("goal error finish also failed: {fail_error:#}");
+    }
 }
 
 impl SessionEngine {
@@ -149,29 +168,68 @@ impl SessionEngine {
         {
             self.session.drop_failed_goal_continuation().await;
         }
+        let running_commands = self.goal_running_commands().await;
         let persistence = self.session.shared_persistence();
         let mut driver = self.goal_driver.lock().await;
         if !driver.owns_continuation_wakeup() {
             return None;
         }
         let mut session = persistence.lock().await;
-        match driver.next_continuation_message(&mut session, last_turn.as_ref()) {
+        match driver.continuation_after_turn(&mut session, last_turn.as_ref(), &running_commands) {
             Ok(message) => message,
             Err(error) => {
-                let message = format!("{error:#}");
-                tracing::warn!("goal continuation mint failed the persist: {message}");
-                // TS `_finishGoalWithError`: best-effort — its own persist
-                // failure must not reject the boundary hook either.
-                if let Err(fail_error) = driver.finish_for_terminal_message(
-                    &mut session,
-                    uh_types::ai::StopReason::Error,
-                    Some(&message),
-                ) {
-                    tracing::warn!("goal error finish also failed: {fail_error:#}");
-                }
+                fail_goal_on_mint_error(&mut driver, &mut session, &error);
                 None
             }
         }
+    }
+
+    /// The continuation a turn left owed behind a running `bash()`, once its
+    /// wake comes: the surface runs it at once, so the pending guard releases
+    /// here. `None` when a later boundary already delivered it.
+    pub async fn take_owed_goal_continuation(&self) -> Option<CustomMessage> {
+        let last_turn: Option<uh_agent::types::AssistantMessage> =
+            match self.session.last_assistant_message().await {
+                Some(uh_types::session::AgentMessage::Assistant(assistant)) => {
+                    super::provider_adapter::json_round_trip(&assistant)
+                }
+                _ => None,
+            };
+        let persistence = self.session.shared_persistence();
+        let mut driver = self.goal_driver.lock().await;
+        let mut session = persistence.lock().await;
+        match driver.take_owed_continuation(&mut session, last_turn.as_ref()) {
+            Ok(message) => {
+                if message.is_some() {
+                    driver.continuation_consumed();
+                }
+                message
+            }
+            Err(error) => {
+                fail_goal_on_mint_error(&mut driver, &mut session, &error);
+                None
+            }
+        }
+    }
+
+    /// When each running `bash()` of the session started (Unix ms), for the
+    /// active goal's boundary. A failed list or a dead kernel counts as none.
+    /// Asked before the driver lock: the kernel's own host requests take it.
+    pub async fn goal_running_commands(&self) -> Vec<u64> {
+        if !self.goal_driver.lock().await.owns_continuation_wakeup() {
+            return Vec::new();
+        }
+        let Ok(listed) = self.bash_activity("list", None, 50).await else {
+            return Vec::new();
+        };
+        let now = crate::autonomous::now_millis();
+        listed["activities"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["status"] == "running")
+            .map(|row| now.saturating_sub(row["durationMs"].as_u64().unwrap_or(now)))
+            .collect()
     }
 
     /// A failed terminal assistant message fails an active goal (TS

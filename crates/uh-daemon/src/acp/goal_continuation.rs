@@ -11,7 +11,7 @@
 //! ACP path drives every continuation INSIDE the one `session/prompt`
 //! request: continuation turns surface as events of the same prompt turn,
 //! and the response settles only after the goal run ends (complete /
-//! paused / `budget_limited` / error, or genuinely nothing more to do). The
+//! paused / blocked / `budget_limited` / error, or genuinely nothing more to do). The
 //! daemon-attached transport rides the worker's queue (the #244 lane);
 //! this module is the in-process counterpart: the prompt turn's settle
 //! loop consults the same arms at each settled boundary.
@@ -79,13 +79,18 @@ pub(super) async fn mint_goal_continuation(
     {
         mode.engine.session.drop_failed_goal_continuation().await;
     }
+    let running_commands = mode.engine.goal_running_commands().await;
     let persistence = mode.engine.session.shared_persistence();
     let mut driver = mode.engine.goal_driver.lock().await;
     if !driver.owns_continuation_wakeup() {
         return None;
     }
     let mut persistence = persistence.lock().await;
-    let message = match driver.next_continuation_message(&mut persistence, last_turn.as_ref()) {
+    let message = match driver.continuation_after_turn(
+        &mut persistence,
+        last_turn.as_ref(),
+        &running_commands,
+    ) {
         Ok(message) => message,
         Err(error) => {
             // TS `_getGoalContinuationMessages`'s catch arm: a failed
@@ -489,22 +494,22 @@ mod tests {
     /// The natural continuation loop: an active goal mints one
     /// continuation per settled turn, every minted turn runs inside the
     /// same prompt request, and a failed turn fails the goal. The
-    /// scripted responses bound the run: the fourth minted turn errors
+    /// scripted responses bound the run: the third minted turn errors
     /// (no responses left), which fails the goal and settles the prompt
-    /// with the turn error.
+    /// with the turn error. (Two answers: a third without a tool call
+    /// would block the goal.)
     #[tokio::test]
     async fn goal_continuation_loop_mints_per_settled_turn() {
         let _faux = FAUX_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut bed =
-            AcpGoalBed::new(json!({ "responses": ["one", "two", "three"] }), 128_000).await;
+        let mut bed = AcpGoalBed::new(json!({ "responses": ["one", "two"] }), 128_000).await;
         let (response, notifications) = bed.prompt("/goal keep working".to_string()).await;
-        // Three settled continuation turns ran inside the one prompt;
-        // the fourth minted turn hit the exhausted script and failed.
+        // Two settled continuation turns ran inside the one prompt; the
+        // third minted turn hit the exhausted script and failed.
         assert_eq!(
             bed.goal_state().await.continuations_used,
-            3,
+            2,
             "one mint per settled turn"
         );
         assert_eq!(
@@ -518,7 +523,7 @@ mod tests {
         );
         let joined = AcpGoalBed::streamed_answers(&notifications).join("");
         assert!(
-            joined.contains("one") && joined.contains("two") && joined.contains("three"),
+            joined.contains("one") && joined.contains("two"),
             "every scripted answer ran: {notifications:?}"
         );
         // The goal-update frames: the start, the minted usage bumps, and

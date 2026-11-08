@@ -1001,9 +1001,11 @@ async fn settle_turn(
 ///
 /// Once the prompts settle, the run waits for the session's wakes (a
 /// background `bash()` that outlived its cell, the goal's backoff, a quota
-/// park) and runs each as a turn through the same boundaries. Each wait is
-/// bounded by `--background-wait-ms` and by the autonomous run's deadline;
-/// the commands still alive at exit die with the kernel.
+/// park, a goal's wait on a command) and runs each as a turn through the same
+/// boundaries. Each wait is bounded by `--background-wait-ms` and by the
+/// autonomous run's deadline, except a goal's wait on a command, which has its
+/// own window; the commands still alive at exit die with the kernel. A blocked
+/// goal ends the run: nobody here can answer it.
 async fn run_prompts_and_emit(
     engine: &std::sync::Arc<uh_core::session_engine::engine::SessionEngine>,
     model: &Model,
@@ -1164,6 +1166,9 @@ async fn run_prompts_and_emit(
     // wait runs out (UNHARNESSED_PLAN.md Q7).
     if command_failure.is_none() {
         loop {
+            if engine.goal_state().await.status == uh_types::goal::GoalStatus::Blocked {
+                break;
+            }
             let limit = autonomous
                 .remaining_time()
                 .await
@@ -1183,6 +1188,12 @@ async fn run_prompts_and_emit(
                         .session
                         .prompt(text, uh_core::session_engine::PromptOptions::default())
                         .await
+                }
+                uh_core::session_engine::wakes::Wake::GoalContinuation => {
+                    let Some(message) = engine.take_owed_goal_continuation().await else {
+                        continue;
+                    };
+                    engine.session.prompt_injected_message(&message).await
                 }
             }
             .map_err(|error| format!("{error:#}"))?;
@@ -1243,7 +1254,8 @@ async fn run_prompts_and_emit(
         }
     }
     // The TS print-mode autonomous contract applies to both output modes.
-    if let Some(stderr) = autonomous.exit_stderr().await {
+    let goal_blocked = engine.goal_state().await.status == uh_types::goal::GoalStatus::Blocked;
+    if let Some(stderr) = autonomous.exit_stderr(goal_blocked).await {
         eprintln!("{stderr}");
         exit_code = 1;
     }

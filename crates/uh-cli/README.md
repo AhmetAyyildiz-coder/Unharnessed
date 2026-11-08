@@ -19,14 +19,14 @@ The `unharnessed` binary and composition root.
   (stdout, stderr, exit code). Once the prompts settle, it runs the session's
   wakes (a background `bash()` completion, a goal backoff, a quota reset) as
   further turns, waiting at most `--background-wait-ms` (default 10 minutes)
-  each time. The kernel shuts down before the process exits: a persisted
+  each time; a goal waiting on a running command outlasts that limit. The kernel shuts down before the process exits: a persisted
   session flushes its snapshot, so `-c`/`-r` revive the Python namespace, and
   the background commands still running die with it.
 - **Goals and autonomous mode** (`print_goal.rs`, `print_autonomous.rs`): the
   `--goal` seed rides the first turn; the in-loop continuation hook runs an
   active goal's or the autonomous run's natural continuations inside one agent
   run, with the budget-limit steer and the threshold-held continuation drained
-  as follow-up runs.
+  as follow-up runs. A goal that ends `blocked` ends the run with exit code 0.
 - **Session slash commands** (`print_session_command.rs`): prompts that are
   `/compact`, `/goal` or `/autonomous` run through the uh-core session-command
   executor instead of reaching the model.

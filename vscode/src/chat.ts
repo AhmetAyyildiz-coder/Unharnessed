@@ -56,7 +56,7 @@ type Meta = {
   /** How a turn of a loaded conversation ended. */
   turnEnd?: { state: "done" | "cancelled" | "failed"; error?: string };
   compaction?: { tokensBefore?: number; summary?: string };
-  goal?: { status: string; objective?: string; createdAt?: number; updatedAt?: number };
+  goal?: { status: string; objective?: string; createdAt?: number; updatedAt?: number; lastReason?: string };
   ipython?: { attachments?: unknown[]; errorEname?: string };
   usage?: Usage;
 };
@@ -494,8 +494,8 @@ export class Chat {
       return;
     }
     if (meta.goal) {
-      const { status, objective, createdAt, updatedAt } = meta.goal;
-      this.showGoal(status === "idle" || !objective ? null : { status: status as Goal["status"], objective, createdAt, updatedAt });
+      const { status, objective, createdAt, updatedAt, lastReason } = meta.goal;
+      this.showGoal(status === "idle" || !objective ? null : { status: status as Goal["status"], objective, createdAt, updatedAt, lastReason });
     }
     if (meta.turnStart) {
       this.begin(meta.promptTurnId ?? 0, meta.turnStart);

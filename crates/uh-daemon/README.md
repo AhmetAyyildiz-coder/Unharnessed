@@ -25,7 +25,7 @@ its name so the ACP code stays where it was.
   overflow compact-and-retry, threshold) and the
   goal/autonomous continuation loop (`acp/goal_continuation.rs`). A failed turn
   goes through the provider retry/failover chain first. When a background
-  `bash()` finishes, a goal backoff passes or a quota resets while no prompt
+  `bash()` finishes, a goal backoff or its wait on a command ends, or a quota resets while no prompt
   runs, the agent starts the turn itself (`acp/prompt.rs`, `start_wake_turn`):
   it streams like a prompt turn but answers no request, and a client prompt
   waits for it to settle. The `_unharnessed/providers/*` extension methods

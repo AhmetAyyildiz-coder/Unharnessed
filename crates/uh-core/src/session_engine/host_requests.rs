@@ -51,6 +51,18 @@ pub fn handle_goal_host_request(
             let goal = complete_goal_from_host(driver, session)?;
             Ok(goal_host_response(&goal, true))
         }
+        "goal.block" => {
+            let reason = record
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|reason| !reason.is_empty());
+            let Some(reason) = reason else {
+                anyhow::bail!("goal.block reason must be a non-empty string");
+            };
+            let goal = block_goal_from_host(driver, session, reason)?;
+            Ok(goal_host_response(&goal, false))
+        }
         _ => anyhow::bail!("unknown goal request type \"{request_type}\""),
     }
 }
@@ -67,6 +79,9 @@ fn create_goal_from_host(
         ),
         GoalStatus::Paused => anyhow::bail!(
             "cannot create a new goal because a paused goal exists; ask the user to resume it with /goal resume or clear it with /goal clear"
+        ),
+        GoalStatus::Blocked => anyhow::bail!(
+            "cannot create a new goal because a blocked goal exists; ask the user to resume it with /goal resume or clear it with /goal clear"
         ),
         GoalStatus::BudgetLimited => anyhow::bail!(
             "cannot create a new goal because a budget-limited goal exists; ask the user to resume it with /goal resume or clear it with /goal clear"
@@ -86,6 +101,18 @@ fn complete_goal_from_host(
         anyhow::bail!("cannot complete goal because this thread has no goal");
     }
     driver.complete(session)?;
+    Ok(driver.state_with_creation_elapsed())
+}
+
+fn block_goal_from_host(
+    driver: &mut GoalDriver,
+    session: &mut SessionManager,
+    reason: &str,
+) -> anyhow::Result<GoalState> {
+    if driver.state().status != GoalStatus::Active {
+        anyhow::bail!("cannot block goal because this thread has no active goal");
+    }
+    driver.block(session, reason)?;
     Ok(driver.state_with_creation_elapsed())
 }
 

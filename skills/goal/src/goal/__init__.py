@@ -25,7 +25,7 @@ async def get() -> dict[str, Any]:
 async def create(objective: str, token_budget: int | None = None) -> dict[str, Any]:
     """Start a new active thread goal.
 
-    Fails while a goal is still pending (active, paused, or budget-limited);
+    Fails while a goal is still pending (active, paused, blocked, or budget-limited);
     a completed or errored goal is replaced. Only create a goal when the user
     or system/developer instructions explicitly ask for a persistent
     long-running goal. Set `token_budget` only when an explicit token budget is
@@ -50,3 +50,15 @@ async def complete() -> dict[str, Any]:
     controlled by the user and the host.
     """
     return await host_request("goal.complete")
+
+
+async def block(reason: str) -> dict[str, Any]:
+    """Stop the existing thread goal as blocked, for the user to read `reason`.
+
+    Use only when the same blocker keeps coming back, no safe action is left,
+    and only the user or an outside change can lift it — not the first time a
+    blocker appears, nor because the work is hard, slow or uncertain.
+    """
+    if not isinstance(reason, str):
+        raise TypeError(f"reason must be str, got {type(reason).__name__}")
+    return await host_request("goal.block", {"reason": reason})

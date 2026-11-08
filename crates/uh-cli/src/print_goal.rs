@@ -562,6 +562,8 @@ impl PrintGoalSurface {
                 self.publish_goal_update(engine).await;
                 self.hold_threshold_continuation(message).await;
             }
+            // A mint that refused may have finished the goal.
+            self.publish_goal_update(engine).await;
             return NaturalContinuation::ThresholdDue;
         }
         // The natural continuation mint: the goal's context turn runs
@@ -577,6 +579,7 @@ impl PrintGoalSurface {
                 None => NaturalContinuation::FallThrough,
             };
         }
+        self.publish_goal_update(engine).await;
         NaturalContinuation::FallThrough
     }
 

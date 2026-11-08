@@ -378,12 +378,14 @@ export type Usage = {
  * The conversation's goal (`/goal`), as the agent reports it: what it is
  * after, where it stands, and when it was set and last changed (Unix ms),
  * for its timer. A goal reached or failed stays until the next message.
+ * `lastReason`: why it stands there, what a blocked goal shows.
  */
 export type Goal = {
-  status: "active" | "paused" | "budget_limited" | "complete" | "error";
+  status: "active" | "paused" | "blocked" | "budget_limited" | "complete" | "error";
   objective: string;
   createdAt?: number;
   updatedAt?: number;
+  lastReason?: string;
 };
 
 /**

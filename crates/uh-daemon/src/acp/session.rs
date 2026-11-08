@@ -202,6 +202,7 @@ impl AcpSession {
             tokens_used: Some(goal.tokens_used),
             created_at: goal.created_at,
             updated_at: goal.updated_at,
+            last_reason: goal.last_reason.clone(),
         })
         .await;
     }
@@ -358,6 +359,7 @@ async fn subscribe_engine_events(
                         tokens_used: Some(goal_now.tokens_used),
                         created_at: goal_now.created_at,
                         updated_at: goal_now.updated_at,
+                        last_reason: goal_now.last_reason.clone(),
                     };
                     for update in acp_updates_for_event(&event, &mut mapping) {
                         producer

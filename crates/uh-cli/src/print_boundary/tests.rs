@@ -541,7 +541,7 @@ async fn autonomous_continuation_turns_cross_the_boundary_arms() {
                 if payload.custom_type == "autonomous_status"
         )));
     let stderr = run
-        .exit_stderr()
+        .exit_stderr(false)
         .await
         .expect("the limit stop exits non-zero");
     assert!(stderr.starts_with("Autonomous run stopped before terminal evidence;"));

@@ -242,7 +242,8 @@ pub(super) async fn start_wake_turn(
 }
 
 /// Admit a wake's turn: a `bash()` completion runs on its injected row, a
-/// timed wake on its marker prompt.
+/// timed wake on its marker prompt, a goal's finished wait on its continuation
+/// (a turn may have delivered it meanwhile: nothing runs then).
 async fn admit_wake(mode: &AcpModeState, wake: Wake) -> anyhow::Result<PromptOutcome> {
     match wake {
         Wake::BashDone(message) => mode.engine.session.prompt_injected_message(&message).await,
@@ -252,6 +253,10 @@ async fn admit_wake(mode: &AcpModeState, wake: Wake) -> anyhow::Result<PromptOut
                 .prompt(text, PromptOptions::default())
                 .await
         }
+        Wake::GoalContinuation => match mode.engine.take_owed_goal_continuation().await {
+            Some(message) => mode.engine.session.prompt_injected_message(&message).await,
+            None => Ok(PromptOutcome::Prompt),
+        },
     }
 }
 
@@ -597,6 +602,13 @@ async fn run_prompt_turn(
                     break;
                 }
                 mode.engine.session.agent().wait_for_idle().await;
+            }
+            // A blocked goal hands the session back to the user: no
+            // autonomous turn, no wake runs behind it.
+            goal_continuation::GoalFollowUp::None
+                if mode.engine.goal_state().await.status == uh_types::goal::GoalStatus::Blocked =>
+            {
+                break;
             }
             goal_continuation::GoalFollowUp::None => {
                 match session.autonomous_follow_up(&final_message).await {
