@@ -39,6 +39,20 @@ impl AgentSession {
         &self,
         message: &uh_types::session::CustomMessage,
     ) -> anyhow::Result<PromptOutcome> {
+        self.prompt_injected_messages(std::slice::from_ref(message))
+            .await
+    }
+
+    /// Admit several injected custom messages as one turn's prompt (the
+    /// `bash()` notices that came due together), in order.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`AgentSession::prompt_injected_message`].
+    pub async fn prompt_injected_messages(
+        &self,
+        messages: &[uh_types::session::CustomMessage],
+    ) -> anyhow::Result<PromptOutcome> {
         let state = self.agent.state().await;
         let busy = state.is_streaming;
         if busy {
@@ -47,14 +61,17 @@ impl AgentSession {
             );
         }
         let mut prompt_messages = self.take_next_turn_rows().await;
-        let custom_row = session_message_to_loop(&SessionAgentMessage::Custom(message.clone()))
-            .ok_or_else(|| anyhow::anyhow!("injected custom message conversion failed"))?;
+        for message in messages {
+            prompt_messages.push(
+                session_message_to_loop(&SessionAgentMessage::Custom(message.clone()))
+                    .ok_or_else(|| anyhow::anyhow!("injected custom message conversion failed"))?,
+            );
+        }
         // The dispatch-time routing decision fires for every dispatched
         // turn (TS `_startPreparedTurnActions` runs it per prepared turn
         // action): an injected row never carries images, so it clears a
         // route left behind by the previous dispatched turn.
         self.apply_image_model_routing(&[], &[]).await?;
-        prompt_messages.push(custom_row);
         self.agent
             .prompt(uh_agent::agent::AgentPromptInput::Messages(prompt_messages))
             .await?;

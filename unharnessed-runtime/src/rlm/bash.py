@@ -1262,7 +1262,7 @@ def _install_shutdown_hook() -> None:
 def activity_request(action: str, activity_id: str | None = None, lines: int = 50) -> dict[str, Any]:
     """Inspect/stop only handles created by this kernel; called off the cell queue."""
     with _live_lock:
-        if action == "list":
+        if action in ("list", "kill_all"):
             handles = list(_activity_handles.items())
         else:
             handle = _activity_handles.get(activity_id or "")
@@ -1316,4 +1316,11 @@ def activity_request(action: str, activity_id: str | None = None, lines: int = 5
         # The user's stop, not the agent's: the completion notice still goes out.
         handle._stop()
         return {"activityId": activity_id, "killed": True}
+    if action == "kill_all":
+        # The host's cleanup once the work they served is over (a finished
+        # goal): every command still running stops, without a notice.
+        running = [handle for _, handle in handles if not handle._reaped]
+        for handle in running:
+            handle.kill()
+        return {"killed": len(running)}
     raise ValueError("Unknown kernel bash action")

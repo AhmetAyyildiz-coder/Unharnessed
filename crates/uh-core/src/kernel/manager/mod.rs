@@ -693,10 +693,11 @@ impl ReplKernelManager {
         // The runtime's pre-validation answers with a protocol error that
         // carries no request id (so the waiter could only time out);
         // mirror the contract locally and fail fast instead.
-        if !matches!(action, "list" | "tail" | "kill") {
+        if !matches!(action, "list" | "tail" | "kill" | "kill_all") {
             return Err(anyhow!("unknown bash activity action"));
         }
-        let requires_id = action != "list" && activity_id.map_or("", str::trim).is_empty();
+        let requires_id =
+            matches!(action, "tail" | "kill") && activity_id.map_or("", str::trim).is_empty();
         if requires_id {
             return Err(anyhow!(
                 "bash activity tail/kill requires string activityId"

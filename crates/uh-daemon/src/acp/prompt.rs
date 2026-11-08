@@ -246,7 +246,12 @@ pub(super) async fn start_wake_turn(
 /// (a turn may have delivered it meanwhile: nothing runs then).
 async fn admit_wake(mode: &AcpModeState, wake: Wake) -> anyhow::Result<PromptOutcome> {
     match wake {
-        Wake::BashDone(message) => mode.engine.session.prompt_injected_message(&message).await,
+        Wake::BashDone(messages) => {
+            mode.engine
+                .session
+                .prompt_injected_messages(&messages)
+                .await
+        }
         Wake::Marker(text) => {
             mode.engine
                 .session
@@ -611,6 +616,9 @@ async fn run_prompt_turn(
                 break;
             }
             goal_continuation::GoalFollowUp::None => {
+                // A goal that just completed stops the commands it left
+                // running: none of them wakes a session whose work is done.
+                mode.engine.stop_after_completed_goal().await;
                 match session.autonomous_follow_up(&final_message).await {
                     // A wake that came due during the run (a detached
                     // `bash()` completion, a goal backoff, a quota reset)

@@ -1166,7 +1166,11 @@ async fn run_prompts_and_emit(
     // wait runs out (UNHARNESSED_PLAN.md Q7).
     if command_failure.is_none() {
         loop {
-            if engine.goal_state().await.status == uh_types::goal::GoalStatus::Blocked {
+            // A finished goal ends the run: a completed one first stops the
+            // commands it left running, so none of them wakes it again.
+            if engine.stop_after_completed_goal().await
+                || engine.goal_state().await.status == uh_types::goal::GoalStatus::Blocked
+            {
                 break;
             }
             let limit = autonomous
@@ -1180,8 +1184,8 @@ async fn run_prompts_and_emit(
                 .run_pre_turn(engine, model, api_key.clone())
                 .await?;
             match wake {
-                uh_core::session_engine::wakes::Wake::BashDone(message) => {
-                    engine.session.prompt_injected_message(&message).await
+                uh_core::session_engine::wakes::Wake::BashDone(messages) => {
+                    engine.session.prompt_injected_messages(&messages).await
                 }
                 uh_core::session_engine::wakes::Wake::Marker(text) => {
                     engine

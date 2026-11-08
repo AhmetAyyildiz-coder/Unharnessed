@@ -24,12 +24,16 @@ use super::messages::create_async_bash_completion_message;
 use super::provider_park::QUOTA_RESUME_MARKER_TEXT;
 use crate::kernel::shared::{host_handler, HostRequestHandlers};
 
+/// How long a finished command's notice may wait for the commands still
+/// running beside it: the notices then go together, in one turn.
+const NOTICE_BATCH_MS: u64 = 2 * 60 * 1000;
+
 /// What wakes an idle session.
 #[derive(Debug, Clone)]
 pub enum Wake {
-    /// A detached `bash()` finished: the turn runs on this injected
-    /// `[bash-done ...]` row (`AgentSession::prompt_injected_message`).
-    BashDone(Box<uh_types::session::CustomMessage>),
+    /// Detached `bash()` commands finished: the turn runs on these injected
+    /// `[bash-done ...]` rows (`AgentSession::prompt_injected_messages`).
+    BashDone(Vec<uh_types::session::CustomMessage>),
     /// A timed wake (quota reset, goal backoff): the turn runs on this
     /// marker prompt.
     Marker(&'static str),
@@ -166,6 +170,11 @@ impl SessionWakes {
     pub(crate) fn end_quota_episode(&self) {
         self.state().quota_parks_used = 0;
     }
+
+    /// Drop the queued completion notices (the work they report is over).
+    pub(crate) fn drop_notices(&self) {
+        self.state().notices.clear();
+    }
 }
 
 fn bash_notice_identity(data: &Value) -> anyhow::Result<(u32, String)> {
@@ -195,18 +204,61 @@ impl SessionEngine {
         &self.wakes
     }
 
-    /// The next wake due now, if any: a requeued wake first, then a queued
-    /// `bash()` completion, a quota resume, the goal backoff (dropped when
+    /// The cleanup after the goal completed (since the last call): the
+    /// commands it left running stop without a notice and the queued notices
+    /// drop, so nothing wakes a session whose work is done. Returns whether
+    /// the goal had completed.
+    pub async fn stop_after_completed_goal(&self) -> bool {
+        if !self.goal_driver.lock().await.take_completed() {
+            return false;
+        }
+        // No kernel running: no command is left either.
+        if let Err(error) = self.bash_activity("kill_all", None, 50).await {
+            tracing::debug!("no commands to stop after the goal completed: {error:#}");
+        }
+        self.wakes.drop_notices();
+        true
+    }
+
+    /// Whether a `bash()` command of this session still runs, as the kernel
+    /// lists them (the goal's wait reads the same list). A failed list or a
+    /// dead kernel counts as none.
+    async fn any_command_running(&self) -> bool {
+        let Ok(listed) = self.bash_activity("list", None, 50).await else {
+            return false;
+        };
+        listed["activities"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|row| row["status"] == "running")
+    }
+
+    /// Whether a `bash()` command of this session still runs in the background.
+    fn background_work(&self) -> bool {
+        self.provisioner
+            .manager()
+            .is_some_and(|manager| manager.has_background_work())
+    }
+
+    /// The next wake due now, if any: a requeued wake first, then the queued
+    /// `bash()` completions, a quota resume, the goal backoff (dropped when
     /// the goal is no longer active), and the continuation owed behind a
-    /// command (after the completion: it says what ended). A blocked goal
-    /// waits for the user: nothing wakes the session, and the completions
-    /// stay queued until the goal resumes.
+    /// command (after the completions: they say what ended). Completions go
+    /// together once no command runs any more, or once the oldest has waited
+    /// [`NOTICE_BATCH_MS`]: a batch of commands wakes the model once, not
+    /// once per command. A blocked goal waits for the user: nothing wakes the
+    /// session, and the completions stay queued until the goal resumes.
     pub async fn take_due_wake(&self) -> Option<Wake> {
         if self.goal_driver.lock().await.state().status == uh_types::goal::GoalStatus::Blocked {
             return None;
         }
         let owed = self.goal_driver.lock().await.owes_continuation();
-        let command_running = owed && !self.goal_running_commands().await.is_empty();
+        let notices_queued = !self.wakes.state().notices.is_empty();
+        // One view of the running commands for the notices and the owed
+        // continuation (the kernel's list): the notices then always come
+        // before the continuation that the same command's end released.
+        let command_running = (owed || notices_queued) && self.any_command_running().await;
         let (goal_window, goal_active, owed_due) = {
             let driver = self.goal_driver.lock().await;
             (
@@ -228,8 +280,11 @@ impl SessionEngine {
             }
             None => {}
         }
-        if !state.notices.is_empty() {
-            return Some(Wake::BashDone(Box::new(state.notices.remove(0).2)));
+        if state.notices.first().is_some_and(|(_, _, oldest)| {
+            !command_running || now >= oldest.timestamp + NOTICE_BATCH_MS
+        }) {
+            let notices = state.notices.drain(..).map(|(_, _, notice)| notice);
+            return Some(Wake::BashDone(notices.collect()));
         }
         if state.quota_resume_at_ms.is_some_and(|at| at <= now) {
             state.quota_resume_at_ms = None;
@@ -267,15 +322,16 @@ impl SessionEngine {
                     state.quota_resume_at_ms,
                     state.goal_wake_at_ms,
                     owed_wake_at,
+                    state
+                        .notices
+                        .first()
+                        .map(|(_, _, oldest)| oldest.timestamp + NOTICE_BATCH_MS),
                 ]
                 .into_iter()
                 .flatten()
                 .min()
             };
-            let background = self
-                .provisioner
-                .manager()
-                .is_some_and(|manager| manager.has_background_work());
+            let background = self.background_work();
             if give_up_at.is_some() && deadline_ms.is_none() && !background {
                 return None;
             }

@@ -1565,10 +1565,10 @@ def _handle_request_line(raw: bytes, queue: asyncio.Queue[dict[str, Any]]) -> No
         _protocol_error(f"{rtype} request needs string fields: {', '.join(missing)}")
         return
     if rtype == "bash_activity":
-        if req["action"] not in ("list", "tail", "kill"):
+        if req["action"] not in ("list", "tail", "kill", "kill_all"):
             _protocol_error("unknown bash activity action")
             return
-        if req["action"] != "list" and not isinstance(req.get("activityId"), str):
+        if req["action"] in ("tail", "kill") and not isinstance(req.get("activityId"), str):
             _protocol_error("bash activity tail/kill requires string activityId")
             return
         if len(req["id"]) > 256 or len(req.get("activityId") or "") > 256:

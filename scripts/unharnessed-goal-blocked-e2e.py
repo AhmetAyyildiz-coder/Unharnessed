@@ -21,7 +21,10 @@ Ways it can fail, and the scenario that checks each:
 - a blocked goal exits non-zero when it meets an autonomous limit:
   `autonomous_turn_limit_blocked`;
 - an empty answer hides the tool call before it: `tool_then_empty`;
-- a command's notice is taken for the goal's relaunch: `two_commands`;
+- a batch of commands wakes the model once per command: `two_commands`,
+  `notice_beside_server` (waits the real 2-minute window; --quick leaves it out);
+- a completed goal's leftover commands wake it: `complete_stops_commands`,
+  `complete_stops_commands_acp`;
 - the resume is broken: `resume`;
 - the state is lost: `reload`;
 - a regression: `complete`, `budget`, `provider_error`, `empty_turns`;
@@ -62,6 +65,8 @@ FAILED = []
 PRINT_LOCK = threading.Lock()
 # The window of a goal waiting on a command that never ends.
 RELAUNCH_SECONDS = 600
+# How long a finished command's notice waits for the commands still running.
+NOTICE_BATCH_SECONDS = 120
 def call(code):
     return {"content": [{"type": "toolCall", "name": "ipython", "arguments": {"code": code}}]}
 
@@ -589,17 +594,64 @@ def scenario_tool_then_empty():
 def scenario_two_commands():
     code, _, events = run_print("two_commands", [
         call('first = bash("sleep 3; echo first")\nlast = bash("sleep 12; echo last")'),
-        paced("waiting for both"), paced("first one noted"),
-        call("print(await goal.complete())"), paced("finished")],
+        paced("waiting for both"), paced("both noted"),
+        call("print(await goal.complete())"), paced("finished"), paced("must not run")],
         ["--mode", "json", "--no-session", "--goal", "finish the task", "start"])
-    said = dict((text, at) for at, text in answers(events))
-    done = [at for at, _ in rows(events, "async_bash_completion")]
-    check("two commands: the first one's notice still reaches the model",
-          len(done) == 2 and said.get("first one noted", 0) >= done[0], f"answers {said}, completions {done}")
+    said = answers(events)
+    # The last command's end may bring the goal's relaunch a moment before
+    # the notices: either way, nothing runs before it.
+    woken = dict((text, at) for at, text in said).get("both noted", 0)
+    early = [at for at, _ in rows(events, "async_bash_completion") if at < 11]
+    check("two commands: one turn once the last one ends, none for the first",
+          [text for _, text in said] == ["waiting for both", "both noted", "finished"] and woken >= 11 and not early,
+          f"answers {said}, early notices {early}")
     check("two commands: no goal relaunch before the last one ends",
-          code == 0 and all(at >= done[-1] for at in relaunches(events))
+          code == 0 and all(at >= 11 for at in relaunches(events))
           and last_goal(events).get("status") == "complete",
-          f"exit {code}, relaunches {relaunches(events)}, completions {done}, goal {last_goal(events)}")
+          f"exit {code}, relaunches {relaunches(events)}, goal {last_goal(events)}")
+
+
+def scenario_notice_beside_server():
+    agent = Acp("notice_beside_server", [
+        call('server = bash("sleep 100000")'), paced("server started"),
+        call('job = bash("sleep 3; echo job")'), paced("job started"),
+        paced("job noted"), paced("must not run")])
+    agent.prompt("start the server")
+    agent.prompt("start the job")
+    asked_at = time.time() - agent.start
+    agent.listen(NOTICE_BATCH_SECONDS + 40)
+    said = agent.texts()
+    noted = [at for at, _, text in said if text == "job noted"]
+    check("a notice beside a server waits for the 2-minute window, then goes",
+          noted and NOTICE_BATCH_SECONDS - 5 <= noted[0] - asked_at <= NOTICE_BATCH_SECONDS + 30,
+          f"asked at {asked_at}, said {said}")
+    check("one notice, one turn", all("must not run" not in text for _, _, text in said), said)
+    agent.close()
+
+
+def scenario_complete_stops_commands():
+    code, seconds, events = run_print("complete_stops_commands", [
+        call('jobs = [bash(f"sleep {i}; echo {i}") for i in range(2, 7)]\nkeep = bash("sleep 1000")\n'
+             'print(await goal.complete())'),
+        paced("finished"), paced("must not run")],
+        ["--mode", "json", "--no-session", "--goal", "finish the task", "start"], timeout=120)
+    said = [text for _, text in answers(events)]
+    check("a completed goal stops its commands: the run ends, no notice wakes it",
+          code == 0 and said == ["finished"] and not rows(events, "async_bash_completion") and seconds < 30,
+          f"exit {code}, {seconds:.1f} s, said {said}, notices {rows(events, 'async_bash_completion')}")
+
+
+def scenario_complete_stops_commands_acp():
+    agent = Acp("complete_stops_commands_acp", [
+        call('h = bash("sleep 3; echo late")\nprint(await goal.complete())'),
+        paced("finished"), paced("must not run")])
+    agent.prompt("/goal finish the task")
+    agent.listen(7)
+    said = [text for _, _, text in agent.texts()]
+    goal = [goal for _, goal in agent.metas("goal")][-1]
+    check("ACP: a command left by a completed goal wakes nothing",
+          said == ["finished"] and goal["status"] == "complete", f"said {said}, goal {goal}")
+    agent.close()
 
 
 def scenario_resume():
@@ -774,12 +826,13 @@ SCENARIOS = [
     scenario_block, scenario_block_running, scenario_block_running_acp, scenario_autonomous_blocked,
     scenario_autonomous_turn_limit_blocked,
     scenario_tool_then_empty, scenario_two_commands,
+    scenario_complete_stops_commands, scenario_complete_stops_commands_acp,
     scenario_resume, scenario_reload,
     scenario_complete, scenario_budget, scenario_provider_error, scenario_empty_turns,
     scenario_compaction, scenario_compaction_acp,
 ]
 if not QUICK:
-    SCENARIOS += [scenario_server, scenario_server_acp]
+    SCENARIOS += [scenario_server, scenario_server_acp, scenario_notice_beside_server]
 
 
 def guarded(scenario):

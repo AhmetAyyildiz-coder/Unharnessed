@@ -59,6 +59,9 @@ pub struct GoalDriver {
     /// at once (its timestamp): the next one in a row waits
     /// ([`GoalDriver::continuation_waits`]). In-memory, like the wait.
     relaunched_beside_a_command: Option<i64>,
+    /// The goal completed and its host has not yet stopped the commands it
+    /// left running ([`GoalDriver::take_completed`]). In-memory.
+    completed_unhandled: bool,
     /// A minted continuation its surface has not admitted yet. While set,
     /// no mint site mints or re-arms another (the
     /// pending-never-re-arms contract: exactly one continuation per owed
@@ -116,6 +119,7 @@ impl GoalDriver {
             owed_continuation: false,
             command_wait_until_ms: 0,
             relaunched_beside_a_command: None,
+            completed_unhandled: false,
             pending_continuation: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             no_progress_streak: 0,
             no_progress_backoff_until_ms: 0,
@@ -312,6 +316,8 @@ impl GoalDriver {
         self.owed_continuation = false;
         self.command_wait_until_ms = 0;
         self.relaunched_beside_a_command = None;
+        // The new goal's commands are not the finished one's leftovers.
+        self.completed_unhandled = false;
         let previous_streak = self.no_progress_streak;
         let previous_backoff = self.no_progress_backoff_until_ms;
         let previous_parked = self.parked_refusal_until_ms;
@@ -530,6 +536,7 @@ impl GoalDriver {
         if self.state.objective.is_none() || self.state.status == GoalStatus::Idle {
             return Ok(());
         }
+        let completing = self.state.status != GoalStatus::Complete;
         self.set_state(
             session,
             GoalState {
@@ -539,7 +546,16 @@ impl GoalDriver {
                 last_error: None,
                 ..self.state.clone()
             },
-        )
+        )?;
+        self.completed_unhandled |= completing;
+        Ok(())
+    }
+
+    /// Whether the goal completed since the last call: the host then stops
+    /// the commands it left running, so none of them wakes a session whose
+    /// work is done.
+    pub fn take_completed(&mut self) -> bool {
+        std::mem::take(&mut self.completed_unhandled)
     }
 
     /// Block the active goal (host `goal.block()`): it stops relaunching and
