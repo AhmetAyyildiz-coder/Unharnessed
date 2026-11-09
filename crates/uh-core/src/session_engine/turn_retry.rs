@@ -147,6 +147,7 @@ impl SessionEngine {
                     if first {
                         return Ok(failed);
                     }
+                    resend_with_stored_credentials(host);
                     self.session
                         .drop_trailing_assistant(TrailingAssistantFilter::ErrorOnly)
                         .await;
@@ -340,6 +341,37 @@ fn failover_chain(
                 )
             })
             .collect(),
+    }
+}
+
+/// Point the run's provider target at the credential stored now, before a
+/// retry: a run resolves its key once, and another process sharing the login
+/// may have refreshed it since (an OAuth refresh revokes the access token the
+/// run holds). The model, tier and target stay.
+fn resend_with_stored_credentials(host: &TurnRetryHost<'_>) {
+    let Some(current) = host
+        .provider_target
+        .read()
+        .expect("provider target lock")
+        .clone()
+    else {
+        return;
+    };
+    let auth = model_registry(host.agent_dir)
+        .get_api_key_and_headers(&current.model, current.model.headers.as_ref());
+    if !auth.ok || auth.api_key.is_none() || auth.api_key == current.api_key {
+        return;
+    }
+    if let Some(target) = host
+        .provider_target
+        .write()
+        .expect("provider target lock")
+        .as_mut()
+    {
+        if target.model.provider == current.model.provider && target.model.id == current.model.id {
+            target.api_key = auth.api_key;
+            target.headers = auth.headers;
+        }
     }
 }
 
