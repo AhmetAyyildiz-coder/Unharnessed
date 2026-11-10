@@ -3,7 +3,8 @@
 //! The TS catalog is the tiny built-in fallback + transport trust table
 //! (32 providers, 152 models: one-plus transport-template model per
 //! `(provider, api, baseUrl)` tuple the client implements, plus the 110
-//! offline Prime Inference onboarding entries); the full model catalog is
+//! offline Prime Inference onboarding entries), plus the Google
+//! Antigravity subscription's model, which only this table lists; the full model catalog is
 //! fetched from the `PrimeIntellect-ai/prime-agent-catalog` repo at
 //! runtime (no-cold-start chain: validated disk cache -> packaged
 //! bundled snapshot -> this compiled fallback). The data lives here as
@@ -390,6 +391,32 @@ compat: Some(RawCompat {
         cost: (0.3, 2.5, 0.03, 0.0),
         context_window: 1_048_576,
         max_tokens: 65_536,
+        featured: None,
+        headers: &[],
+        compat: None,
+    },
+    // Not in the TS table or the live catalog: the Antigravity
+    // subscription's models are the ones listed here.
+    RawModel {
+        provider: "google-antigravity",
+        id: "gemini-3.8-flash-low",
+        name: "Gemini 3.8 Flash",
+        api: "google-antigravity",
+        base_url: "https://daily-cloudcode-pa.googleapis.com",
+        reasoning: true,
+        thinking_levels: &[
+                (crate::types::ModelThinkingLevel::Off, None),
+                (crate::types::ModelThinkingLevel::Minimal, None),
+                (crate::types::ModelThinkingLevel::Low, Some("low")),
+                (crate::types::ModelThinkingLevel::Medium, Some("medium")),
+                (crate::types::ModelThinkingLevel::High, Some("high")),
+                (crate::types::ModelThinkingLevel::Xhigh, None),
+                (crate::types::ModelThinkingLevel::Max, None),
+        ],
+        input: &[crate::types::ModelInput::Text, crate::types::ModelInput::Image],
+        cost: (0.0, 0.0, 0.0, 0.0),
+        context_window: 1_048_576,
+        max_tokens: 65_535,
         featured: None,
         headers: &[],
         compat: None,
@@ -4491,12 +4518,19 @@ mod tests {
     #[test]
     fn catalog_loads_at_the_ts_fallback_scale() {
         let providers = get_providers();
-        assert_eq!(providers.len(), 32, "the TS fallback provider list");
+        assert_eq!(
+            providers.len(),
+            33,
+            "the TS fallback provider list + Google Antigravity"
+        );
         let total: usize = providers
             .iter()
             .map(|provider| get_models(provider).len())
             .sum();
-        assert_eq!(total, 152, "the TS fallback model list");
+        assert_eq!(
+            total, 153,
+            "the TS fallback model list + Google Antigravity's"
+        );
         assert_eq!(
             get_models("prime-inference").len(),
             110,
@@ -4519,8 +4553,8 @@ mod tests {
         }
         assert_eq!(
             tuples.len(),
-            43,
-            "42 public transport tuples + Prime Inference"
+            44,
+            "42 public transport tuples + Prime Inference + Google Antigravity"
         );
     }
 

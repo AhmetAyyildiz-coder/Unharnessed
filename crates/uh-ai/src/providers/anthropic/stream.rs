@@ -8,6 +8,7 @@ use crate::cache_pricing::{
     get_anthropic_cache_write_cost, has_standard_anthropic_cache_pricing,
     AnthropicCacheCreationUsage,
 };
+use crate::client_versions::{adopt_required_claude_code_version, Client};
 use crate::env_api_keys::get_env_api_key;
 use crate::event_stream::AssistantMessageEventStream;
 use crate::event_stream::{
@@ -206,14 +207,20 @@ async fn run_stream(
         .and_then(|options| options.interleaved_thinking)
         .unwrap_or(true);
     let use_fine_grained = should_use_fine_grained_tool_streaming_beta(model, context);
-    let (headers, is_oauth) = build_request_headers(
-        model,
-        &api_key,
-        interleaved_thinking,
-        use_fine_grained,
-        base_options.headers.as_ref(),
-        base_options.session_id.as_deref(),
-    );
+    let request_headers = || {
+        build_request_headers(
+            model,
+            &api_key,
+            interleaved_thinking,
+            use_fine_grained,
+            base_options.headers.as_ref(),
+            base_options.session_id.as_deref(),
+        )
+    };
+    let (mut headers, is_oauth) = request_headers();
+    if is_oauth {
+        Client::ClaudeCode.refresh_if_stale();
+    }
 
     let (_retention, cache_control) = get_cache_control(model, base_options.cache_retention);
     let uses_anthropic_cache_pricing = has_standard_anthropic_cache_pricing(model);
@@ -234,44 +241,56 @@ async fn run_stream(
     }
 
     let url = format!("{}/v1/messages", model.base_url.trim_end_matches('/'));
-    let mut response: HttpResponse = send(RequestOptions {
-        method: reqwest::Method::POST,
-        url,
-        headers,
-        body: Some(params.to_string()),
-        signal: base_options.signal.clone(),
-        timeout_ms: base_options.timeout_ms,
-        connection: crate::utils_inner::stream_failure::ConnectionErrorProfile::Sdk,
-        transport: crate::utils_inner::http::Transport::Http1,
-    })
-    .await?;
+    let body = params.to_string();
+    let mut claimed_again = false;
+    let mut response: HttpResponse = loop {
+        let mut response = send(RequestOptions {
+            method: reqwest::Method::POST,
+            url: url.clone(),
+            headers: headers.clone(),
+            body: Some(body.clone()),
+            signal: base_options.signal.clone(),
+            timeout_ms: base_options.timeout_ms,
+            connection: crate::utils_inner::stream_failure::ConnectionErrorProfile::Sdk,
+            transport: crate::utils_inner::http::Transport::Http1,
+        })
+        .await?;
 
-    if let Some(on_response) = &base_options.on_response {
-        on_response(
-            crate::types::ProviderResponse {
-                status: response.status,
-                // Collected into the ordered map: the hook payload can
-                // serialize, and the HTTP header arrival order is not a
-                // stable serialization order.
-                headers: response.headers.clone().into_iter().collect(),
-            },
-            model,
-        );
-    }
+        if let Some(on_response) = &base_options.on_response {
+            on_response(
+                crate::types::ProviderResponse {
+                    status: response.status,
+                    // Collected into the ordered map: the hook payload can
+                    // serialize, and the HTTP header arrival order is not a
+                    // stable serialization order.
+                    headers: response.headers.clone().into_iter().collect(),
+                },
+                model,
+            );
+        }
+        if response.status < 400 {
+            break response;
+        }
+        let refusal = response.read_all_text().await.unwrap_or_default();
+        // A model gated on a newer Claude Code than the one claimed: the
+        // refusal names the version it wants, and the request goes once
+        // more with it.
+        if is_oauth && !claimed_again && adopt_required_claude_code_version(&refusal) {
+            claimed_again = true;
+            headers = request_headers().0;
+            continue;
+        }
+        return Err(ProviderError::from_http_status_body(
+            response.status,
+            &refusal,
+            response.headers.clone(),
+        ));
+    };
     let request_id = response
         .headers
         .get("request-id")
         .or_else(|| response.headers.get("x-request-id"))
         .cloned();
-
-    if response.status >= 400 {
-        let body = response.read_all_text().await.unwrap_or_default();
-        return Err(ProviderError::from_http_status_body(
-            response.status,
-            &body,
-            response.headers.clone(),
-        ));
-    }
 
     writer.push(AssistantMessageEvent::Start {
         partial: output.clone(),

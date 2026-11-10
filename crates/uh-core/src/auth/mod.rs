@@ -23,8 +23,8 @@ pub use prime_inference_login::{
     PrimeInferenceLoginResult, PrimeInferenceLoginSource,
 };
 pub use provider_oauth::{
-    ProviderOAuth, ANTHROPIC_PROVIDER_ID, GITHUB_COPILOT_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID,
-    XAI_PROVIDER_ID,
+    ProviderOAuth, ANTHROPIC_PROVIDER_ID, GITHUB_COPILOT_PROVIDER_ID,
+    GOOGLE_ANTIGRAVITY_PROVIDER_ID, OPENAI_CODEX_PROVIDER_ID, XAI_PROVIDER_ID,
 };
 pub use storage::{
     parse_storage_data, AuthStorageBackend, FileAuthStorageBackend, InMemoryAuthStorageBackend,

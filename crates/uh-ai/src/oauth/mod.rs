@@ -4,11 +4,12 @@
 //! exchange, the JWT account-id claim, and the token refresh — plus the
 //! Anthropic (Claude Pro/Max) PKCE flow with its own localhost
 //! callback, the GitHub Copilot device flow with the client
-//! impersonation headers and the post-login model-policy pass, and the
-//! xAI (Grok) device flow with strict response validation.
+//! impersonation headers and the post-login model-policy pass, the
+//! xAI (Grok) device flow with strict response validation, and the
+//! Google Antigravity PKCE flow with its project lookup.
 //!
 //! The flows are transport-agnostic: the Codex flow issues its token
-//! requests through the [`CodexHttp`] seam, the other three through
+//! requests through the [`CodexHttp`] seam, the others through
 //! [`ProviderHttp`] (the JSON bodies, the GETs, and the custom
 //! headers their TS `fetch` shapes carry), so tests script the
 //! endpoints (the TS suite stubs `fetch` the same way) and the
@@ -18,6 +19,7 @@ mod anthropic;
 mod anthropic_callback;
 mod callback;
 mod github_copilot;
+mod google_antigravity;
 mod openai_codex;
 mod pkce;
 mod provider_http;
@@ -32,6 +34,13 @@ pub use callback::CodexCallbackServer;
 pub use github_copilot::{
     get_github_copilot_base_url, login_github_copilot, refresh_github_copilot_token,
     CopilotCredentials, LOGIN_CANCELLED as COPILOT_LOGIN_CANCELLED,
+};
+pub(crate) use google_antigravity::{
+    antigravity_user_agent, parse_google_antigravity_api_key, DAILY_ENDPOINT, PROD_ENDPOINT,
+};
+pub use google_antigravity::{
+    google_antigravity_api_key, login_google_antigravity, refresh_google_antigravity_token,
+    GoogleAntigravityCredentials, LOGIN_CANCELLED as GOOGLE_ANTIGRAVITY_LOGIN_CANCELLED,
 };
 pub use openai_codex::{
     login_openai_codex, refresh_openai_codex_token, CodexLoginUi, OAuthCredentials,

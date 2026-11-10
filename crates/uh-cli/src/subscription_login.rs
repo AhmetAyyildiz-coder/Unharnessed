@@ -1,6 +1,7 @@
 //! The composition root's subscription logins (TS `auth-flows.ts`'s
 //! `showLoginDialog` over the AI library's `anthropic`,
-//! `githubCopilot`, and `xai` providers): the browser URL block, the
+//! `githubCopilot`, `xai`, and Google Antigravity providers): the
+//! browser URL block, the
 //! prompts, the progress lines, and the credential write under each
 //! provider's id. Every surface renders through the inline auth panel
 //! (TS the login dialog in the TUI); nothing touches the plain
@@ -21,11 +22,13 @@ use std::pin::Pin;
 use crate::auth_panel::{AuthPanelHandle, PastePromptTone, PasteStyle};
 use crate::provider_auth::ProviderAuthOutcome;
 use uh_ai::oauth::{
-    login_anthropic, login_github_copilot, login_xai, OAuthLoginUi, OAuthPrompt, ProviderHttp,
-    ANTHROPIC_LOGIN_CANCELLED, COPILOT_LOGIN_CANCELLED, XAI_LOGIN_CANCELLED,
+    login_anthropic, login_github_copilot, login_google_antigravity, login_xai, OAuthLoginUi,
+    OAuthPrompt, ProviderHttp, ANTHROPIC_LOGIN_CANCELLED, COPILOT_LOGIN_CANCELLED,
+    GOOGLE_ANTIGRAVITY_LOGIN_CANCELLED, XAI_LOGIN_CANCELLED,
 };
 use uh_core::auth::{
-    AuthCredential, AuthStorage, ANTHROPIC_PROVIDER_ID, GITHUB_COPILOT_PROVIDER_ID, XAI_PROVIDER_ID,
+    AuthCredential, AuthStorage, ANTHROPIC_PROVIDER_ID, GITHUB_COPILOT_PROVIDER_ID,
+    GOOGLE_ANTIGRAVITY_PROVIDER_ID, XAI_PROVIDER_ID,
 };
 
 /// TS the login dialog's manual-input prompt (the callback-server
@@ -247,6 +250,52 @@ pub(crate) async fn run_xai_login(
             refresh: Some(credentials.refresh),
             expires: credentials.expires,
             account_id: None,
+            enterprise_url: None,
+            endpoint: None,
+            token_endpoint: None,
+            client_id: None,
+            resource: None,
+            issuer: None,
+        },
+    );
+    if let Some(error) = auth.drain_errors().pop() {
+        return ProviderAuthOutcome::Error(format!(
+            "Failed to login to {provider_name}: could not save the login: {error}"
+        ));
+    }
+    login_status(agent_dir, provider_name)
+}
+
+/// The Google Antigravity login: the credential carries the account's
+/// Cloud Code Assist project beside the tokens.
+pub(crate) async fn run_google_antigravity_login(
+    agent_dir: &Path,
+    provider_name: &str,
+    http: &dyn ProviderHttp,
+    ui: &dyn OAuthLoginUi,
+) -> ProviderAuthOutcome {
+    let credentials = match login_google_antigravity(http, ui).await {
+        Ok(credentials) => credentials,
+        Err(message) if message == GOOGLE_ANTIGRAVITY_LOGIN_CANCELLED => {
+            return ProviderAuthOutcome::Cancelled;
+        }
+        Err(message) => {
+            return ProviderAuthOutcome::Error(format!(
+                "Failed to login to {provider_name}: {message}"
+            ));
+        }
+    };
+    if ui.is_cancelled() {
+        return ProviderAuthOutcome::Cancelled;
+    }
+    let mut auth = AuthStorage::create(agent_dir);
+    auth.set(
+        GOOGLE_ANTIGRAVITY_PROVIDER_ID,
+        AuthCredential::Oauth {
+            access: credentials.access,
+            refresh: Some(credentials.refresh),
+            expires: credentials.expires,
+            account_id: Some(credentials.project_id),
             enterprise_url: None,
             endpoint: None,
             token_endpoint: None,

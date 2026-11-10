@@ -139,7 +139,7 @@ pub fn stream_google(
     reader
 }
 
-fn build_params(model: &Model, context: &Context, options: &GoogleOptions) -> Value {
+pub(crate) fn build_params(model: &Model, context: &Context, options: &GoogleOptions) -> Value {
     let contents = convert_messages(model, context);
 
     let mut generation_config = Map::new();
@@ -379,6 +379,15 @@ pub fn stream_simple_google(
     context: &Context,
     options: Option<&SimpleStreamOptions>,
 ) -> AssistantMessageEventStream {
+    stream_google(model, context, Some(&simple_google_options(model, options)))
+}
+
+/// The provider options of a simple request: the key, and the model
+/// family's thinking config for the requested reasoning.
+pub(crate) fn simple_google_options(
+    model: &Model,
+    options: Option<&SimpleStreamOptions>,
+) -> GoogleOptions {
     let api_key = options
         .and_then(|options| options.base.api_key.clone())
         .or_else(|| get_env_api_key(&model.provider));
@@ -388,7 +397,7 @@ pub fn stream_simple_google(
     };
     let reasoning = options.and_then(|options| options.reasoning);
     if reasoning.is_none() || reasoning == Some(ModelThinkingLevel::Off) {
-        let stream_options = GoogleOptions {
+        return GoogleOptions {
             base,
             tool_choice: None,
             thinking: Some(GoogleThinking {
@@ -397,7 +406,6 @@ pub fn stream_simple_google(
                 level: None,
             }),
         };
-        return stream_google(model, context, Some(&stream_options));
     }
 
     let clamped = reasoning.map(|reasoning| clamp_thinking_level(model, reasoning));
@@ -407,7 +415,7 @@ pub fn stream_simple_google(
         || crate::providers::google_shared::is_gemini3_flash_model(&model.id)
         || crate::providers::google_shared::is_gemma4_model(&model.id)
     {
-        let stream_options = GoogleOptions {
+        return GoogleOptions {
             base,
             tool_choice: None,
             thinking: Some(GoogleThinking {
@@ -416,12 +424,11 @@ pub fn stream_simple_google(
                 level: Some(get_thinking_level(effort, &model.id)),
             }),
         };
-        return stream_google(model, context, Some(&stream_options));
     }
 
     let budgets = options.and_then(|options| options.thinking_budgets.as_ref());
     let budget = get_google_thinking_budget(&model.id, budget_effort(effort), budgets);
-    let stream_options = GoogleOptions {
+    GoogleOptions {
         base,
         tool_choice: None,
         thinking: Some(GoogleThinking {
@@ -429,8 +436,7 @@ pub fn stream_simple_google(
             budget_tokens: Some(budget),
             level: None,
         }),
-    };
-    stream_google(model, context, Some(&stream_options))
+    }
 }
 
 /// Registry provider for the `google-generative-ai` API.

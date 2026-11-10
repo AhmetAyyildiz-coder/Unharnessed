@@ -588,8 +588,20 @@ impl ModelRegistry {
         custom: &CustomModelsResult,
         credentials: Option<&uh_models::PrimeCredentials>,
     ) -> Vec<Model> {
-        self.catalog
-            .resolve(credentials)
+        // The live catalog does not list the Google Antigravity
+        // subscription: its models are the compiled ones.
+        let mut models = self.catalog.resolve(credentials);
+        if !models
+            .iter()
+            .any(|model| model.provider == crate::auth::GOOGLE_ANTIGRAVITY_PROVIDER_ID)
+        {
+            models.extend(
+                uh_ai::models_generated::get_models(crate::auth::GOOGLE_ANTIGRAVITY_PROVIDER_ID)
+                    .into_iter()
+                    .cloned(),
+            );
+        }
+        models
             .into_iter()
             .map(|mut model| {
                 if let Some(provider_override) = custom.provider_overrides.get(&model.provider) {

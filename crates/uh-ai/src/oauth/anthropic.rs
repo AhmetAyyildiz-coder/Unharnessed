@@ -95,7 +95,7 @@ pub async fn login_anthropic(
         Some(AUTH_INSTRUCTIONS),
     );
 
-    let code = wait_for_code(&server, ui, &verifier).await?;
+    let code = wait_for_code(&server, ui, &verifier, REDIRECT_URI).await?;
     if ui.is_cancelled() {
         return Err(LOGIN_CANCELLED.to_string());
     }
@@ -155,11 +155,14 @@ fn authorization_url(challenge: &str, verifier: &str) -> String {
 /// The race + the fallbacks (TS `loginAnthropic`'s middle): the
 /// browser callback against the manual paste, then the prompt
 /// fallback. The tick re-checks the cooperative cancel between poll
-/// steps.
-async fn wait_for_code(
+/// steps. `verifier` is the state the redirect must echo and
+/// `redirect_uri` the prompt's example (the Google Antigravity login
+/// waits the same way).
+pub(super) async fn wait_for_code(
     server: &AnthropicCallbackServer,
     ui: &dyn OAuthLoginUi,
     verifier: &str,
+    redirect_uri: &str,
 ) -> Result<CallbackCode, String> {
     let manual = ui.on_manual_code_input();
     let manual_available = manual.is_some();
@@ -213,7 +216,7 @@ async fn wait_for_code(
     let answer = ui
         .on_prompt(&OAuthPrompt {
             message: PROMPT_MESSAGE.to_string(),
-            placeholder: Some(REDIRECT_URI.to_string()),
+            placeholder: Some(redirect_uri.to_string()),
             allow_empty: false,
         })
         .await;

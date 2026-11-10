@@ -17,6 +17,7 @@ pub fn default_model_per_provider(provider: &str) -> Option<&'static str> {
         "prime-inference" => PRIME_INFERENCE_DEFAULT_MODEL_ID,
         "deepseek" => "deepseek-v4-pro",
         "google" | "google-vertex" => "gemini-3.1-pro-preview",
+        "google-antigravity" => "gemini-3.8-flash-low",
         "openrouter" => "moonshotai/kimi-k2.6",
         "vercel-ai-gateway" => "zai/glm-5.1",
         "xai" => "grok-4.20-0309-reasoning",

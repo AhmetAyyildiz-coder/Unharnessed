@@ -1,7 +1,8 @@
 //! The built-in subscription providers' OAuth integration (TS the auth
 //! storage delegates to the AI library's oauth registry): the stored
-//! `openai-codex`, `anthropic`, `github-copilot`, and `xai`
-//! credentials refresh at their token endpoints when they expire.
+//! `openai-codex`, `anthropic`, `github-copilot`, `xai`, and
+//! `google-antigravity` credentials refresh at their token endpoints
+//! when they expire.
 //! Every other provider serves its access token until expiry (no
 //! refresh flow exists for it), so refresh answers `None` and
 //! resolution keeps the stored credential for a later explicit
@@ -16,8 +17,9 @@
 use std::sync::Arc;
 
 use uh_ai::oauth::{
-    refresh_anthropic_token, refresh_github_copilot_token, refresh_openai_codex_token,
-    refresh_xai_token, CodexHttp, ProviderHttp, ReqwestCodexHttp, ReqwestProviderHttp,
+    google_antigravity_api_key, refresh_anthropic_token, refresh_github_copilot_token,
+    refresh_google_antigravity_token, refresh_openai_codex_token, refresh_xai_token, CodexHttp,
+    ProviderHttp, ReqwestCodexHttp, ReqwestProviderHttp,
 };
 
 use crate::auth::types::{AuthCredential, AuthStorageData};
@@ -31,6 +33,8 @@ pub const ANTHROPIC_PROVIDER_ID: &str = "anthropic";
 pub const GITHUB_COPILOT_PROVIDER_ID: &str = "github-copilot";
 /// The xAI (Grok) subscription provider id.
 pub const XAI_PROVIDER_ID: &str = "xai";
+/// The Google Antigravity (Google AI Pro/Ultra) subscription provider id.
+pub const GOOGLE_ANTIGRAVITY_PROVIDER_ID: &str = "google-antigravity";
 
 /// The AI library's oauth registry as the auth storage's default
 /// integration.
@@ -82,6 +86,7 @@ impl ProviderOAuth {
     ) -> Option<AuthCredential> {
         let AuthCredential::Oauth {
             refresh: Some(refresh_token),
+            account_id,
             enterprise_url,
             ..
         } = credential
@@ -91,6 +96,7 @@ impl ProviderOAuth {
         let http = Arc::clone(&self.http);
         let provider_http = Arc::clone(&self.provider_http);
         let refresh_token = refresh_token.clone();
+        let account_id = account_id.clone();
         let enterprise_url = enterprise_url.clone();
         let provider_id = provider_id.to_string();
         std::thread::Builder::new()
@@ -179,7 +185,30 @@ impl ProviderOAuth {
                             issuer: None,
                         })
                     }
-                    // The match arms cover the four subscription ids;
+                    GOOGLE_ANTIGRAVITY_PROVIDER_ID => {
+                        // The project rides the credential: a refresh
+                        // keeps it.
+                        let credentials = runtime
+                            .block_on(refresh_google_antigravity_token(
+                                provider_http.as_ref(),
+                                &refresh_token,
+                                &account_id?,
+                            ))
+                            .ok()?;
+                        Some(AuthCredential::Oauth {
+                            access: credentials.access,
+                            refresh: Some(credentials.refresh),
+                            expires: credentials.expires,
+                            account_id: Some(credentials.project_id),
+                            enterprise_url: None,
+                            endpoint: None,
+                            token_endpoint: None,
+                            client_id: None,
+                            resource: None,
+                            issuer: None,
+                        })
+                    }
+                    // The match arms cover the five subscription ids;
                     // `refresh` never dispatches another.
                     _ => None,
                 };
@@ -192,8 +221,17 @@ impl ProviderOAuth {
 }
 
 impl crate::auth::OAuthIntegration for ProviderOAuth {
-    fn api_key_for(&self, _provider: &str, credential: &AuthCredential) -> Option<String> {
+    fn api_key_for(&self, provider: &str, credential: &AuthCredential) -> Option<String> {
         match credential {
+            // Antigravity's requests name the account's project beside
+            // the token.
+            AuthCredential::Oauth {
+                access,
+                account_id: Some(project_id),
+                ..
+            } if provider == GOOGLE_ANTIGRAVITY_PROVIDER_ID => {
+                Some(google_antigravity_api_key(access, project_id))
+            }
             AuthCredential::Oauth { access, .. } => Some(access.clone()),
             AuthCredential::ApiKey { .. } | AuthCredential::McpStaticToken { .. } => None,
         }
@@ -206,6 +244,7 @@ impl crate::auth::OAuthIntegration for ProviderOAuth {
                 | ANTHROPIC_PROVIDER_ID
                 | GITHUB_COPILOT_PROVIDER_ID
                 | XAI_PROVIDER_ID
+                | GOOGLE_ANTIGRAVITY_PROVIDER_ID
         ) {
             return None;
         }

@@ -1,7 +1,9 @@
 //! The Anthropic login's localhost callback server (TS
 //! `anthropic.ts`'s `startCallbackServer` + `oauth-page.ts`): one
 //! listener on the registered redirect port serving the callback
-//! route with the product's success/error pages. Only a matching
+//! route with the product's success/error pages. The Google
+//! Antigravity login runs the same server on its own
+//! [`CallbackRoute`]. Only a matching
 //! redirect settles the login — an OAuth error response, a missing
 //! code or state, or an unknown route answers its page and keeps
 //! waiting (TS calls `settleWait` on success only). A bind failure is
@@ -22,6 +24,20 @@ pub(crate) const CALLBACK_PORT: u16 = 53_692;
 pub(crate) const CALLBACK_PATH: &str = "/callback";
 /// TS `REDIRECT_URI` (the exchange's `redirect_uri` in every path).
 pub(crate) const REDIRECT_URI: &str = "http://localhost:53692/callback";
+
+/// One login's registered redirect and the provider name on its pages.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CallbackRoute {
+    pub port: u16,
+    pub path: &'static str,
+    pub provider: &'static str,
+}
+
+const ANTHROPIC_ROUTE: CallbackRoute = CallbackRoute {
+    port: CALLBACK_PORT,
+    path: CALLBACK_PATH,
+    provider: "Anthropic",
+};
 
 /// The authorization code plus the echoed `state` from the browser
 /// redirect (TS settles both).
@@ -105,8 +121,17 @@ impl AnthropicCallbackServer {
     ///
     /// Returns an error when the listener cannot be bound.
     pub fn start(state: &str) -> Result<Self, String> {
+        Self::start_on(ANTHROPIC_ROUTE, state)
+    }
+
+    /// [`Self::start`] on another login's registered redirect.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the listener cannot be bound.
+    pub(crate) fn start_on(route: CallbackRoute, state: &str) -> Result<Self, String> {
         let host = std::env::var(CALLBACK_HOST_ENV).unwrap_or_else(|_| "127.0.0.1".to_string());
-        Self::bind(&host, CALLBACK_PORT, state)
+        Self::bind_route(&host, route, state)
     }
 
     /// Bind one exact host and port; the caller owns the failure
@@ -115,7 +140,20 @@ impl AnthropicCallbackServer {
     /// # Errors
     ///
     /// Returns an error when the listener cannot be bound.
+    #[cfg(test)]
     pub fn bind(host: &str, port: u16, state: &str) -> Result<Self, String> {
+        Self::bind_route(
+            host,
+            CallbackRoute {
+                port,
+                ..ANTHROPIC_ROUTE
+            },
+            state,
+        )
+    }
+
+    fn bind_route(host: &str, route: CallbackRoute, state: &str) -> Result<Self, String> {
+        let port = route.port;
         // `SO_REUSEADDR`: a closed listener's recent connections linger
         // in TIME_WAIT on the registered port (the browser race drives
         // real sockets); the next login's bind must not fail on them
@@ -157,7 +195,7 @@ impl AnthropicCallbackServer {
                 let shared = Arc::clone(&task_shared);
                 let state = state.clone();
                 tokio::spawn(async move {
-                    serve_callback(stream, &shared, &state).await;
+                    serve_callback(stream, &shared, route, &state).await;
                 });
             }
         });
@@ -197,7 +235,12 @@ impl AnthropicCallbackServer {
 /// One browser request: read it, answer it, settle the login only on a
 /// matching redirect (TS the callback handler's validation order —
 /// route, the OAuth error response, missing parameters, state).
-async fn serve_callback(mut stream: tokio::net::TcpStream, shared: &CallbackShared, state: &str) {
+async fn serve_callback(
+    mut stream: tokio::net::TcpStream,
+    shared: &CallbackShared,
+    route: CallbackRoute,
+    state: &str,
+) {
     let Some(request) = read_request_head(&mut stream).await else {
         let _ = write_response(
             &mut stream,
@@ -215,7 +258,7 @@ async fn serve_callback(mut stream: tokio::net::TcpStream, shared: &CallbackShar
         .nth(1)
         .unwrap_or_default();
     let path = target.split('?').next().unwrap_or_default();
-    if path != CALLBACK_PATH {
+    if path != route.path {
         let _ = write_response(
             &mut stream,
             "404 Not Found",
@@ -232,7 +275,7 @@ async fn serve_callback(mut stream: tokio::net::TcpStream, shared: &CallbackShar
             &mut stream,
             "400 Bad Request",
             error_page(
-                "Anthropic authentication did not complete.",
+                &format!("{} authentication did not complete.", route.provider),
                 Some(&format!("Error: {error}")),
             ),
         )
@@ -269,7 +312,10 @@ async fn serve_callback(mut stream: tokio::net::TcpStream, shared: &CallbackShar
     let _ = write_response(
         &mut stream,
         "200 OK",
-        success_page("Anthropic authentication completed. You can close this window."),
+        success_page(&format!(
+            "{} authentication completed. You can close this window.",
+            route.provider
+        )),
     )
     .await;
 }

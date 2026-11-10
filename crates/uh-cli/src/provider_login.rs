@@ -1,11 +1,12 @@
 //! The composition root's provider auth flows behind the TUI's `/login`
 //! and `/logout` (TS `ProviderAuthFlows`): the provider catalog rows with
 //! their auth status, the API-key store, the MCP device flow, the Prime
-//! Inference terminal login (`prime_inference_login`), and the four
+//! Inference terminal login (`prime_inference_login`), and the five
 //! subscription logins — the Codex Subscription login
-//! (`codex_subscription_login`) and the Anthropic, GitHub Copilot, and
-//! xAI logins (`subscription_login`: the PKCE callback flow, the device
-//! flows, the token exchanges, and the credential writes). The Prime
+//! (`codex_subscription_login`) and the Anthropic, GitHub Copilot, xAI,
+//! and Google Antigravity logins (`subscription_login`: the PKCE
+//! callback flows, the device flows, the token exchanges, and the
+//! credential writes). The Prime
 //! browser logins (the RSA `auth_challenge` flow) are not ported yet.
 
 use std::path::{Path, PathBuf};
@@ -22,9 +23,10 @@ use uh_core::models::ModelRegistry;
 
 /// The TS OAuth provider rows (`the TS AI library/oauth` registry): the
 /// subscription logins, every flow ported.
-const SUBSCRIPTION_PROVIDERS: [(&str, &str); 4] = [
+const SUBSCRIPTION_PROVIDERS: [(&str, &str); 5] = [
     ("anthropic", "Anthropic (Claude Pro/Max)"),
     ("github-copilot", "GitHub Copilot"),
+    ("google-antigravity", "Google AI Pro/Ultra (Antigravity)"),
     ("openai-codex", "ChatGPT Plus/Pro (Codex Subscription)"),
     ("xai", "xAI (Grok)"),
 ];
@@ -707,6 +709,34 @@ fn login_blocking_on_panel(
                 },
                 |runtime| {
                     runtime.block_on(crate::subscription_login::run_xai_login(
+                        &agent_dir,
+                        &provider_row.name,
+                        &uh_ai::oauth::ReqwestProviderHttp::new(),
+                        &crate::subscription_login::PanelSubscriptionLoginUi::new(
+                            panel,
+                            &provider_row.id,
+                        ),
+                    ))
+                },
+            );
+    }
+    // The Google Antigravity login: the PKCE authorization URL, the
+    // manual paste racing the localhost callback, the token exchange,
+    // the project lookup, and the credential write, all through the
+    // inline auth panel.
+    if provider_row.id == uh_core::auth::GOOGLE_ANTIGRAVITY_PROVIDER_ID {
+        return tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_or_else(
+                |error: std::io::Error| {
+                    ProviderAuthOutcome::Error(format!(
+                        "Failed to login to {}: {error}",
+                        provider_row.name
+                    ))
+                },
+                |runtime| {
+                    runtime.block_on(crate::subscription_login::run_google_antigravity_login(
                         &agent_dir,
                         &provider_row.name,
                         &uh_ai::oauth::ReqwestProviderHttp::new(),

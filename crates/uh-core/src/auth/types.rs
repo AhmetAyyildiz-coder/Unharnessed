@@ -78,7 +78,8 @@ pub enum AuthCredential {
         /// The `ChatGPT` account the Codex Subscription token carries
         /// (TS stores the codex login's `accountId` next to the
         /// credentials; the request path re-extracts it from the token,
-        /// like TS).
+        /// like TS). For a Google Antigravity login, the Cloud Code
+        /// Assist project its requests name.
         #[serde(rename = "accountId", default, skip_serializing_if = "Option::is_none")]
         account_id: Option<String>,
         /// The GitHub Enterprise domain the Copilot login ran against (TS

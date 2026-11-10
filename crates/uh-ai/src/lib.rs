@@ -17,6 +17,7 @@
 //! and `result_large_err` are allowed crate-wide rather than boxing payloads.
 #![allow(clippy::large_enum_variant, clippy::result_large_err)]
 
+pub mod client_versions;
 pub mod env_api_keys;
 pub mod models;
 pub mod models_generated;

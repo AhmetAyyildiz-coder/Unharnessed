@@ -42,6 +42,10 @@ fn shared() -> &'static Mutex<HashMap<Option<PathBuf>, Arc<ModelCatalog>>> {
 /// Panics if the shared catalog registry mutex is poisoned.
 pub fn catalog_for(models_json_path: Option<&Path>) -> Arc<ModelCatalog> {
     let key = models_json_path.map(models_dir);
+    // The claimed client versions are cached beside the catalogs.
+    if let Some(dir) = &key {
+        uh_ai::client_versions::set_cache_dir(dir);
+    }
     let mut shared = shared().lock().unwrap();
     Arc::clone(
         shared
