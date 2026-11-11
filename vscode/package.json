@@ -2,10 +2,15 @@
   "name": "unharnessed",
   "displayName": "Unharnessed",
   "description": "Chat with the Unharnessed agent from VS Code.",
-  "version": "0.0.1",
-  "publisher": "paseru",
+  "version": "0.0.2",
+  "publisher": "Rayane912",
   "license": "MIT",
   "private": true,
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1a1a1b",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/Paseru/Unharnessed.git"
@@ -20,6 +25,24 @@
   "main": "./dist/extension.js",
   "activationEvents": [],
   "contributes": {
+    "commands": [
+      {
+        "command": "unharnessed.open",
+        "title": "Open Unharnessed",
+        "icon": {
+          "light": "media/icon-light.svg",
+          "dark": "media/icon-dark.svg"
+        }
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "unharnessed.open",
+          "group": "navigation"
+        }
+      ]
+    },
     "viewsContainers": {
       "secondarySidebar": [
         {
@@ -43,7 +66,8 @@
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p webview",
-    "test:e2e": "npm run build && node test/e2e/run.mjs"
+    "test:e2e": "npm run build && node test/e2e/run.mjs",
+    "package": "node scripts/package.mjs"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.7.0",

@@ -3,9 +3,13 @@
 // logos are inlined in main.js).
 // `--watch` rebuilds on change; the start/end lines feed the background
 // problem matcher in .vscode/tasks.json, once per round of both bundles.
+// `--out <dir>` builds there instead of dist/, without the source map: the
+// package's build (scripts/package.mjs), which leaves dist/ to the watcher.
 import * as esbuild from "esbuild";
 
 const watch = process.argv.includes("--watch");
+const outFlag = process.argv.indexOf("--out");
+const out = outFlag < 0 ? "dist" : process.argv[outFlag + 1];
 
 let running = 0;
 const logPlugin = {
@@ -30,17 +34,17 @@ const contexts = await Promise.all([
   esbuild.context({
     ...common,
     entryPoints: ["src/extension.ts"],
-    outfile: "dist/extension.js",
+    outfile: `${out}/extension.js`,
     format: "cjs",
     platform: "node",
     target: "node20",
     external: ["vscode"],
-    sourcemap: true,
+    sourcemap: outFlag < 0,
   }),
   esbuild.context({
     ...common,
     entryPoints: { main: "webview/main.tsx" },
-    outdir: "dist/webview",
+    outdir: `${out}/webview`,
     format: "iife",
     platform: "browser",
     target: "chrome120",

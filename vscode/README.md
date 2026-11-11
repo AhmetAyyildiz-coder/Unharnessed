@@ -3,6 +3,21 @@
 A chat panel in the secondary side bar for the Unharnessed agent: sign-in,
 settings, model pickers and the conversation, all in the panel.
 
+Unharnessed gives the model one tool, a persistent Python kernel; everything
+else the agent does is Python in that kernel.
+
+**The agent runs the Python and the shell commands the model writes, with your
+user permissions and no sandbox.** Use it on projects where that is acceptable.
+
+## Requirements
+
+- [uv](https://docs.astral.sh/uv/). The agent builds its Python kernel with it
+  the first time, which needs the network once:
+  `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- An account or an API key with a model provider; sign in from the panel.
+
+The agent itself comes with the extension.
+
 ## Conversations in the background
 
 Each open conversation has its own agent process and its own Python kernel.
@@ -26,3 +41,7 @@ like two terminals open on one folder.
 - `npm run test:e2e` drives a real VS Code through each scenario of
   `test/e2e/run.mjs` with the faux provider (`UNHARNESSED_E2E_ONLY=<name>` runs
   one).
+- `npm run package [target]` builds the `.vsix` of one platform, agent
+  included (`scripts/package.mjs`);
+  `UNHARNESSED_E2E_VSIX=<the .vsix> node test/e2e/run.mjs` runs the scenarios
+  on it, installed by VS Code.

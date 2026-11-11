@@ -1,4 +1,5 @@
-// Runs inside the VS Code extension host. Opens the panel, then goes through
+// Runs inside the VS Code extension host. Opens the panel as the button in
+// the editor's title bar does, then goes through
 // UNHARNESSED_E2E_STEPS (a JSON list): a string waits for a line containing it
 // in the extension's log channel; `{ wait, times, timeout }` waits for its
 // `times`-th such line; `{ wait, capture: { name: regex } }` keeps what each
@@ -10,7 +11,7 @@ const { readLog } = require("./logs.cjs");
 const TIMEOUT_MS = 20_000;
 
 exports.run = async function run() {
-  await vscode.commands.executeCommand("unharnessed.chat.focus");
+  await vscode.commands.executeCommand("unharnessed.open");
 
   const kept = {};
   for (const step of JSON.parse(process.env.UNHARNESSED_E2E_STEPS)) {

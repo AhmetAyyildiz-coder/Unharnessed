@@ -15,19 +15,22 @@
 // UNHARNESSED_VSCODE_EXECUTABLE picks an installed VS Code; without it, VS Code
 // stable is downloaded into .vscode-test/. UNHARNESSED_BIN picks the agent
 // binary, default target/debug/unharnessed. UNHARNESSED_E2E_ONLY runs the
-// scenario of that name alone.
+// scenario of that name alone. UNHARNESSED_E2E_VSIX runs a package
+// (scripts/package.mjs) instead of this folder: VS Code installs it, and the
+// agent is the one it carries.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runTests } from "@vscode/test-electron";
+import { downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath, runTests } from "@vscode/test-electron";
 
 const { readLog } = createRequire(import.meta.url)("./logs.cjs");
 const here = dirname(fileURLToPath(import.meta.url));
-const binary = process.env.UNHARNESSED_BIN || resolve(here, "../../../target/debug/unharnessed");
+const vsix = process.env.UNHARNESSED_E2E_VSIX;
+const binary = process.env.UNHARNESSED_BIN || (vsix ? undefined : resolve(here, "../../../target/debug/unharnessed"));
 // VS Code, and the agent it starts, inherit this environment.
 for (const name of Object.keys(process.env)) {
   if (/_(API_KEY|TOKEN)$/.test(name)) delete process.env[name];
@@ -1002,13 +1005,26 @@ const scenarios = [
   },
 ];
 
+let vscodeExecutablePath = process.env.UNHARNESSED_VSCODE_EXECUTABLE;
+let extension = resolve(here, "../..");
+/** Where VS Code installed the package. */
+let installed;
+if (vsix) {
+  vscodeExecutablePath ||= await downloadAndUnzipVSCode({ extensionDevelopmentPath: extension });
+  const [cli] = resolveCliArgsFromVSCodeExecutablePath(vscodeExecutablePath);
+  installed = mkdtempSync(join(tmpdir(), "uh-vsix-"));
+  execFileSync(cli, [`--extensions-dir=${join(installed, "x")}`, `--user-data-dir=${join(installed, "u")}`, "--install-extension", resolve(vsix)], { stdio: "inherit" });
+  extension = join(installed, "x", readdirSync(join(installed, "x")).find((name) => name.includes(".unharnessed-")));
+  console.log(`installed: ${extension}`);
+}
+
 let failed = 0;
 const only = process.env.UNHARNESSED_E2E_ONLY;
 /** The profiles kept for a later scenario, by name. */
 const kept = new Map();
 const wanted = scenarios.filter(({ name }) => !only || name === only || scenarios.find((s) => s.name === only)?.from === name);
 for (const scenario of wanted) {
-  console.log(`\n# ${scenario.name} (${scenario.binary})`);
+  console.log(`\n# ${scenario.name} (${scenario.binary ?? "the package's agent"})`);
   if (scenario.from && !kept.has(scenario.from)) {
     failed++;
     console.error(`FAIL: ${scenario.name}: ${scenario.from} left no profile`);
@@ -1035,13 +1051,13 @@ for (const scenario of wanted) {
   if (scenario.git) execFileSync("git", ["init", "--quiet", workspace]);
   try {
     await runTests({
-      vscodeExecutablePath: process.env.UNHARNESSED_VSCODE_EXECUTABLE,
-      extensionDevelopmentPath: resolve(here, "../.."),
+      vscodeExecutablePath,
+      extensionDevelopmentPath: extension,
       extensionTestsPath: join(here, "suite.cjs"),
       extensionTestsEnv: {
         UNHARNESSED_E2E_LOGS: logsDir,
         UNHARNESSED_E2E_STEPS: JSON.stringify(scenario.steps),
-        UNHARNESSED_BIN: scenario.binary,
+        ...(scenario.binary && { UNHARNESSED_BIN: scenario.binary }),
         UNHARNESSED_CODING_AGENT_DIR: agentDir,
         UNHARNESSED_KERNEL_VENV: join(profile, "v"),
         DO_NOT_TRACK: "1",
@@ -1068,6 +1084,7 @@ for (const scenario of wanted) {
   }
 }
 ollama.close();
+if (installed) rmSync(installed, { recursive: true, force: true });
 process.exit(failed ? 1 : 0);
 
 /** The agent's catalog cache, as a fetch of the catalog would have left it. */
