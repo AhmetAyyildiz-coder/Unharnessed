@@ -1045,9 +1045,34 @@ button {
   min-width: 0;
 }
 
-/* Short of room, the model's name is cut, never the reasoning effort. */
+/* Short of room, the model's name is cut first, never the reasoning effort. */
 .picker.effort-picker {
   flex: none;
+}
+
+/* Shorter still, the bar lets go of one thing at a time (fit.ts measures
+   it, `data-short` lists what left): the effort's name, the model's, the
+   goal's time, then the context's ring, the fast mode, the effort, the
+   images; the model and send stay. What can't be cut doesn't shrink, so the
+   measure sees the bar run over. */
+.composer-bar > .chip:has(> svg:only-child),
+.composer-bar[data-short~="model-name"] > [data-menu-trigger="model"] {
+  flex: none;
+}
+
+.composer-bar[data-short~="effort-label"] .effort-picker .chip-label,
+.composer-bar[data-short~="model-name"] > [data-menu-trigger="model"] .chip-label,
+.composer-bar[data-short~="goal-time"] .goal-time-wrap,
+.composer-bar[data-short~="usage"] > .usage,
+.composer-bar[data-short~="fast"] > .chip[aria-pressed],
+.composer-bar[data-short~="effort"] > .effort-picker,
+.composer-bar[data-short~="attach"] > .chip[aria-label="Attach images"] {
+  display: none;
+}
+
+/* The gauge alone gets an even pill. */
+.composer-bar[data-short~="effort-label"] .effort-picker .chip {
+  padding: 0 9px;
 }
 
 /* A picker's face: a soft pill, brighter when hovered or open. */
@@ -2391,6 +2416,7 @@ body.vscode-high-contrast-light .kernel-tray {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  min-width: 0;
   min-height: 0;
   margin: 0;
   padding: 0;
@@ -5747,6 +5773,55 @@ body.vscode-high-contrast-light .orb > canvas {
   width: 1.5px;
   pointer-events: none;
   border-radius: 1px;
+}
+
+/* A narrow panel: nothing changes while everything fits. The message box's
+   bar is fitted by measure (below, `data-short`); here, what holds the same
+   whatever the conversation. */
+@media (max-width: 400px) {
+  /* What a waiting message does takes its room only under the pointer. */
+  .queued:not(:hover, :focus-within) .queued-actions {
+    display: none;
+  }
+}
+
+@media (max-width: 285px) {
+  /* The settings' tabs, closer; past that their track scrolls. */
+  .tabs {
+    overflow-x: auto;
+  }
+
+  .tab {
+    padding: 0 6px;
+  }
+
+  /* A setting's control goes under its label when both no longer fit. */
+  .setting-line {
+    flex-wrap: wrap;
+  }
+
+  .setting-line > .row-main {
+    min-width: 110px;
+  }
+
+  .setting-value {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 250px) {
+  /* The wordmark: its logo alone. */
+  .topbar .wordmark-rest {
+    display: none;
+  }
+
+  .work-head {
+    white-space: nowrap;
+  }
+
+  .work-head .call-meta {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -25,6 +25,7 @@ import { mentions, mentionText } from "../src/mentions";
 import { attach, IMAGE_TYPES } from "./attachments";
 import { EffortPicker } from "./Effort";
 import { FileIcon } from "./FileIcon";
+import { useFit } from "./fit";
 import { GoalHead, goalPhase, GoalPill, useGoalLight } from "./Goal";
 import {
   IconBolt,
@@ -76,6 +77,13 @@ const GROUPS: [string, ChatCommand["kind"][]][] = [
 
 /** The commands the `/` menu offers, with the prompts and skills; the others (`/new`, `/autonomous`) run typed. */
 const OFFERED = ["compact", "goal"];
+
+/**
+ * What the bar lets go of, short of room, first to last (styles.css, `data-short`): the effort's name (its gauge
+ * stays), the model's (its mark stays), the goal's time (its pause stays), then a control at a time, down to the
+ * model and send.
+ */
+const BAR_STEPS = ["effort-label", "model-name", "goal-time", "usage", "fast", "effort", "attach"];
 
 /** What is written after a command or a skill, in words: the agent's own hints are syntax (`[instructions]`). */
 const ARGUMENT = "instructions";
@@ -146,6 +154,8 @@ export function Composer({
   const glow = useRef<HTMLDivElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLInputElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  useFit(bar, BAR_STEPS);
   const paths = useContext(PathsContext);
   const config = session?.kind === "open" ? session.config : null;
   const toggle = (next: Menu) => setMenu((open) => (open === next ? null : next));
@@ -457,7 +467,7 @@ export function Composer({
             </p>
           )}
           {session?.kind === "open" && session.error && <p className="composer-error">{session.error}</p>}
-          <div className="composer-bar">
+          <div className="composer-bar" ref={bar}>
             <input
               ref={picker}
               type="file"
@@ -927,7 +937,7 @@ function ModelButton({
     return (
       <span className="chip is-idle" data-tip={session?.kind === "failed" ? session.error : undefined} data-tip-align="start">
         {session?.kind === "opening" && <span className="spinner" />}
-        {label}
+        <span className="chip-label">{label}</span>
       </span>
     );
   }
