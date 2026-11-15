@@ -1,7 +1,7 @@
 {
   "name": "unharnessed-agent",
   "displayName": "Unharnessed Agent",
-  "description": "Chat with the Unharnessed agent from VS Code.",
+  "description": "A coding agent with exactly one tool: a persistent Python REPL. Everything else, the model writes itself.",
   "version": "0.0.3",
   "publisher": "Unharnessed",
   "license": "MIT",
@@ -15,12 +15,26 @@
     "type": "git",
     "url": "https://github.com/unharnessed-agent/Unharnessed.git"
   },
+  "homepage": "https://unharnessed.dev",
+  "bugs": {
+    "url": "https://github.com/unharnessed-agent/Unharnessed/issues"
+  },
   "engines": {
     "vscode": "^1.110.0"
   },
   "categories": [
     "AI",
     "Chat"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "coding agent",
+    "python",
+    "repl",
+    "mcp",
+    "acp",
+    "chat"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [],
