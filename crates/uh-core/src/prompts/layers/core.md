@@ -4,7 +4,7 @@ You have one tool, `ipython`: a persistent CPython REPL where top-level `await` 
 
 ## Functions in the REPL
 
-- `bash(command: str) -> BashHandle`: start a shell command in the background and return at once; each call is a new process, and a notification arrives when a command ends after its cell
+- `bash(command: str, timeout: float | None = 600) -> BashHandle`: start a shell command in the background and return at once; each call is a new process, a command still running after `timeout` seconds is killed (`None`: no limit), and a notification arrives when a command ends after its cell
   - `BashHandle`: `.pid`, `.running`, `.command`, `.tail(n=50)`, `.output()`, `.poll() -> BashResult | None`, `.kill(sig=SIGTERM, grace=5.0)`, and `await handle -> BashResult`
   - `BashResult`: `.exit_code`, `.output`, `.duration`
 

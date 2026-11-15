@@ -17,7 +17,9 @@ What it does:
   retry/failover** (backoff, the same model on another configured provider,
   waiting out a quota reset).
 - **Wake-ups of an idle session**: a background `bash()` that outlives its
-  cell, a goal's backoff and a quota reset start the next turn. `-p` waits for
+  cell, a goal's backoff and a quota reset start the next turn. A `bash()`
+  command still running after 10 minutes is killed and its notice says so
+  (`bash(cmd, timeout=...)` changes the limit, `timeout=None` removes it). `-p` waits for
   them before exiting, at most `--background-wait-ms` per wait (default 10
   minutes, `0` = no wait), then kills the commands still running; in ACP the
   agent starts the turn itself and streams it as `session/update`. A goal

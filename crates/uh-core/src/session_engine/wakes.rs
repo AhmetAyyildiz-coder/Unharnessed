@@ -20,7 +20,7 @@ use tokio::time::Instant;
 
 use super::engine::SessionEngine;
 use super::goal_driver::GOAL_BACKOFF_WAKE_MARKER_TEXT;
-use super::messages::create_async_bash_completion_message;
+use super::messages::{create_async_bash_completion_message, mark_async_bash_timeout};
 use super::provider_park::QUOTA_RESUME_MARKER_TEXT;
 use crate::kernel::shared::{host_handler, HostRequestHandlers};
 
@@ -108,7 +108,8 @@ impl SessionWakes {
 
     /// The `bash.completed`/`bash.consumed` kernel host handlers, with the
     /// TS validation: a positive integer pid, a non-empty command, and an
-    /// integer exit code.
+    /// integer exit code (plus, for a command its timeout stopped, a
+    /// positive `timeoutSeconds`).
     pub(crate) fn register_host_handlers(wakes: &Arc<Self>, handlers: &mut HostRequestHandlers) {
         let completed = Arc::clone(wakes);
         handlers.register(
@@ -124,8 +125,24 @@ impl SessionWakes {
                         .ok_or_else(|| {
                             anyhow::anyhow!("bash.completed exitCode must be an integer")
                         })?;
-                    let message =
+                    // Present only when the kernel stopped the command at its timeout.
+                    let timeout_seconds = match payload.data.get("timeoutSeconds") {
+                        None | Some(Value::Null) => None,
+                        Some(value) => {
+                            Some(value.as_f64().filter(|seconds| *seconds > 0.0).ok_or_else(
+                                || {
+                                    anyhow::anyhow!(
+                                        "bash.completed timeoutSeconds must be a positive number"
+                                    )
+                                },
+                            )?)
+                        }
+                    };
+                    let mut message =
                         create_async_bash_completion_message(pid, &command, exit_code, now_ms());
+                    if let Some(seconds) = timeout_seconds {
+                        mark_async_bash_timeout(&mut message, seconds);
+                    }
                     wakes.state().notices.push((pid, command, message));
                     wakes.poke();
                     Ok(serde_json::json!({}))

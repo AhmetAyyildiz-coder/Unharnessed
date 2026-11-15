@@ -46,6 +46,9 @@ _COMPLETION_SUFFIX = b"\x1f"
 _CANCEL_TERM_GRACE = 0.5
 _CANCEL_KILL_WAIT = 2.0
 _COMPLETION_NOTICE_COMMAND_CAP = 1000
+# A command still running after this many seconds is stopped like a panel stop,
+# so its notice wakes the model; bash(cmd, timeout=None) lifts the limit.
+_DEFAULT_TIMEOUT = 600.0
 _ASYNCIO_WRAPPER_CALLBACKS = {
     ("asyncio.tasks", "gather.<locals>._done_callback"),
     ("asyncio.tasks", "shield.<locals>._inner_done_callback"),
@@ -242,6 +245,10 @@ class BashHandle:
 
     def __init__(self, command: str) -> None:
         self.command = command
+        # Set by _arm_timeout; stopped by it: the notice says so.
+        self._timeout: float | None = None
+        self._timed_out = False
+        self._timeout_timer: threading.Timer | None = None
         self._activity_id = secrets.token_hex(16)
         completion_context = _current_cell_completion_context()
         self._creating_cell_finished = completion_context[0] if completion_context else None
@@ -439,6 +446,28 @@ class BashHandle:
             timer.daemon = True
             timer.start()
 
+    def _arm_timeout(self, timeout: float) -> None:
+        # Under the reap lock: either the reap already happened (no timer), or
+        # _watch finds this timer when it reaps and cancels it.
+        with self._kill_lock:
+            if self._reaped:
+                return
+            self._timeout = timeout
+            self._timeout_timer = threading.Timer(timeout, self._time_out)
+            self._timeout_timer.daemon = True
+            self._timeout_timer.start()
+
+    def _time_out(self) -> None:
+        # Group liveness, like kill(): a `cmd &` leftover past the limit stops too.
+        if self._reaped:
+            return
+        self._timed_out = True
+        self._buffer.write(
+            f"\n[unharnessed: killed, still running after its {self._timeout:g} s timeout]\n".encode()
+        )
+        # The harness's stop, not the agent's: the completion notice still goes out.
+        self._stop()
+
     def _force_kill(self) -> None:
         if not self._reaped:
             _signal_group(self._pid, signal.SIGKILL)
@@ -563,6 +592,8 @@ class BashHandle:
             if not _IS_POSIX:
                 # Reaped: pid fallbacks are gone, so the handle may finally close.
                 cast("_winjob.JobProcess", self._proc).close()
+            if self._timeout_timer is not None:
+                self._timeout_timer.cancel()
         with self._callback_lock:
             callback, self._reap_callback = self._reap_callback, None
         if callback is not None:
@@ -746,6 +777,7 @@ class BashHandle:
                     "pid": self._pid,
                     "command": command,
                     "exitCode": result.exit_code,
+                    **({"timeoutSeconds": self._timeout} if self._timed_out else {}),
                 }
             )
             if isinstance(reply, dict) and reply.get("status") == "ok":
@@ -982,8 +1014,13 @@ class BashHandle:
         return f"<BashHandle pid={self._pid} {state} command={self.command!r}>"
 
 
-def bash(command: str) -> BashHandle:
+def bash(command: str, timeout: float | None = _DEFAULT_TIMEOUT) -> BashHandle:
     """Start a shell command immediately; await the handle for the result.
+
+    A command whose process group still runs after `timeout` seconds (10 min
+    by default) gets SIGTERM, then SIGKILL after 5 s; a line in its output and
+    its completion notice say so, and the notice wakes the model as for a
+    panel stop. `timeout=None` sets no limit (a server, a long build).
 
     `await bash(cmd)` is a one-shot: cancelling the await (e.g. an interrupt)
     kills the command's process group. `h = bash(cmd)` used as a background
@@ -999,8 +1036,17 @@ def bash(command: str) -> BashHandle:
     """
     if not isinstance(command, str) or not command:
         raise TypeError("command must be a non-empty str")
+    if timeout is not None:
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            raise TypeError("timeout must be a number of seconds, or None for no limit")
+        # Also refuses NaN and inf: threading.Timer cannot wait past TIMEOUT_MAX.
+        if not 0 < timeout <= threading.TIMEOUT_MAX:
+            raise ValueError("timeout must be a positive number of seconds, or None for no limit")
     _install_shutdown_hook()
-    return BashHandle(command)
+    handle = BashHandle(command)
+    if timeout is not None:
+        handle._arm_timeout(timeout)
+    return handle
 
 
 def _shell() -> str:

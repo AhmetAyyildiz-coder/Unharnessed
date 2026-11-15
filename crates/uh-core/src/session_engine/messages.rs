@@ -198,6 +198,31 @@ pub fn create_async_bash_completion_message(
     }
 }
 
+/// The kernel stopped the command because it still ran after its `bash()`
+/// timeout (`timeoutSeconds` on `bash.completed`): the notice says so, or
+/// the model would only see a signal's exit code.
+pub fn mark_async_bash_timeout(
+    message: &mut uh_types::session::CustomMessage,
+    timeout_seconds: f64,
+) {
+    if let UserContent::Text(content) = &mut message.content {
+        let _ = write!(
+            content,
+            "\n\nKilled: still running after its {timeout_seconds} s timeout."
+        );
+    }
+    if let Some(details) = message
+        .details
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        details.insert(
+            "timeoutSeconds".to_string(),
+            serde_json::json!(timeout_seconds),
+        );
+    }
+}
+
 /// The row that asks the model to go on after the provider cut its
 /// response at the output limit (see [`OUTPUT_LIMIT_CUSTOM_TYPE`]).
 #[must_use]

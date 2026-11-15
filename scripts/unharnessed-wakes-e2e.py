@@ -280,4 +280,34 @@ check("ACP wakes after the turn that a background command ended during",
       and turns == [(1, "first answer"), (2, "notified: bg-done")] and woken[0] > stamp,
       f"answer at {stamp}, turns {turns}, woken {woken}")
 
+# 13. -p: a background bash() still running at its timeout is stopped, with
+# its whole group, and the notice wakes the model with the reason.
+marker = f"timeout-bg-{os.getpid()}"
+code, seconds, events = run_print("print_bash_timeout", [
+    call(f'h = bash("sleep 60; echo {marker}", timeout=2)'), "started", "notified of the timeout"],
+    ["--mode", "json", "--no-session", "start a command that hangs"])
+alive = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.split()
+done = [message for message in messages(events) if message.get("customType") == "async_bash_completion"]
+check("-p stops a background command at its timeout and wakes the model",
+      code == 0 and seconds < 30 and not alive and done
+      and "[bash-done pid:" in text_of(done[0])
+      and "Killed: still running after its 2 s timeout." in text_of(done[0])
+      and done[0].get("details", {}).get("timeoutSeconds") == 2
+      and text_of(messages(events, "assistant")[-1]) == "notified of the timeout",
+      f"exit {code}, {seconds:.1f}s, alive pids {alive}, completion rows {[text_of(m) for m in done]}")
+for pid in alive:
+    subprocess.run(["kill", pid])
+
+# 14. -p: an awaited bash() past its timeout returns in its cell, the reason
+# in its output; no notice (its cell read the result).
+code, seconds, events = run_print("print_await_timeout", [
+    call('r = await bash("echo before; sleep 60", timeout=1)\nprint(r.exit_code, repr(r.output))'), "saw it"],
+    ["--mode", "json", "--no-session", "run a command that hangs"])
+results = [text_of(message) for message in messages(events, "toolResult")]
+done = [message for message in messages(events) if message.get("customType") == "async_bash_completion"]
+check("-p returns an awaited command stopped at its timeout, with the reason",
+      code == 0 and seconds < 30 and not done and results
+      and "before" in results[0] and "killed, still running after its 1 s timeout" in results[0],
+      f"exit {code}, {seconds:.1f}s, results {results}, completion rows {len(done)}")
+
 sys.exit(1 if FAILED else 0)
