@@ -22,6 +22,7 @@ export function Status({
   agent,
   session,
   providers,
+  unconnected,
   chat,
   kernel,
   images,
@@ -36,6 +37,8 @@ export function Status({
   agent: AgentState;
   session: SessionState | null;
   providers: Provider[];
+  /** No provider is connected. */
+  unconnected: boolean;
   chat: ChatState;
   kernel: KernelState;
   images: ImageSettings;
@@ -126,6 +129,7 @@ export function Status({
         <Composer
           session={session}
           providers={providers}
+          unconnected={unconnected}
           chat={chat}
           kernel={kernel}
           images={images}
@@ -133,6 +137,7 @@ export function Status({
           onDraft={onDraft}
           editing={editing}
           onEditEnd={onEditEnd}
+          onProviders={onProviders}
         />
       )}
     </div>

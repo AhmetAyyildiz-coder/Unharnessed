@@ -155,13 +155,13 @@ export function App() {
     if (left) setEditing(null);
   }, [chat.entries, chat.queue, editing]);
 
-  // Nothing connected yet: the providers screen is the way in.
-  const onboarding = providers !== null && !providers.some((p) => p.connected);
+  // Nothing connected: home's model picker leads to the providers screen.
+  const unconnected = providers !== null && !providers.some((p) => p.connected);
   let screen: Screen | null = null;
   if (phase === "splash") screen = "splash";
   else if (phase === "main" && agent) {
     if (agent.kind === "ready" && login) screen = "login";
-    else if (agent.kind === "ready" && (managing || onboarding)) screen = "providers";
+    else if (agent.kind === "ready" && managing) screen = "providers";
     // It stays while a restart it asked for runs.
     else if (tuning && agent.kind !== "failed") screen = "settings";
     else screen = "status";
@@ -183,7 +183,7 @@ export function App() {
           providers={providers ?? []}
           result={result}
           local={{ scan: localScan, probe: localProbe }}
-          onBack={onboarding ? undefined : () => setManaging(false)}
+          onBack={() => setManaging(false)}
         />
       );
     case "settings":
@@ -206,6 +206,7 @@ export function App() {
             agent={agent}
             session={session}
             providers={providers ?? []}
+            unconnected={unconnected}
             chat={chat}
             kernel={kernel}
             images={imageSettings(settings)}

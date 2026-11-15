@@ -37,6 +37,7 @@ import {
   IconGrip,
   IconPencil,
   IconPlay,
+  IconPlug,
   IconPlus,
   IconSend,
   IconStop,
@@ -115,11 +116,14 @@ const KINDS: Record<ChatCommand["kind"], string> = {
  * A `/` at the start opens the commands, prompts and skills. While turn
  * `editing`'s prompt is in it, sending it goes in place of that prompt (a
  * waiting message's, in its place in the queue); `onEditEnd` ends the edit,
- * sent or given up.
+ * sent or given up. While no provider is connected (`unconnected`) or the
+ * session has no model, a button to the providers screen (`onProviders`)
+ * stands in for the pickers.
  */
 export function Composer({
   session,
   providers,
+  unconnected,
   chat,
   kernel,
   images,
@@ -127,9 +131,11 @@ export function Composer({
   onDraft,
   editing,
   onEditEnd,
+  onProviders,
 }: {
   session: SessionState | null;
   providers: Provider[];
+  unconnected: boolean;
   chat: ChatState;
   kernel: KernelState;
   images: ImageSettings;
@@ -137,6 +143,7 @@ export function Composer({
   onDraft: (update: (draft: Draft) => Draft) => void;
   editing: number | null;
   onEditEnd: () => void;
+  onProviders: () => void;
 }) {
   const [menu, setMenu] = useState<Menu | null>(null);
   /** Bumped when the empty box takes focus: the placeholder streams in again. */
@@ -158,6 +165,8 @@ export function Composer({
   useFit(bar, BAR_STEPS);
   const paths = useContext(PathsContext);
   const config = session?.kind === "open" ? session.config : null;
+  // The pickers shown: none while no provider is connected, whatever model the session opened on.
+  const pickers = unconnected ? null : config;
   const toggle = (next: Menu) => setMenu((open) => (open === next ? null : next));
   const close = () => setMenu(null);
   const hasContent = draft.text.trim() !== "" || draft.images.length > 0;
@@ -167,9 +176,9 @@ export function Composer({
 
   // A menu whose picker left (a model switch drops the effort, or leaves it a single level) closes.
   useEffect(() => {
-    if (menu === "model" && !config?.model) setMenu(null);
-    if (menu === "effort" && !(config?.effort && pickable(config.effort))) setMenu(null);
-  }, [menu, config]);
+    if (menu === "model" && !pickers?.model) setMenu(null);
+    if (menu === "effort" && !(pickers?.effort && pickable(pickers.effort))) setMenu(null);
+  }, [menu, pickers]);
 
   const slash = slashCommands(draft.text, chat.commands);
   // While a command's text is written, an `@` in it opens the files.
@@ -383,8 +392,8 @@ export function Composer({
       >
         <div className="composer-glow" ref={glow} aria-hidden="true" />
         <div className="composer">
-          {menu === "model" && config?.model && (
-            <ModelMenu model={config.model} providers={providers} onClose={close} />
+          {menu === "model" && pickers?.model && (
+            <ModelMenu model={pickers.model} providers={providers} onClose={close} />
           )}
           {slashOpen && (
             <SlashMenu
@@ -495,16 +504,18 @@ export function Composer({
               providers={providers}
               open={menu === "model"}
               onClick={() => toggle("model")}
+              unconnected={unconnected}
+              onProviders={onProviders}
             />
-            {config?.effort && (
+            {pickers?.effort && (
               <EffortPicker
-                effort={config.effort}
+                effort={pickers.effort}
                 open={menu === "effort"}
                 onToggle={() => toggle("effort")}
                 onClose={close}
               />
             )}
-            {config && config.fast !== null && <FastToggle on={config.fast} />}
+            {pickers && pickers.fast !== null && <FastToggle on={pickers.fast} />}
             <span className="composer-spacer" />
             {config && chat.usage && <UsageRing usage={chat.usage} empty={chat.entries.length === 0} />}
             {chat.goal && phase && <GoalPill goal={chat.goal} phase={phase} lit={lit} />}
@@ -922,18 +933,31 @@ function Placeholder({ streaming }: { streaming: boolean }) {
 function ModelButton({
   session,
   providers,
+  unconnected,
   open,
   onClick,
+  onProviders,
 }: {
   session: SessionState | null;
   providers: Provider[];
+  unconnected: boolean;
   open: boolean;
   onClick: () => void;
+  onProviders: () => void;
 }) {
   const model = session?.kind === "open" ? session.config.model : null;
   const current = model?.choices.find((choice) => choice.value === model.current);
+  // Nothing to pick from: no provider is connected (the session still opens on a model), or the session has no model.
+  if (unconnected || (!model && session?.kind === "open")) {
+    return (
+      <button className="chip" type="button" onClick={onProviders}>
+        <IconPlug />
+        <span className="chip-label">Connect a provider</span>
+      </button>
+    );
+  }
   if (!model) {
-    const label = session?.kind === "failed" ? "No session" : session?.kind === "open" ? "No model" : "Loading models";
+    const label = session?.kind === "failed" ? "No session" : "Loading models";
     return (
       <span className="chip is-idle" data-tip={session?.kind === "failed" ? session.error : undefined} data-tip-align="start">
         {session?.kind === "opening" && <span className="spinner" />}

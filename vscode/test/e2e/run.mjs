@@ -261,8 +261,8 @@ const scenarios = [
       '"method":"_unharnessed/providers/list"',
       "providers: ",
       "connected: none",
-      // Nothing connected: the providers screen opens first.
-      "panel: providers",
+      // Nothing connected: home opens all the same; its model picker leads to the providers screen.
+      "panel: status",
     ],
   },
   {
@@ -777,7 +777,7 @@ const scenarios = [
     env: { UNHARNESSED_OFFLINE: "1" },
     steps: [
       "connected: none",
-      "panel: providers",
+      "panel: status",
       { post: { type: "scanLocal" } },
       "local: scan found",
       { post: { type: "probeLocal", baseUrl: OLLAMA, apiKey: "" } },
@@ -801,8 +801,6 @@ const scenarios = [
       { wait: "chat: turn 1 done (end_turn); 1 text", timeout: 90_000 },
       { post: { type: "removeLocal", providerId: "ollama" } },
       "removal of local server ollama: done (ollama removed)",
-      // Nothing usable again: the providers screen is the way in.
-      { wait: "panel: providers", times: 2 },
     ],
   },
   {

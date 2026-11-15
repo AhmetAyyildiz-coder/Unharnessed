@@ -47,8 +47,7 @@ function status(provider: Provider): ReactNode {
 /**
  * Every provider the agent knows, in four groups: connected, the servers on
  * this machine (local), subscriptions (a browser sign-in) and API keys (a
- * key pasted here). Without `onBack` it is the first screen: nothing is
- * connected yet.
+ * key pasted here). While nothing is connected, it says what to do first.
  */
 export function Providers({
   providers,
@@ -59,7 +58,7 @@ export function Providers({
   providers: Provider[];
   result: ProviderResult | null;
   local: LocalReplies;
-  onBack?: () => void;
+  onBack: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<Open | null>(null);
@@ -131,24 +130,22 @@ export function Providers({
     <div className="screen">
       <header className="topbar">
         <div className="topbar-title">
-          {onBack && (
-            <button
-              className="icon-button"
-              type="button"
-              aria-label="Back"
-              data-tip="Back"
-              data-tip-side="below"
-              data-tip-align="start"
-              onClick={onBack}
-            >
-              <IconBack />
-            </button>
-          )}
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="Back"
+            data-tip="Back"
+            data-tip-side="below"
+            data-tip-align="start"
+            onClick={onBack}
+          >
+            <IconBack />
+          </button>
           <span>Providers</span>
         </div>
       </header>
       <main className="content">
-        {!onBack && (
+        {!providers.some((provider) => provider.connected) && (
           <div className="intro">
             <h1>Connect a provider</h1>
             <p>Sign in with a subscription, add an API key, or use a model on this machine.</p>
