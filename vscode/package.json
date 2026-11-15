@@ -1,6 +1,6 @@
 {
   "name": "unharnessed-agent",
-  "displayName": "Unharnessed",
+  "displayName": "Unharnessed Agent",
   "description": "Chat with the Unharnessed agent from VS Code.",
   "version": "0.0.3",
   "publisher": "Unharnessed",
