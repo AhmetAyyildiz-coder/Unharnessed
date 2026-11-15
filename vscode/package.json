@@ -13,7 +13,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Paseru/Unharnessed.git"
+    "url": "https://github.com/unharnessed-agent/Unharnessed.git"
   },
   "engines": {
     "vscode": "^1.110.0"

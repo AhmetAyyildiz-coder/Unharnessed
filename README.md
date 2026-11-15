@@ -370,7 +370,7 @@ unharnessed --mode acp                                  # Agent Client Protocol 
 <p align="center">
   <a href="https://marketplace.visualstudio.com/items?itemName=Unharnessed.unharnessed-agent"><b>Install in VS Code</b></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/Paseru/Unharnessed"><b>GitHub</b></a>
+  <a href="https://github.com/unharnessed-agent/Unharnessed"><b>GitHub</b></a>
   &nbsp;·&nbsp;
   <a href="LICENSE"><b>MIT License</b></a>
 </p>
