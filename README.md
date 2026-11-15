@@ -457,4 +457,6 @@ Credentials come from `~/.unharnessed/auth.json` (written by the sign-ins) or th
 - `scripts/unharnessed-smoke.sh <dir>`: drives the real binary end to end against a real model.
 - `scripts/unharnessed-wakes-e2e.py <dir>`: provider retry and wake-ups, in `-p` and ACP, with the faux provider.
 - `scripts/unharnessed-skill-loading.sh <dir>`: skill loading, no model needed.
-- `cd vscode && npm run test:e2e`: drives a real VS Code through each scenario with the faux provider.
+- `cd vscode && npm run typecheck`: the extension's types. F5 opens an Extension Development Host with `UNHARNESSED_BIN` pointing at the debug binary.
+- `cd vscode && npm run test:e2e`: drives a real VS Code through each scenario of `test/e2e/run.mjs` with the faux provider (`UNHARNESSED_E2E_ONLY=<name>` runs one).
+- `UNHARNESSED_E2E_VSIX=<the .vsix> node test/e2e/run.mjs` (from `vscode/`): the same scenarios on a packaged `.vsix`, installed by VS Code.
