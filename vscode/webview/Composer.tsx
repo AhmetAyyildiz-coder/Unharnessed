@@ -23,7 +23,7 @@ import type {
 } from "../src/protocol";
 import { mentions, mentionText } from "../src/mentions";
 import { attach, IMAGE_TYPES } from "./attachments";
-import { EffortPicker } from "./Effort";
+import { EffortPicker, pickable } from "./Effort";
 import { FileIcon } from "./FileIcon";
 import { useFit } from "./fit";
 import { GoalHead, goalPhase, GoalPill, useGoalLight } from "./Goal";
@@ -165,10 +165,10 @@ export function Composer({
   const phase = goalPhase(chat.goal);
   const lit = useGoalLight(shell, glow, phase);
 
-  // A menu whose picker left (a model switch drops the effort) closes.
+  // A menu whose picker left (a model switch drops the effort, or leaves it a single level) closes.
   useEffect(() => {
     if (menu === "model" && !config?.model) setMenu(null);
-    if (menu === "effort" && !config?.effort) setMenu(null);
+    if (menu === "effort" && !(config?.effort && pickable(config.effort))) setMenu(null);
   }, [menu, config]);
 
   const slash = slashCommands(draft.text, chat.commands);

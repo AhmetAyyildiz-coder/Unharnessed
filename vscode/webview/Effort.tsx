@@ -39,6 +39,9 @@ function Gauge({ count, at }: { count: number; at: number }) {
   );
 }
 
+/** Whether there is a level to choose: a model with a single one (`high` alone) has its effort fixed. */
+export const pickable = (effort: Effort) => effort.levels.length > 1;
+
 /** The reasoning effort's chip in the composer and, above it while open, its slider. */
 export function EffortPicker({
   effort,
@@ -51,6 +54,17 @@ export function EffortPicker({
   onToggle: () => void;
   onClose: () => void;
 }) {
+  // A single level is nothing to pick: the chip names it and opens no slider.
+  if (!pickable(effort)) {
+    return (
+      <div className="picker effort-picker">
+        <span className="chip is-idle" data-tip="Reasoning effort: fixed for this model">
+          <Gauge count={effort.levels.length} at={effort.levels.indexOf(effort.current)} />
+          <span className="chip-label">{chipLabel(effort.current)}</span>
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="picker effort-picker">
       {open && (

@@ -117,7 +117,7 @@ export type ModelChoice = {
 /** The session's pickers: its config options, kept current by the agent. */
 export type SessionConfig = {
   model: { current: string; choices: ModelChoice[] } | null;
-  /** The reasoning effort; `null` when the model has none to pick. */
+  /** The reasoning effort; `null` when the model has none. A single level is shown, with nothing to pick. */
   effort: { current: string; levels: string[] } | null;
   /** The fast mode (priority tier); `null` when the model has none. */
   fast: boolean | null;
