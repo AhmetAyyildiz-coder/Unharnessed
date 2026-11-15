@@ -2,7 +2,7 @@
   "name": "unharnessed",
   "displayName": "Unharnessed",
   "description": "Chat with the Unharnessed agent from VS Code.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "Unharnessed",
   "license": "MIT",
   "private": true,
